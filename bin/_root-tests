@@ -1,0 +1,58 @@
+#!/usr/bin/env bash
+# Corpus suite. The fingerprint is the whole repo. A match exits green.
+# A green run stores the hash taken after the suite, which does not
+# rewrite source. --force re-runs. --clean removes the sentinel.
+#
+# The suite command is tests/run when that file is executable, otherwise
+# bun test inside tests/ when TypeScript tests are present.
+#
+# Usage: bin/_root-tests [--force] [--clean]
+set -euo pipefail
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$ROOT"
+
+force=0
+clean=0
+for arg in "$@"; do
+  case "$arg" in
+    --force) force=1 ;;
+    --clean) clean=1 ;;
+    *)
+      echo "root-suite: unknown argument: $arg" >&2
+      exit 2
+      ;;
+  esac
+done
+
+branch="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")"
+case "$branch" in
+  "" | "." | "..")
+    echo "root-suite: refusing to build a sentinel path for unsafe branch: '$branch'" >&2
+    exit 2
+    ;;
+esac
+sentinel="$ROOT/.flow-states/$branch/root-suite-sentinel"
+
+if [ "$clean" -eq 1 ]; then
+  rm -f "$sentinel"
+  echo "root-suite: cleaned sentinel for $branch"
+  exit 0
+fi
+
+# shellcheck source=lib/tree-sentinel.sh
+. "$ROOT/bin/lib/tree-sentinel.sh"
+pre_hash="$(tree_hash)"
+if [ "$force" -eq 0 ] && [ -f "$sentinel" ] && [ "$(cat "$sentinel")" = "$pre_hash" ]; then
+  exit 0
+fi
+
+if [ -x "$ROOT/tests/run" ]; then
+  "$ROOT/tests/run"
+elif compgen -G "$ROOT/tests/*.test.ts" >/dev/null; then
+  (cd "$ROOT/tests" && bun test)
+else
+  echo "root-suite: no tests"
+fi
+
+mkdir -p "$(dirname "$sentinel")"
+(cd "$ROOT" && tree_hash) >"$sentinel"

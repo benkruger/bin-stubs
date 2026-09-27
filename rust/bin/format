@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+# Format this package with rustfmt. --all is accepted; rustfmt always
+# formats the package.
+# Usage: bin/format [--all]
+set -euo pipefail
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [ "$(basename "$here")" = "_root" ]; then
+  root="$(cd "$here/../.." && pwd)"
+else
+  root="$(cd "$here/.." && pwd)"
+fi
+cd "$root"
+for arg in "$@"; do
+  case "$arg" in
+    --all) ;;
+    *) echo "bin/format: unknown argument: $arg" >&2; exit 2 ;;
+  esac
+done
+cargo fmt

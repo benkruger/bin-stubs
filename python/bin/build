@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+# bin/build — byte-compile this folder (python -m compileall). uv run
+# is the project's interpreter (honors .python-version).
+#
+# Usage: bin/build
+set -euo pipefail
+export PATH="${HOME}/.local/bin:${PATH}"
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [ "$(basename "$here")" = "_root" ]; then
+  root="$(cd "$here/../.." && pwd)"
+else
+  root="$(cd "$here/.." && pwd)"
+fi
+cd "$root"
+if [ -d src ]; then
+  exec uv run python -m compileall -q src
+fi
+exec uv run python -m compileall -q -x '/\.venv/' .

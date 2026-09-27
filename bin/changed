@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+# Root dirty-tree gate. Hands the phase to bin/_dispatch.
+# An empty diff exits green before any folder runs.
+# Usage: bin/changed
+set -euo pipefail
+exec "$(dirname "${BASH_SOURCE[0]}")/_dispatch" changed "$@"

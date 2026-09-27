@@ -1,0 +1,103 @@
+#!/usr/bin/env bash
+# Rust gate. format, lint, build, and test, with the same quiet step line
+# as the other gates: a live spinner on a terminal, one checkmark line when
+# output is captured. Tool output is shown only when a step fails.
+# A matching fingerprint exits green. The hash is stored after a green run.
+# A red run leaves the previous certificate in place.
+# Usage: bin/ci [--force] [--clean]
+set -euo pipefail
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [ "$(basename "$here")" = "_root" ]; then
+  root="$(cd "$here/../.." && pwd)"
+else
+  root="$(cd "$here/.." && pwd)"
+fi
+cd "$root"
+
+force=0
+clean=0
+for arg in "$@"; do
+  case "$arg" in
+    --force) force=1 ;;
+    --clean) clean=1 ;;
+    *)
+      echo "bin/ci: unknown argument: $arg" >&2
+      exit 2
+      ;;
+  esac
+done
+
+branch="$(git rev-parse --abbrev-ref HEAD)"
+case "$branch" in
+  "" | "." | "..")
+    echo "bin/ci: refusing to build a sentinel path for unsafe branch: '$branch'" >&2
+    exit 2
+    ;;
+esac
+sentinel="$root/.flow-states/$branch/ci-sentinel"
+if [ "$clean" -eq 1 ]; then
+  rm -f "$sentinel"
+  echo "bin/ci: cleaned sentinel for $branch"
+  exit 0
+fi
+
+if [ "$(basename "$here")" = "_root" ]; then
+  ROOT_APP=1
+fi
+# shellcheck source=lib/tree-sentinel.sh
+. "$here/lib/tree-sentinel.sh"
+pre_hash="$(tree_hash)"
+if [ "$force" -eq 0 ] && [ -f "$sentinel" ] && [ "$(cat "$sentinel")" = "$pre_hash" ]; then
+  exit 0
+fi
+
+echo ""
+echo "═══ $(basename "$root") ════════════════════════════════════"
+log="$(mktemp)"
+trap 'rm -f "$log"' EXIT
+
+spin() {
+  local spin_label="$1" i=0 frames='|/-\'
+  while :; do
+    printf '\rbin/ci: %s %s ' "$spin_label" "${frames:i++%4:1}"
+    sleep 0.1
+  done
+}
+
+step=0
+run_step() {
+  local name="$1"
+  shift
+  step=$((step + 1))
+  local step_label="[$step/4] $name"
+  local rc=0
+  if [ -t 1 ]; then
+    spin "$step_label" &
+    local sp=$!
+    "$@" >>"$log" 2>&1 || rc=$?
+    kill "$sp" 2>/dev/null || true
+    wait "$sp" 2>/dev/null || true
+    local mark="✓"
+    [ "$rc" -eq 0 ] || mark="✗"
+    printf '\rbin/ci: %s %s\033[K\n' "$step_label" "$mark"
+  else
+    "$@" >>"$log" 2>&1 || rc=$?
+    local mark="✓"
+    [ "$rc" -eq 0 ] || mark="✗"
+    echo "bin/ci: $step_label $mark"
+  fi
+  if [ "$rc" -ne 0 ]; then
+    cat "$log" >&2
+    echo "bin/ci: gate RED ($branch) — step '$name' failed (above)." >&2
+    exit "$rc"
+  fi
+}
+
+run_step format "$here/format" --all
+run_step lint "$here/lint" --all
+run_step build "$here/build"
+run_step test "$here/test"
+
+mkdir -p "$(dirname "$sentinel")"
+tree_hash >"$sentinel"
+echo "bin/ci: gate green ($branch) — sentinel written."

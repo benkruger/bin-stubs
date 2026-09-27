@@ -1,0 +1,151 @@
+#!/usr/bin/env bash
+# bin/changed — coding-time gate for files this folder changed. RuboCop
+# -A then a check (leftover offenses stay red), markdownlint --fix then
+# a check, tests for dirty twins, 100/100 on those dirty files.
+# SimpleCov's 100% gate stays on; COVERAGE_DIRTY_FILES limits which files
+# count. No twin → red. Empty diff → green. No build, no sentinel, not
+# bin/ci.
+#
+# Usage: bin/changed
+set -euo pipefail
+HERE="$(cd "$(dirname "$0")" && pwd)"
+REPO_ROOT="$(cd "$HERE/.." && pwd)"
+cd "$REPO_ROOT"
+
+quietly() {
+  local log rc=0
+  log="$(mktemp)"
+  "$@" >"$log" 2>&1 || rc=$?
+  if [ "$rc" -ne 0 ]; then
+    cat "$log" >&2
+    rm -f "$log"
+    return "$rc"
+  fi
+  rm -f "$log"
+  return 0
+}
+
+is_source() {
+  case "$1" in
+    app/*.rb | app/*/*.rb | app/*/*/*.rb | app/*/*/*/*.rb) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+is_test() {
+  case "$1" in
+    spec/*_spec.rb | spec/*/*_spec.rb | spec/*/*/*_spec.rb) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+test_for_source() {
+  local rel="${1#app/}"
+  local twin="spec/${rel%.rb}_spec.rb"
+  if [ -f "$twin" ]; then
+    echo "$twin"
+    return
+  fi
+  if [ "${1#app/controllers/}" != "$1" ]; then
+    local base
+    base="$(basename "$1" .rb)"
+    if [ -f "spec/requests/${base}_spec.rb" ]; then
+      echo "spec/requests/${base}_spec.rb"
+      return
+    fi
+    local short="${base%_controller}"
+    if [ -f "spec/requests/${short}_spec.rb" ]; then
+      echo "spec/requests/${short}_spec.rb"
+      return
+    fi
+  fi
+  echo "$twin"
+}
+
+already() {
+  local n="$1" t
+  for t in "${tests[@]+"${tests[@]}"}"; do
+    [ "$t" = "$n" ] && return 0
+  done
+  return 1
+}
+
+files=()
+while IFS= read -r path; do
+  [ -z "$path" ] && continue
+  [ -f "$path" ] || continue
+  case "$path" in
+    vendor/* | tmp/* | log/* | coverage/* | db/schema.rb | .flow-states/*) continue ;;
+  esac
+  files+=("$path")
+done < <(
+  {
+    git diff --name-only --relative HEAD -- .
+    git ls-files --others --exclude-standard -- .
+  } | sort -u
+)
+
+if [ "${#files[@]}" -eq 0 ]; then
+  exit 0
+fi
+
+rb_files=()
+md_files=()
+for path in "${files[@]}"; do
+  case "$path" in
+    *.rb) rb_files+=("$path") ;;
+    *.md) md_files+=("$path") ;;
+  esac
+done
+
+if [ "${#rb_files[@]}" -gt 0 ]; then
+  bundle exec rubocop -A --force-exclusion --format quiet --display-cop-names "${rb_files[@]}" || true
+  quietly bundle exec rubocop --force-exclusion --format quiet --display-cop-names "${rb_files[@]}"
+fi
+
+if [ "${#md_files[@]}" -gt 0 ]; then
+  git_root="$(git rev-parse --show-toplevel)"
+  pnpm --dir "$git_root" exec markdownlint-cli2 --fix "${md_files[@]}" || true
+  quietly pnpm --dir "$git_root" exec markdownlint-cli2 "${md_files[@]}"
+fi
+
+tests=()
+dirty_sources=()
+missing_mirror=()
+for path in "${files[@]}"; do
+  if is_source "$path"; then
+    dirty_sources+=("$path")
+    mirror="$(test_for_source "$path")"
+    if [ ! -f "$mirror" ]; then
+      missing_mirror+=("$path → $mirror")
+    elif ! already "$mirror"; then
+      tests+=("$mirror")
+    fi
+  elif is_test "$path"; then
+    if ! already "$path"; then
+      tests+=("$path")
+    fi
+  fi
+done
+
+if [ "${#missing_mirror[@]}" -gt 0 ]; then
+  for msg in "${missing_mirror[@]}"; do
+    echo "bin/changed: no mirrored test for $msg" >&2
+  done
+  exit 1
+fi
+
+if [ "${#tests[@]}" -eq 0 ]; then
+  exit 0
+fi
+
+list="$(mktemp)"
+trap 'rm -f "$list"' EXIT
+if [ "${#dirty_sources[@]}" -gt 0 ]; then
+  printf '%s\n' "${dirty_sources[@]}" >"$list"
+else
+  : >"$list"
+fi
+export COVERAGE_DIRTY_FILES="$list"
+quietly "$HERE/test" "${tests[@]}"
+exit 0

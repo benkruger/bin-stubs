@@ -1,0 +1,502 @@
+#!/usr/bin/env bash
+# Copy each language bin into a fixture repo and run it.
+# Also runs the root dispatcher against a rails + typescript fixture.
+set -euo pipefail
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO="$(cd "$HERE/.." && pwd)"
+# shellcheck source=lib.sh
+. "$HERE/lib.sh"
+
+WORK="$(mktemp -d "${TMPDIR:-/tmp}/bin-stubs-tests.XXXXXX")"
+trap 'stop_spin; rm -rf "$WORK"' EXIT
+
+new_repo() {
+  local d
+  d="$(mktemp -d "$WORK/repo.XXXXXX")"
+  git -C "$d" init -q -b main
+  git -C "$d" config user.email "bin-stubs@example.com"
+  git -C "$d" config user.name "bin-stubs"
+  cat >"$d/.gitignore" <<'EOF'
+.flow-states/
+node_modules/
+.venv/
+vendor/
+target/
+.build/
+.bundle/
+EOF
+  git -C "$d" add .gitignore
+  git -C "$d" commit -q -m init
+  printf '%s\n' "$d"
+}
+
+expect_ok() {
+  run_log "$@"
+  assert_rc 0 "$*"
+}
+
+expect_fail() {
+  run_log "$@"
+  [ "${LAST_RC}" -ne 0 ] || die "expected failure: $*"
+}
+
+summary() { tail -n 20 "${LAST_LOG}"; }
+
+test_copies_match() {
+  say "copied sentinel libs match"
+  local lang
+  for lang in ios rails typescript javascript python rust; do
+    [ -x "$REPO/$lang/bin/ci" ] || die "$lang bin/ci is not executable"
+    grep -q '\[$step/4\]' "$REPO/$lang/bin/ci" || die "$lang ci has no step line"
+  done
+}
+
+test_changed_empty() {
+  say "changed on a clean tree"
+  local repo
+  repo="$(new_repo)"
+  KEEP="$repo"
+  copy_dir "$REPO/bin" "$repo/bin"
+  git -C "$repo" add bin
+  git -C "$repo" commit -q -m "bin"
+  expect_ok "$repo/bin/changed"
+  grep -q "nothing dirty" "${LAST_LOG}" || die "missing nothing-dirty line"
+}
+
+seed_typescript() {
+  local app="$1"
+  mkdir -p "$app/src" "$app/tests"
+  cat >"$app/package.json" <<'EOF'
+{
+  "name": "app",
+  "private": true,
+  "type": "module",
+  "devDependencies": {
+    "@biomejs/biome": "2.2.4",
+    "typescript": "5.9.2"
+  }
+}
+EOF
+  cat >"$app/tsconfig.json" <<'EOF'
+{
+  "compilerOptions": {
+    "strict": true,
+    "noEmit": true,
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "target": "esnext",
+    "skipLibCheck": true,
+    "types": []
+  },
+  "include": ["src"]
+}
+EOF
+  cat >"$app/src/add.ts" <<'EOF'
+export function add(a: number, b: number): number {
+return a+b
+}
+EOF
+  cat >"$app/tests/add.test.ts" <<'EOF'
+import { expect, test } from "bun:test";
+import { add } from "../src/add";
+
+test("add", () => {
+  expect(add(1, 2)).toBe(3);
+});
+EOF
+}
+
+seed_javascript() {
+  local app="$1"
+  mkdir -p "$app/src" "$app/tests"
+  cat >"$app/package.json" <<'EOF'
+{
+  "name": "app",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.2.4",
+    "c8": "10.1.3"
+  }
+}
+EOF
+  cat >"$app/src/index.js" <<'EOF'
+export function add(a, b) {
+return a+b
+}
+EOF
+  cat >"$app/tests/index.test.js" <<'EOF'
+import assert from "node:assert/strict";
+import test from "node:test";
+import { add } from "../src/index.js";
+
+test("add", () => {
+  assert.equal(add(1, 2), 3);
+});
+EOF
+}
+
+seed_python() {
+  local app="$1"
+  mkdir -p "$app/src" "$app/tests"
+  cat >"$app/pyproject.toml" <<'EOF'
+[project]
+name = "app"
+version = "0.1.0"
+requires-python = ">=3.12"
+
+[dependency-groups]
+dev = ["ruff>=0.8", "pytest>=8", "pytest-cov>=6"]
+
+[tool.uv]
+default-groups = ["dev"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+EOF
+  cat >"$app/src/add.py" <<'EOF'
+def add(a: int, b: int) -> int:
+    return a+b
+EOF
+  cat >"$app/tests/test_add.py" <<'EOF'
+from add import add
+
+
+def test_add() -> None:
+    assert add(1, 2) == 3
+EOF
+}
+
+seed_rails() {
+  local app="$1"
+  mkdir -p "$app/lib" "$app/test"
+  cat >"$app/Gemfile" <<'EOF'
+source 'https://rubygems.org'
+gem 'minitest'
+gem 'rubocop'
+EOF
+  cat >"$app/.rubocop.yml" <<'EOF'
+AllCops:
+  NewCops: enable
+  SuggestExtensions: false
+Style/Documentation:
+  Enabled: false
+Style/FrozenStringLiteralComment:
+  Enabled: false
+Metrics:
+  Enabled: false
+EOF
+  cat >"$app/lib/add.rb" <<'EOF'
+module Add
+  module_function
+
+  def call(left, right)
+    left+right
+  end
+end
+EOF
+  cat >"$app/test/add_test.rb" <<'EOF'
+require 'minitest/autorun'
+require_relative '../lib/add'
+
+class AddTest < Minitest::Test
+  def test_call
+    assert_equal 3, Add.call(1, 2)
+  end
+end
+EOF
+}
+
+seed_rust() {
+  local app="$1"
+  mkdir -p "$app/src"
+  cat >"$app/Cargo.toml" <<'EOF'
+[package]
+name = "app"
+version = "0.1.0"
+edition = "2021"
+EOF
+  cat >"$app/src/lib.rs" <<'EOF'
+pub fn add(a: i32, b: i32) -> i32 { a+b }
+
+#[cfg(test)]
+mod tests {
+    use super::add;
+
+    #[test]
+    fn adds() {
+        assert_eq!(add(1, 2), 3);
+    }
+}
+EOF
+}
+
+seed_ios() {
+  local app="$1"
+  mkdir -p "$app/Sources/App" "$app/Tests/AppTests"
+  cat >"$app/Package.swift" <<'EOF'
+// swift-tools-version: 6.0
+import PackageDescription
+
+let package = Package(
+    name: "App",
+    targets: [
+        .target(name: "App"),
+        .testTarget(name: "AppTests", dependencies: ["App"]),
+    ]
+)
+EOF
+  cat >"$app/Sources/App/Add.swift" <<'EOF'
+public func add(_ a: Int, _ b: Int) -> Int { a+b }
+EOF
+  cat >"$app/Tests/AppTests/AddTests.swift" <<'EOF'
+import Testing
+@testable import App
+
+@Test func adds() {
+    #expect(add(1, 2) == 3)
+}
+EOF
+}
+
+source_of() {
+  case "$1" in
+    typescript) printf '%s\n' src/add.ts ;;
+    javascript) printf '%s\n' src/index.js ;;
+    python) printf '%s\n' src/add.py ;;
+    rails) printf '%s\n' lib/add.rb ;;
+    rust) printf '%s\n' src/lib.rs ;;
+    ios) printf '%s\n' Sources/App/Add.swift ;;
+  esac
+}
+
+seed_of() {
+  case "$1" in
+    typescript) seed_typescript "$2" ;;
+    javascript) seed_javascript "$2" ;;
+    python) seed_python "$2" ;;
+    rails) seed_rails "$2" ;;
+    rust) seed_rust "$2" ;;
+    ios) seed_ios "$2" ;;
+  esac
+}
+
+red_file() {
+  local app="$1" lang="$2"
+  case "$lang" in
+    typescript)
+      cat >"$app/tests/red.test.ts" <<'EOF'
+import { expect, test } from "bun:test";
+
+test("red", () => {
+  expect(1).toBe(0);
+});
+EOF
+      ;;
+    javascript)
+      cat >"$app/tests/red.test.js" <<'EOF'
+import assert from "node:assert/strict";
+import test from "node:test";
+
+test("red", () => {
+  assert.equal(1, 0);
+});
+EOF
+      ;;
+    python)
+      cat >"$app/tests/test_red.py" <<'EOF'
+def test_red() -> None:
+    assert 1 == 0
+EOF
+      ;;
+    rails)
+      cat >"$app/test/red_test.rb" <<'EOF'
+require "minitest/autorun"
+
+class RedTest < Minitest::Test
+  def test_red
+    assert_equal 1, 0
+  end
+end
+EOF
+      ;;
+    rust)
+      mkdir -p "$app/tests"
+      cat >"$app/tests/red.rs" <<'EOF'
+#[test]
+fn red() {
+    assert_eq!(1, 0);
+}
+EOF
+      ;;
+    ios)
+      cat >"$app/Tests/AppTests/RedTests.swift" <<'EOF'
+import Testing
+
+@Test func red() {
+    #expect(1 == 0)
+}
+EOF
+      ;;
+  esac
+}
+
+test_language() {
+  local lang="$1" repo app sent hash
+  say "$lang bin"
+  repo="$(new_repo)"
+  KEEP="$repo"
+  app="$repo/$lang"
+  mkdir -p "$app"
+  copy_dir "$REPO/$lang/bin" "$app/bin"
+  seed_of "$lang" "$app"
+  expect_ok "$app/bin/ci"
+  grep -q "bin/ci: \[1/4\] format" "${LAST_LOG}" || die "$lang did not print the format step"
+  grep -q "bin/ci: \[4/4\] test" "${LAST_LOG}" || die "$lang did not print the test step"
+  grep -q "sentinel written" "${LAST_LOG}" || die "$lang first run did not write a sentinel"
+  if [ "$lang" = "rails" ]; then
+    grep -q "left + right" "$app/$(source_of "$lang")" || die "$lang format did not rewrite the source"
+  else
+    grep -q "a + b" "$app/$(source_of "$lang")" || die "$lang format did not rewrite the source"
+  fi
+  sent="$(sentinel_file "$app")"
+  [ -f "$sent" ] || die "$lang sentinel missing"
+  hash="$(cat "$sent")"
+  expect_ok "$app/bin/ci"
+  grep -q "sentinel written" "${LAST_LOG}" && die "$lang second run rewrote the sentinel"
+  assert_eq "$(cat "$sent")" "$hash" "$lang skip changed the hash"
+  echo "sibling" >"$repo/NOTES.txt"
+  expect_ok "$app/bin/ci"
+  grep -q "sentinel written" "${LAST_LOG}" && die "$lang sibling edit rewrote the sentinel"
+  assert_eq "$(cat "$sent")" "$hash" "$lang sibling edit changed the hash"
+  red_file "$app" "$lang"
+  expect_fail "$app/bin/ci"
+  assert_eq "$(cat "$sent")" "$hash" "$lang red run replaced the certificate"
+  rm -f "$app/tests/red.test.ts" "$app/tests/red.test.js" "$app/tests/test_red.py" \
+    "$app/test/red_test.rb" "$app/tests/red.rs" "$app/Tests/AppTests/RedTests.swift"
+  expect_ok "$app/bin/ci" --force
+  grep -q "sentinel written" "${LAST_LOG}" || die "$lang --force did not write"
+  expect_ok "$app/bin/ci" --clean
+  [ ! -f "$sent" ] || die "$lang --clean left the sentinel"
+}
+
+test_dispatch() {
+  say "dispatcher"
+  local repo sent_rails
+  repo="$(new_repo)"
+  KEEP="$repo"
+  copy_dir "$REPO/bin" "$repo/bin"
+  mkdir -p "$repo/python" "$repo/typescript"
+  copy_dir "$REPO/python/bin" "$repo/python/bin"
+  copy_dir "$REPO/typescript/bin" "$repo/typescript/bin"
+  seed_python "$repo/python"
+  seed_typescript "$repo/typescript"
+  expect_ok "$repo/bin/ci"
+  local sum
+  sum="$(summary)"
+  assert_eq "$(row_of python "$sum")" "PASS" "first python"
+  assert_eq "$(row_of typescript "$sum")" "PASS" "first typescript"
+  assert_eq "$(row_of suite "$sum")" "PASS" "first suite"
+  expect_ok "$repo/bin/ci"
+  sum="$(summary)"
+  assert_eq "$(row_of python "$sum")" "SKIP" "second python"
+  assert_eq "$(row_of typescript "$sum")" "SKIP" "second typescript"
+  if [ "$(row_of suite "$sum")" = "PASS" ]; then
+    expect_ok "$repo/bin/ci"
+    sum="$(summary)"
+  fi
+  assert_eq "$(row_of suite "$sum")" "SKIP" "suite settled"
+  printf '\nexport const marker = 1\n' >>"$repo/typescript/src/add.ts"
+  expect_ok "$repo/bin/ci"
+  sum="$(summary)"
+  assert_eq "$(row_of typescript "$sum")" "PASS" "edited typescript"
+  assert_eq "$(row_of python "$sum")" "SKIP" "python untouched"
+  sent_rails="$(sentinel_file "$repo/python")"
+  local rails_hash
+  rails_hash="$(cat "$sent_rails")"
+  echo "top" >"$repo/TOP.txt"
+  expect_ok "$repo/bin/ci"
+  sum="$(summary)"
+  assert_eq "$(row_of python "$sum")" "SKIP" "foreign file left python"
+  assert_eq "$(cat "$sent_rails")" "$rails_hash" "foreign file changed rails hash"
+  git -C "$repo" add -A
+  git -C "$repo" commit -q -m "formatted"
+  expect_ok "$repo/bin/ci"
+  sum="$(summary)"
+  assert_eq "$(row_of python "$sum")" "PASS" "commit re-runs python"
+  expect_ok "$repo/bin/ci"
+  sum="$(summary)"
+  assert_eq "$(row_of python "$sum")" "SKIP" "clean tree python"
+  assert_eq "$(row_of typescript "$sum")" "SKIP" "clean tree typescript"
+  assert_eq "$(row_of suite "$sum")" "SKIP" "clean tree suite"
+  echo "corpus" >"$repo/CLAUDE.md"
+  expect_ok "$repo/bin/ci"
+  sum="$(summary)"
+  assert_eq "$(row_of suite "$sum")" "PASS" "corpus selects the suite"
+  assert_eq "$(row_of python "$sum")" "SKIP" "corpus leaves python"
+  assert_eq "$(row_of typescript "$sum")" "SKIP" "corpus leaves typescript"
+  git -C "$repo" add CLAUDE.md
+  git -C "$repo" commit -q -m "corpus"
+  expect_ok "$repo/bin/ci"
+  printf '\nexport const changed = 1\n' >>"$repo/typescript/src/add.ts"
+  expect_ok "$repo/bin/changed"
+  sum="$(summary)"
+  assert_eq "$(row_of typescript "$sum")" "PASS" "changed typescript"
+  assert_eq "$(row_of python "$sum")" "SKIP" "changed leaves python"
+  assert_eq "$(row_of suite "$sum")" "SKIP" "changed leaves the suite"
+  expect_ok "$repo/bin/test" typescript/tests/add.test.ts
+  sum="$(summary)"
+  assert_eq "$(row_of typescript "$sum")" "PASS" "filtered test"
+  assert_eq "$(row_of python "$sum")" "SKIP" "filter withheld python"
+}
+
+test_root_app() {
+  say "root app excludes sibling folders"
+  local repo sent hash
+  repo="$(new_repo)"
+  KEEP="$repo"
+  copy_dir "$REPO/bin" "$repo/bin"
+  mkdir -p "$repo/bin/_root" "$repo/ios"
+  copy_dir "$REPO/python/bin" "$repo/bin/_root"
+  copy_dir "$REPO/ios/bin" "$repo/ios/bin"
+  seed_python "$repo"
+  mkdir -p "$repo/ios/Sources/App"
+  echo "public func other() {}" >"$repo/ios/Sources/App/Other.swift"
+  expect_ok "$repo/bin/_root/ci"
+  sent="$(sentinel_file "$repo")"
+  hash="$(cat "$sent")"
+  echo "public func more() {}" >>"$repo/ios/Sources/App/Other.swift"
+  expect_ok "$repo/bin/_root/ci"
+  grep -q "sentinel written" "${LAST_LOG}" && die "sibling ios edit rewrote the root sentinel"
+  assert_eq "$(cat "$sent")" "$hash" "root hash changed"
+}
+
+test_dependencies() {
+  say "rust dependencies"
+  local repo
+  repo="$(new_repo)"
+  KEEP="$repo"
+  copy_dir "$REPO/bin" "$repo/bin"
+  mkdir -p "$repo/rust"
+  copy_dir "$REPO/rust/bin" "$repo/rust/bin"
+  seed_rust "$repo/rust"
+  expect_ok "$repo/bin/dependencies"
+  local sum
+  sum="$(summary)"
+  assert_eq "$(row_of rust "$sum")" "PASS" "dependencies"
+}
+
+test_copies_match
+test_changed_empty
+test_language typescript
+test_language javascript
+test_language python
+test_language rust
+test_language ios
+test_dispatch
+test_root_app
+test_dependencies
+stop_spin "✓"

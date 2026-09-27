@@ -1,0 +1,231 @@
+#!/usr/bin/env bash
+# bin/test — pytest with coverage, then 100/100 on every source file this
+# folder changed. A changed test still requires its mirrored source at
+# 100/100. Path args still require 100/100 on the mirrored source when
+# that twin exists; a path with no twin (a throwaway probe) is
+# assertion-only.
+#
+# Usage: bin/test [args...]
+set -euo pipefail
+export PATH="${HOME}/.local/bin:${PATH}"
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [ "$(basename "$here")" = "_root" ]; then
+  root="$(cd "$here/../.." && pwd)"
+else
+  root="$(cd "$here/.." && pwd)"
+fi
+cd "$root"
+
+if [ -d src ]; then
+  export PYTHONPATH="${root}/src${PYTHONPATH:+:$PYTHONPATH}"
+else
+  export PYTHONPATH="${root}${PYTHONPATH:+:$PYTHONPATH}"
+fi
+
+covjson="$(mktemp)"
+covrc="$(mktemp)"
+trap 'rm -f "$covjson" "$covrc"' EXIT
+cat >"$covrc" <<'EOF'
+[run]
+omit =
+    .venv/*
+    tests/*
+EOF
+
+pytest_args=(--cov-branch --cov-report=term-missing:skip-covered "--cov-report=json:$covjson" "--cov-config=$covrc")
+if [ -d src ]; then
+  pytest_args+=(--cov=src)
+else
+  pytest_args+=(--cov=.)
+fi
+
+rc=0
+if [ "$#" -gt 0 ]; then
+  uv run pytest "${pytest_args[@]}" "$@" || rc=$?
+elif [ -d tests ]; then
+  uv run pytest tests "${pytest_args[@]}" || rc=$?
+else
+  echo "bin/test: no tests/ directory" >&2
+  rc=1
+fi
+
+has_own_test() {
+  local top="$1"
+  [ -x "$root/$top/bin/test" ]
+}
+
+owned_change() {
+  local path="$1" top
+  [ -f "$path" ] || return 1
+  top="${path%%/*}"
+  if [ "$top" != "$path" ] && has_own_test "$top"; then
+    return 1
+  fi
+  return 0
+}
+
+is_source() {
+  case "$1" in
+    tests/* | .venv/*) return 1 ;;
+    test_*.py | */test_*.py) return 1 ;;
+    *.py) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+is_test() {
+  case "$1" in
+    tests/test_*.py | tests/*/test_*.py) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+test_for_source() {
+  local rel="$1" dir base
+  if [[ "$rel" == src/* ]]; then
+    rel="${rel#src/}"
+  fi
+  dir="$(dirname "$rel")"
+  base="$(basename "$rel" .py)"
+  if [ "$dir" = "." ]; then
+    echo "tests/test_${base}.py"
+  else
+    echo "tests/${dir}/test_${base}.py"
+  fi
+}
+
+source_for_test() {
+  local rel="${1#tests/}" dir base
+  base="$(basename "$rel")"
+  base="${base#test_}"
+  dir="$(dirname "$rel")"
+  if [ "$dir" = "." ]; then
+    if [ -f "src/${base}" ]; then
+      echo "src/${base}"
+    else
+      echo "${base}"
+    fi
+  else
+    if [ -f "src/${dir}/${base}" ]; then
+      echo "src/${dir}/${base}"
+    else
+      echo "${dir}/${base}"
+    fi
+  fi
+}
+
+already() {
+  local n="$1" t
+  for t in "${required[@]+"${required[@]}"}"; do
+    [ "$t" = "$n" ] && return 0
+  done
+  return 1
+}
+
+required=()
+missing_mirror=()
+
+if [ "$#" -gt 0 ]; then
+  for arg in "$@"; do
+    case "$arg" in
+      -*) continue ;;
+    esac
+    arg="${arg#./}"
+    if is_source "$arg"; then
+      already "$arg" || required+=("$arg")
+    elif is_test "$arg"; then
+      src="$(source_for_test "$arg")"
+      if [ -f "$src" ]; then
+        already "$src" || required+=("$src")
+      fi
+    fi
+  done
+else
+  while IFS= read -r path; do
+    [ -z "$path" ] && continue
+    case "$path" in
+      node_modules/* | .venv/* | .flow-states/* | flume/* | */node_modules/* | */.venv/* | */.flow-states/*)
+        continue
+        ;;
+    esac
+    owned_change "$path" || continue
+    if is_source "$path"; then
+      already "$path" || required+=("$path")
+      mirror="$(test_for_source "$path")"
+      if [ ! -f "$mirror" ]; then
+        missing_mirror+=("$path → $mirror")
+      fi
+    elif is_test "$path"; then
+      # A test with no twin (a corpus meta-test in tests/) is assertion-only.
+      src="$(source_for_test "$path")"
+      if [ -f "$src" ]; then
+        already "$src" || required+=("$src")
+      fi
+    fi
+  done < <(
+    {
+      git -C "$root" diff --name-only --relative HEAD -- .
+      git -C "$root" ls-files --others --exclude-standard -- .
+    } | sort -u
+  )
+fi
+
+file_cov() {
+  local file="$1"
+  uv run python -c '
+import json, sys
+data = json.load(open(sys.argv[1]))
+want = sys.argv[2]
+files = data.get("files", {})
+info = files.get(want)
+if info is None:
+    for key, val in files.items():
+        if key.endswith("/" + want) or key.endswith(want):
+            info = val
+            break
+if info is None:
+    print("missing")
+    raise SystemExit(0)
+s = info.get("summary", {})
+stmts = s.get("num_statements", 0)
+covered = s.get("covered_lines", 0)
+branches = s.get("num_branches", 0)
+b_cov = s.get("covered_branches", 0)
+print(f"{covered}/{stmts} {b_cov}/{branches}")
+' "$covjson" "$file"
+}
+
+ratchet=0
+for msg in "${missing_mirror[@]+"${missing_mirror[@]}"}"; do
+  echo "bin/test: no mirrored test for $msg" >&2
+  ratchet=1
+done
+
+for src in "${required[@]+"${required[@]}"}"; do
+  if [ ! -f "$src" ]; then
+    echo "bin/test: $src is required at 100/100 but is missing" >&2
+    ratchet=1
+    continue
+  fi
+  cov="$(file_cov "$src")"
+  if [ "$cov" = "missing" ]; then
+    echo "bin/test: $src has no coverage row (need 100/100)" >&2
+    ratchet=1
+    continue
+  fi
+  lines="${cov%% *}"
+  branches="${cov##* }"
+  covered_l="${lines%%/*}"
+  stmts="${lines##*/}"
+  covered_b="${branches%%/*}"
+  brs="${branches##*/}"
+  if [ "$stmts" != "$covered_l" ] || { [ "$brs" != "0" ] && [ "$covered_b" != "$brs" ]; }; then
+    echo "bin/test: $src at ${lines} stmts ${branches} branches (need 100/100)" >&2
+    ratchet=1
+  fi
+done
+
+if [ "$ratchet" -ne 0 ]; then
+  exit 1
+fi
+exit "$rc"

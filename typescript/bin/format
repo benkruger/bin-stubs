@@ -1,0 +1,46 @@
+#!/usr/bin/env bash
+# bin/format — format files this folder changed (Biome write, linter off).
+# Git diff vs HEAD plus untracked, owned by this gate. A sibling folder
+# with its own bin/format is left alone. Not a linter (bin/lint owns lint).
+#
+# Usage: bin/format
+set -euo pipefail
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [ "$(basename "$here")" = "_root" ]; then
+  root="$(cd "$here/../.." && pwd)"
+else
+  root="$(cd "$here/.." && pwd)"
+fi
+cd "$root"
+
+has_own_format() {
+  local top="$1"
+  [ -x "$root/$top/bin/format" ]
+}
+
+files=()
+while IFS= read -r path; do
+  [ -z "$path" ] && continue
+  [ -f "$path" ] || continue
+  case "$path" in
+    node_modules/* | .venv/* | .flow-states/* | flume/* | */node_modules/* | */.venv/* | */.flow-states/*)
+      continue
+      ;;
+  esac
+  top="${path%%/*}"
+  if [ "$top" != "$path" ] && has_own_format "$top"; then
+    continue
+  fi
+  files+=("$path")
+done < <(
+  {
+    git diff --name-only HEAD -- .
+    git ls-files --others --exclude-standard -- .
+  } | sort -u
+)
+
+if [ "${#files[@]}" -eq 0 ]; then
+  exit 0
+fi
+
+exec "$root/node_modules/.bin/biome" check --write --linter-enabled=false "${files[@]}"

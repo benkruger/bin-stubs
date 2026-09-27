@@ -1,0 +1,49 @@
+#!/usr/bin/env bash
+# bin/build — the folder's own build script (`<pm> run build`) when
+# package.json declares one; otherwise a syntax check (node --check) of
+# every JavaScript file this folder changed. The package manager is read
+# from the lockfile (pnpm-lock.yaml → pnpm, yarn.lock → yarn, bun.lock →
+# bun, else npm).
+#
+# Usage: bin/build
+set -euo pipefail
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [ "$(basename "$here")" = "_root" ]; then
+  root="$(cd "$here/../.." && pwd)"
+else
+  root="$(cd "$here/.." && pwd)"
+fi
+cd "$root"
+
+pm=npm
+if [ -f pnpm-lock.yaml ]; then
+  pm=pnpm
+elif [ -f yarn.lock ]; then
+  pm=yarn
+elif [ -f bun.lock ] || [ -f bun.lockb ]; then
+  pm=bun
+  export PATH="${HOME}/.bun/bin:${PATH}"
+fi
+
+if node -e 'const p = require("./package.json"); process.exit(p.scripts && p.scripts.build ? 0 : 1)'; then
+  exec "$pm" run build
+fi
+
+files=()
+while IFS= read -r path; do
+  [ -z "$path" ] && continue
+  [ -f "$path" ] || continue
+  case "$path" in
+    node_modules/* | dist/* | .flow-states/* | flume/* | */node_modules/* | */.flow-states/*) continue ;;
+    *.js | *.mjs | *.cjs) files+=("$path") ;;
+  esac
+done < <(
+  {
+    git -C "$root" diff --name-only --relative HEAD -- .
+    git -C "$root" ls-files --others --exclude-standard -- .
+  } | sort -u
+)
+
+for f in "${files[@]+"${files[@]}"}"; do
+  node --check "$f"
+done

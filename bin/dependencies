@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+# Root dependency refresh. Hands the phase to bin/_dispatch.
+# With no path arguments, every folder is refreshed.
+# Usage: bin/dependencies
+set -euo pipefail
+exec "$(dirname "${BASH_SOURCE[0]}")/_dispatch" dependencies "$@"

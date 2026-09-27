@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+# Root test phase. Hands the phase to bin/_dispatch.
+# Usage: bin/test
+set -euo pipefail
+exec "$(dirname "${BASH_SOURCE[0]}")/_dispatch" test "$@"

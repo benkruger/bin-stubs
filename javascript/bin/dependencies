@@ -1,0 +1,43 @@
+#!/usr/bin/env bash
+# bin/dependencies — update through the folder's own package manager
+# (read from the lockfile: pnpm-lock.yaml → pnpm, yarn.lock → yarn,
+# bun.lock → bun, else npm), then biome migrate --write so the version
+# move and its config change land together, then a frozen install to
+# prove the refreshed lockfile installs as written on any machine.
+#
+# Usage: bin/dependencies
+set -euo pipefail
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [ "$(basename "$here")" = "_root" ]; then
+  root="$(cd "$here/../.." && pwd)"
+else
+  root="$(cd "$here/.." && pwd)"
+fi
+cd "$root"
+
+pm=npm
+if [ -f pnpm-lock.yaml ]; then
+  pm=pnpm
+elif [ -f yarn.lock ]; then
+  pm=yarn
+elif [ -f bun.lock ] || [ -f bun.lockb ]; then
+  pm=bun
+  export PATH="${HOME}/.bun/bin:${PATH}"
+fi
+
+case "$pm" in
+  yarn) yarn upgrade ;;
+  *) "$pm" update ;;
+esac
+"$root/node_modules/.bin/biome" migrate --write
+
+case "$pm" in
+  npm)
+    if [ -f package-lock.json ]; then
+      npm ci
+    else
+      npm install
+    fi
+    ;;
+  *) "$pm" install --frozen-lockfile ;;
+esac

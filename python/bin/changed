@@ -1,0 +1,134 @@
+#!/usr/bin/env bash
+# bin/changed — coding-time gate for files this folder changed. ruff format
+# and ruff check --fix, then lint (leftover stays red), tests for the dirty
+# tree, 100/100 on every dirty source. No twin test → red. Empty diff →
+# green. No build, no sentinel, not bin/ci.
+#
+# Usage: bin/changed
+set -euo pipefail
+export PATH="${HOME}/.local/bin:${PATH}"
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [ "$(basename "$here")" = "_root" ]; then
+  root="$(cd "$here/../.." && pwd)"
+else
+  root="$(cd "$here/.." && pwd)"
+fi
+cd "$root"
+
+has_own() {
+  local top="$1" leaf="$2"
+  [ -x "$root/$top/bin/$leaf" ]
+}
+
+owned_change() {
+  local path="$1" top
+  [ -f "$path" ] || return 1
+  top="${path%%/*}"
+  if [ "$top" != "$path" ] && has_own "$top" changed; then
+    return 1
+  fi
+  return 0
+}
+
+is_source() {
+  case "$1" in
+    tests/* | .venv/*) return 1 ;;
+    test_*.py | */test_*.py) return 1 ;;
+    *.py) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+is_test() {
+  case "$1" in
+    tests/test_*.py | tests/*/test_*.py) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+test_for_source() {
+  local rel="$1" dir base
+  if [[ "$rel" == src/* ]]; then
+    rel="${rel#src/}"
+  fi
+  dir="$(dirname "$rel")"
+  base="$(basename "$rel" .py)"
+  if [ "$dir" = "." ]; then
+    echo "tests/test_${base}.py"
+  else
+    echo "tests/${dir}/test_${base}.py"
+  fi
+}
+
+already() {
+  local n="$1" t
+  for t in "${tests[@]+"${tests[@]}"}"; do
+    [ "$t" = "$n" ] && return 0
+  done
+  return 1
+}
+
+files=()
+while IFS= read -r path; do
+  [ -z "$path" ] && continue
+  [ -f "$path" ] || continue
+  case "$path" in
+    node_modules/* | .venv/* | .flow-states/* | flume/* | */node_modules/* | */.venv/* | */.flow-states/*)
+      continue
+      ;;
+  esac
+  owned_change "$path" || continue
+  files+=("$path")
+done < <(
+  {
+    git -C "$root" diff --name-only --relative HEAD -- .
+    git -C "$root" ls-files --others --exclude-standard -- .
+  } | sort -u
+)
+
+if [ "${#files[@]}" -eq 0 ]; then
+  exit 0
+fi
+
+py_files=()
+for path in "${files[@]}"; do
+  case "$path" in
+    *.py | *.pyi) py_files+=("$path") ;;
+  esac
+done
+
+if [ "${#py_files[@]}" -gt 0 ]; then
+  uv run ruff format "${py_files[@]}"
+  uv run ruff check --fix "${py_files[@]}" || true
+fi
+
+"$here/lint"
+
+tests=()
+missing_mirror=()
+for path in "${files[@]}"; do
+  if is_source "$path"; then
+    mirror="$(test_for_source "$path")"
+    if [ ! -f "$mirror" ]; then
+      missing_mirror+=("$path → $mirror")
+    elif ! already "$mirror"; then
+      tests+=("$mirror")
+    fi
+  elif is_test "$path"; then
+    if ! already "$path"; then
+      tests+=("$path")
+    fi
+  fi
+done
+
+if [ "${#missing_mirror[@]}" -gt 0 ]; then
+  for msg in "${missing_mirror[@]}"; do
+    echo "bin/changed: no mirrored test for $msg" >&2
+  done
+  exit 1
+fi
+
+if [ "${#tests[@]}" -gt 0 ]; then
+  exec "$here/test" "${tests[@]}"
+fi
+exit 0

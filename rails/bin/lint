@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+# Lint phase — RuboCop with autocorrect (`-A`), then markdownlint on tracked
+# Markdown under this app.
+set -euo pipefail
+
+HERE="$(cd "$(dirname "$0")" && pwd)"
+REPO_ROOT="$(cd "$HERE/.." && pwd)"
+cd "$REPO_ROOT"
+
+# shellcheck source=bin/_run_quiet
+. "$HERE/_run_quiet"
+
+run_quiet "rails (rubocop -A)" bundle exec rubocop -A --format quiet --display-cop-names
+run_quiet "rails (brakeman)" bundle exec brakeman --quiet --no-pager --exit-on-warn --exit-on-error
+
+md_files=()
+while IFS= read -r file; do
+  md_files+=("$file")
+done < <(git ls-files '*.md')
+if [ "${#md_files[@]}" -eq 0 ]; then
+  echo "  ✓ markdownlint (no tracked Markdown files)"
+else
+  git_root="$(git rev-parse --show-toplevel)"
+  run_quiet "markdownlint" pnpm --dir "$git_root" exec markdownlint-cli2 "${md_files[@]}"
+fi

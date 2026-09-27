@@ -1,0 +1,264 @@
+#!/usr/bin/env bash
+# bin/test — the folder's own test script under c8 (`c8 <pm> run test`),
+# then 100/100 on every source file this folder changed. A changed test
+# still requires its mirrored source at 100/100. Path args are forwarded
+# to the test script and still require 100/100 on the mirrored source when
+# that twin exists; a path with no twin (a throwaway probe) is
+# assertion-only. The package manager is read from the lockfile
+# (pnpm-lock.yaml → pnpm, yarn.lock → yarn, bun.lock → bun, else npm).
+#
+# A source is any .js/.mjs/.cjs/.jsx below a directory (root-level files
+# are config, never sources) outside tests/, dist/, public/, and
+# node_modules/. Its twin is the first that exists of
+# tests/<rel>.test.{js,mjs}, <dir>/<name>.test.{js,mjs}, or the colocated
+# <dir>/test-<name>.{mjs,js}.
+#
+# Usage: bin/test [args...]
+set -euo pipefail
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [ "$(basename "$here")" = "_root" ]; then
+  root="$(cd "$here/../.." && pwd)"
+else
+  root="$(cd "$here/.." && pwd)"
+fi
+cd "$root"
+
+pm=npm
+if [ -f pnpm-lock.yaml ]; then
+  pm=pnpm
+elif [ -f yarn.lock ]; then
+  pm=yarn
+elif [ -f bun.lock ] || [ -f bun.lockb ]; then
+  pm=bun
+  export PATH="${HOME}/.bun/bin:${PATH}"
+fi
+
+covdir="$root/.coverage-ratchet"
+rm -rf "$covdir"
+mkdir -p "$covdir"
+
+rc=0
+paths=()
+for arg in "$@"; do
+  case "$arg" in
+    -*) ;;
+    *) paths+=("$arg") ;;
+  esac
+done
+run=("$pm" run test)
+if [ "${#paths[@]}" -gt 0 ]; then
+  run+=(-- "${paths[@]}")
+fi
+"$root/node_modules/.bin/c8" --reporter=json --reports-dir="$covdir" "${run[@]}" || rc=$?
+covjson="$covdir/coverage-final.json"
+
+has_own_test() {
+  local top="$1"
+  [ -x "$root/$top/bin/test" ]
+}
+
+owned_change() {
+  local path="$1" top
+  [ -f "$path" ] || return 1
+  top="${path%%/*}"
+  if [ "$top" != "$path" ] && has_own_test "$top"; then
+    return 1
+  fi
+  return 0
+}
+
+is_test() {
+  case "$1" in
+    tests/*.js | tests/*.mjs | tests/*.cjs | tests/*.jsx) return 0 ;;
+    *.test.js | *.test.mjs | *.test.cjs | *.test.jsx | *.spec.js | *.spec.mjs) return 0 ;;
+    test-*.mjs | */test-*.mjs | test-*.js | */test-*.js) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+is_source() {
+  case "$1" in
+    */*) ;;
+    *) return 1 ;;
+  esac
+  case "$1" in
+    tests/* | node_modules/* | dist/* | public/* | coverage/* | */node_modules/*) return 1 ;;
+  esac
+  is_test "$1" && return 1
+  case "$1" in
+    *.js | *.mjs | *.cjs | *.jsx) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+test_for_source() {
+  local rel="$1" dir base stem strip c
+  dir="$(dirname "$rel")"
+  base="$(basename "$rel")"
+  stem="${base%.*}"
+  strip="${rel#src/}"
+  strip="${strip%.*}"
+  for c in "tests/${strip}.test.js" "tests/${strip}.test.mjs" "$dir/${stem}.test.js" "$dir/${stem}.test.mjs" "$dir/test-${stem}.mjs" "$dir/test-${stem}.js"; do
+    if [ -f "$c" ]; then
+      echo "$c"
+      return
+    fi
+  done
+  echo "tests/${strip}.test.js"
+}
+
+# The source a test mirrors, or empty when none exists (assertion-only).
+source_for_test() {
+  local t="$1" dir base stem rel c
+  dir="$(dirname "$t")"
+  base="$(basename "$t")"
+  case "$base" in
+    test-*)
+      stem="${base#test-}"
+      stem="${stem%.*}"
+      for c in "$dir/$stem.js" "$dir/$stem.mjs" "$dir/$stem.cjs" "$dir/$stem.jsx"; do
+        if [ -f "$c" ]; then
+          echo "$c"
+          return
+        fi
+      done
+      ;;
+    *)
+      stem="${base%.*}"
+      stem="${stem%.test}"
+      stem="${stem%.spec}"
+      if [[ "$t" == tests/* ]]; then
+        rel="$(dirname "${t#tests/}")"
+        [ "$rel" = "." ] && rel=""
+        for c in "src/${rel:+$rel/}$stem.js" "src/${rel:+$rel/}$stem.mjs" "${rel:+$rel/}$stem.js" "${rel:+$rel/}$stem.mjs"; do
+          if [ -f "$c" ]; then
+            echo "$c"
+            return
+          fi
+        done
+      else
+        for c in "$dir/$stem.js" "$dir/$stem.mjs" "$dir/$stem.cjs" "$dir/$stem.jsx"; do
+          if [ -f "$c" ]; then
+            echo "$c"
+            return
+          fi
+        done
+      fi
+      ;;
+  esac
+  echo ""
+}
+
+already() {
+  local n="$1" t
+  for t in "${required[@]+"${required[@]}"}"; do
+    [ "$t" = "$n" ] && return 0
+  done
+  return 1
+}
+
+required=()
+missing_mirror=()
+
+if [ "${#paths[@]}" -gt 0 ]; then
+  for arg in "${paths[@]}"; do
+    arg="${arg#./}"
+    if is_source "$arg"; then
+      already "$arg" || required+=("$arg")
+    elif is_test "$arg"; then
+      src="$(source_for_test "$arg")"
+      if [ -n "$src" ]; then
+        already "$src" || required+=("$src")
+      fi
+    fi
+  done
+else
+  while IFS= read -r path; do
+    [ -z "$path" ] && continue
+    case "$path" in
+      node_modules/* | dist/* | .flow-states/* | flume/* | */node_modules/* | */.flow-states/*)
+        continue
+        ;;
+    esac
+    owned_change "$path" || continue
+    if is_source "$path"; then
+      already "$path" || required+=("$path")
+      mirror="$(test_for_source "$path")"
+      if [ ! -f "$mirror" ]; then
+        missing_mirror+=("$path → $mirror")
+      fi
+    elif is_test "$path"; then
+      src="$(source_for_test "$path")"
+      if [ -n "$src" ]; then
+        already "$src" || required+=("$src")
+      fi
+    fi
+  done < <(
+    {
+      git -C "$root" diff --name-only --relative HEAD -- .
+      git -C "$root" ls-files --others --exclude-standard -- .
+    } | sort -u
+  )
+fi
+
+ratchet=0
+for msg in "${missing_mirror[@]+"${missing_mirror[@]}"}"; do
+  echo "bin/test: no mirrored test for $msg" >&2
+  ratchet=1
+done
+
+if [ "${#required[@]}" -gt 0 ] && [ ! -f "$covjson" ]; then
+  echo "bin/test: missing coverage-final.json" >&2
+  exit 1
+fi
+
+file_cov() {
+  local file="$1"
+  node -e '
+    const fs = require("fs");
+    const path = require("path");
+    const cov = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+    const want = process.argv[2];
+    const abs = path.resolve(want);
+    let entry = cov[abs];
+    if (!entry) {
+      for (const k of Object.keys(cov)) {
+        if (k === abs || k.endsWith("/" + want) || k.endsWith(want)) {
+          entry = cov[k];
+          break;
+        }
+      }
+    }
+    if (!entry) { console.log("missing"); process.exit(0); }
+    const svals = Object.values(entry.s || {});
+    const fvals = Object.values(entry.f || {});
+    const slines = svals.length === 0 ? 100 : (svals.filter((n) => n > 0).length / svals.length) * 100;
+    const funcs = fvals.length === 0 ? 100 : (fvals.filter((n) => n > 0).length / fvals.length) * 100;
+    console.log(funcs.toFixed(2) + " " + slines.toFixed(2));
+  ' "$covjson" "$file"
+}
+
+for src in "${required[@]+"${required[@]}"}"; do
+  if [ ! -f "$src" ]; then
+    echo "bin/test: $src is required at 100/100 but is missing" >&2
+    ratchet=1
+    continue
+  fi
+  cov="$(file_cov "$src")"
+  if [ "$cov" = "missing" ]; then
+    echo "bin/test: $src has no coverage row (need 100/100)" >&2
+    ratchet=1
+    continue
+  fi
+  funcs="${cov%% *}"
+  lines="${cov##* }"
+  if [ "$funcs" != "100.00" ] || [ "$lines" != "100.00" ]; then
+    echo "bin/test: $src at ${funcs:-0}/${lines:-0} (need 100/100)" >&2
+    ratchet=1
+  fi
+done
+
+if [ "$ratchet" -ne 0 ]; then
+  exit 1
+fi
+exit "$rc"

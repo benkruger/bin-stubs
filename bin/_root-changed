@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+# Corpus dirty-tree gate. The dispatcher calls this only when a corpus
+# path is dirty. Runs the suite without consulting the ci sentinel.
+set -euo pipefail
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+if [ -x "$ROOT/tests/run" ]; then
+  exec "$ROOT/tests/run"
+fi
+if compgen -G "$ROOT/tests/*.test.ts" >/dev/null; then
+  cd "$ROOT/tests"
+  exec bun test
+fi
+echo "root-suite: no tests"
+exit 0

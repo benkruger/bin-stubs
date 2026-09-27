@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+# Shared phase helper: run a command quietly, surfacing its output only on
+# failure. Sourced by bin/build, bin/lint, and bin/test.
+#
+# Usage: run_quiet "<label>" cmd [args...]
+run_quiet() {
+  local label="$1"
+  shift
+  local log
+  log="$(mktemp "${TMPDIR:-/tmp}/run-quiet.XXXXXX")"
+  local status=0
+  "$@" >"$log" 2>&1 </dev/null || status=$?
+
+  if [ "$status" -ne 0 ]; then
+    echo "  ✗ ${label}"
+    cat "$log"
+    rm -f "$log"
+    return "$status"
+  fi
+
+  echo "  ✓ ${label}"
+  rm -f "$log"
+  return 0
+}

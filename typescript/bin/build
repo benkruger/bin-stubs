@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+# bin/build — type-check this folder (tsc --noEmit). tsc is the project's
+# node_modules/.bin (configure added it).
+#
+# Usage: bin/build
+set -euo pipefail
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [ "$(basename "$here")" = "_root" ]; then
+  root="$(cd "$here/../.." && pwd)"
+else
+  root="$(cd "$here/.." && pwd)"
+fi
+cd "$root"
+exec "$root/node_modules/.bin/tsc" --noEmit

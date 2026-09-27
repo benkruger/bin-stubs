@@ -1,0 +1,99 @@
+#!/usr/bin/env bash
+# Test this iOS app and require 100% line coverage of its sources.
+# An xcodeproj or workspace runs xcodebuild with coverage enabled.
+# A Swift package runs swift test with coverage enabled.
+# Usage: bin/test [args...]
+set -euo pipefail
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [ "$(basename "$here")" = "_root" ]; then
+  root="$(cd "$here/../.." && pwd)"
+else
+  root="$(cd "$here/.." && pwd)"
+fi
+cd "$root"
+
+coverage_ok() {
+  local report="$1"
+  python3 - "$report" <<'PY'
+import json, sys
+report = json.load(open(sys.argv[1]))
+files = []
+if "targets" in report:
+    for target in report["targets"]:
+        name = target.get("name", "")
+        if name.endswith(".xctest") or "Tests" in name:
+            continue
+        files.extend(target.get("files", []))
+else:
+    data = report["data"][0] if "data" in report else report
+    files = data.get("files", [])
+bad = []
+for f in files:
+    name = f.get("filename") or f.get("name") or ""
+    if "/Tests/" in name or name.startswith("Tests/"):
+        continue
+    summary = f.get("summary", {})
+    lines = summary.get("lines", {})
+    count = lines.get("count", 0)
+    covered = lines.get("covered", 0)
+    pct = f.get("lineCoverage")
+    if pct is None and count:
+        pct = covered / count
+    if pct is None:
+        continue
+    if pct < 1:
+        bad.append(f"{name}: {int(float(pct) * 100)}%")
+if bad:
+    print("FAIL: line coverage is under 100%")
+    print("\n".join(bad))
+    sys.exit(1)
+print("OK: 100% line coverage")
+PY
+}
+
+xcode_test() {
+  local project="$1" scheme dest bundle
+  scheme="$(basename "$project" .xcodeproj)"
+  scheme="${scheme%.xcworkspace}"
+  dest="${IOS_DESTINATION:-platform=iOS Simulator,name=iPhone 16}"
+  bundle="$(mktemp -d)/Result.xcresult"
+  xcodebuild test \
+    -project "$project" \
+    -scheme "$scheme" \
+    -destination "$dest" \
+    -enableCodeCoverage YES \
+    -resultBundlePath "$bundle" \
+    "$@"
+  xcrun xccov view --report --json "$bundle" >"$bundle.json"
+  coverage_ok "$bundle.json"
+}
+
+if [ -d ./*.xcodeproj ] || compgen -G "*.xcodeproj" >/dev/null || compgen -G "*.xcworkspace" >/dev/null; then
+  project="$(echo ./*.xcodeproj ./*.xcworkspace)"
+  project="${project%% *}"
+  xcode_test "$project" "$@"
+  exit 0
+fi
+
+if [ ! -f Package.swift ]; then
+  echo "bin/test: no xcodeproj, workspace, or Package.swift" >&2
+  exit 1
+fi
+
+swift test --enable-code-coverage "$@"
+prof="$(find .build -name 'default.profdata' | head -n 1)"
+binpath="$(swift build --show-bin-path)"
+binary="$(find "$binpath" -type f -path '*/MacOS/*PackageTests' ! -path '*.dSYM/*' | head -n 1 || true)"
+if [ -n "$prof" ] && [ -n "$binary" ]; then
+  dsym="${binary}.dSYM"
+  [ -d "$dsym" ] && mv "$dsym" "${dsym}.aside"
+  set +e
+  xcrun llvm-cov export "$binary" -instr-profile "$prof" -format=text -ignore-filename-regex='Tests|\.build' >"$root/.coverage.json"
+  cov_rc=$?
+  set -e
+  [ -d "${dsym}.aside" ] && mv "${dsym}.aside" "$dsym"
+  if [ "$cov_rc" -eq 0 ]; then
+    coverage_ok "$root/.coverage.json"
+  fi
+  rm -f "$root/.coverage.json"
+fi

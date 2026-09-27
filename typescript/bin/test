@@ -1,0 +1,194 @@
+#!/usr/bin/env bash
+# bin/test — bun test --coverage, then 100/100 on every source file this
+# folder changed. A changed test still requires its mirrored source at
+# 100/100. Path args still require 100/100 on the mirrored source when
+# that twin exists; a path with no twin (a throwaway probe) is
+# assertion-only. Capture-then-filter (never a live pipe): a coverage
+# table bursting into a slow reader aborts bun with WriteFailed. bun's
+# exit code is the suite result; the ratchet is a second gate after green.
+#
+# Usage: bin/test [args...]
+set -euo pipefail
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [ "$(basename "$here")" = "_root" ]; then
+  root="$(cd "$here/../.." && pwd)"
+else
+  root="$(cd "$here/.." && pwd)"
+fi
+cd "$root"
+export PATH="${HOME}/.bun/bin:${PATH}"
+
+out="$(mktemp)"
+trap 'rm -f "$out"' EXIT
+rc=0
+bun test --coverage "$@" >"$out" 2>&1 || rc=$?
+grep -vE '^[[:space:]]*✓|^[[:space:]]*\((pass|skip|todo)\)|^tests/.*:$|^[[:space:]]*$|\| *100\.00 *\| *100\.00 *\|' "$out" || true
+
+has_own_test() {
+  local top="$1"
+  [ -x "$root/$top/bin/test" ]
+}
+
+owned_change() {
+  local path="$1" top
+  [ -f "$path" ] || return 1
+  top="${path%%/*}"
+  if [ "$top" != "$path" ] && has_own_test "$top"; then
+    return 1
+  fi
+  return 0
+}
+
+is_source() {
+  local rest="${1#src/}"
+  [ "$rest" != "$1" ] || return 1
+  case "$1" in
+    *.test.ts | *.test.tsx | *.test.mts | *.test.cts) return 1 ;;
+    *.ts | *.tsx | *.mts | *.cts) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+is_test() {
+  local rest="${1#tests/}"
+  [ "$rest" != "$1" ] || return 1
+  case "$1" in
+    *.test.ts | *.test.tsx | *.test.mts | *.test.cts) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+test_for_source() {
+  local rel="${1#src/}"
+  rel="${rel%.*}"
+  echo "tests/${rel}.test.ts"
+}
+
+source_for_test() {
+  local rel="${1#tests/}"
+  rel="${rel%.test.ts}"
+  rel="${rel%.test.tsx}"
+  rel="${rel%.test.mts}"
+  rel="${rel%.test.cts}"
+  if [ -f "src/${rel}.tsx" ]; then
+    echo "src/${rel}.tsx"
+  elif [ -f "src/${rel}.mts" ]; then
+    echo "src/${rel}.mts"
+  elif [ -f "src/${rel}.cts" ]; then
+    echo "src/${rel}.cts"
+  else
+    echo "src/${rel}.ts"
+  fi
+}
+
+# % Funcs and % Lines for a repo-relative source path. "missing" if bun
+# printed no row (treat as 0).
+file_cov() {
+  local file="$1" row funcs lines
+  row="$(awk -v f="$file" -F'|' '
+    {
+      key = $1
+      gsub(/^[ \t]+|[ \t]+$/, "", key)
+      if (key == f) {
+        g = $2
+        l = $3
+        gsub(/[ \t]/, "", g)
+        gsub(/[ \t]/, "", l)
+        print g, l
+        exit
+      }
+    }
+  ' "$out")"
+  if [ -z "$row" ]; then
+    echo "missing"
+    return
+  fi
+  echo "$row"
+}
+
+already() {
+  local n="$1" t
+  for t in "${required[@]+"${required[@]}"}"; do
+    [ "$t" = "$n" ] && return 0
+  done
+  return 1
+}
+
+required=()
+missing_mirror=()
+
+if [ "$#" -gt 0 ]; then
+  for arg in "$@"; do
+    case "$arg" in
+      -*) continue ;;
+    esac
+    arg="${arg#./}"
+    if is_source "$arg"; then
+      already "$arg" || required+=("$arg")
+    elif is_test "$arg"; then
+      src="$(source_for_test "$arg")"
+      if [ -f "$src" ]; then
+        already "$src" || required+=("$src")
+      fi
+    fi
+  done
+else
+  while IFS= read -r path; do
+    [ -z "$path" ] && continue
+    case "$path" in
+      node_modules/* | .venv/* | .flow-states/* | flume/* | */node_modules/* | */.venv/* | */.flow-states/*)
+        continue
+        ;;
+    esac
+    owned_change "$path" || continue
+    if is_source "$path"; then
+      already "$path" || required+=("$path")
+      mirror="$(test_for_source "$path")"
+      if [ ! -f "$mirror" ]; then
+        missing_mirror+=("$path → $mirror")
+      fi
+    elif is_test "$path"; then
+      # A test with no twin (a corpus meta-test in tests/) is assertion-only.
+      src="$(source_for_test "$path")"
+      if [ -f "$src" ]; then
+        already "$src" || required+=("$src")
+      fi
+    fi
+  done < <(
+    {
+      git -C "$root" diff --name-only --relative HEAD -- .
+      git -C "$root" ls-files --others --exclude-standard -- .
+    } | sort -u
+  )
+fi
+
+ratchet=0
+for msg in "${missing_mirror[@]+"${missing_mirror[@]}"}"; do
+  echo "bin/test: no mirrored test for $msg" >&2
+  ratchet=1
+done
+
+for src in "${required[@]+"${required[@]}"}"; do
+  if [ ! -f "$src" ]; then
+    echo "bin/test: $src is required at 100/100 but is missing" >&2
+    ratchet=1
+    continue
+  fi
+  cov="$(file_cov "$src")"
+  if [ "$cov" = "missing" ]; then
+    echo "bin/test: $src has no coverage row (need 100/100)" >&2
+    ratchet=1
+    continue
+  fi
+  funcs="${cov%% *}"
+  lines="${cov##* }"
+  if [ "$funcs" != "100.00" ] || [ "$lines" != "100.00" ]; then
+    echo "bin/test: $src at ${funcs:-0}/${lines:-0} (need 100/100)" >&2
+    ratchet=1
+  fi
+done
+
+if [ "$ratchet" -ne 0 ]; then
+  exit 1
+fi
+exit "$rc"

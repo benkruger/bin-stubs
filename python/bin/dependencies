@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+# bin/dependencies — refresh the app and gate tools via uv sync.
+# Honors .python-version / uv.lock. Does not pip install -e .
+#
+# Usage: bin/dependencies
+set -euo pipefail
+export PATH="${HOME}/.local/bin:${PATH}"
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [ "$(basename "$here")" = "_root" ]; then
+  root="$(cd "$here/../.." && pwd)"
+else
+  root="$(cd "$here/.." && pwd)"
+fi
+cd "$root"
+uv sync --upgrade
+
+# The refreshed uv.lock must match pyproject.toml — a stale lockfile
+# fails here, not on the next machine's uv sync.
+exec uv lock --check

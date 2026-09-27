@@ -1,0 +1,101 @@
+#!/usr/bin/env bash
+# Local CI gate. Default: format + lint + build + test in order.
+# --force runs unconditionally even on a sentinel hit.
+#
+# Sentinel skip: the working-tree fingerprint is written to
+# `.flow-states/<branch>/ci-sentinel` after each green run.
+set -euo pipefail
+HERE="$(cd "$(dirname "$0")" && pwd)"
+REPO_ROOT="$(cd "$HERE/.." && pwd)"
+cd "$REPO_ROOT"
+
+FORCE=0
+case "${1:-}" in
+  --force) FORCE=1; shift ;;
+  --format|--lint|--build|--test)
+    PHASE="${1#--}"; shift
+    exec "$HERE/$PHASE" "$@"
+    ;;
+  "") ;;
+  *) echo "[ci] unknown arg: $1 (expected --format|--lint|--build|--test|--force)" >&2; exit 2 ;;
+esac
+
+BRANCH="$(git branch --show-current 2>/dev/null || echo)"
+SENTINEL=""
+[ -n "$BRANCH" ] && SENTINEL="$REPO_ROOT/.flow-states/${BRANCH}/ci-sentinel"
+
+# Fingerprint through the shared lib (bin/lib/tree-sentinel.sh): one
+# batched `git hash-object` over the untracked set, dependency trees
+# excluded, non-regular files skipped.
+if [ "$(basename "$HERE")" = "_root" ]; then
+  ROOT_APP=1
+fi
+. "$REPO_ROOT/bin/lib/tree-sentinel.sh"
+
+if [ -n "$SENTINEL" ] && [ "$FORCE" -eq 0 ] && [ -f "$SENTINEL" ]; then
+  if [ "$(cat "$SENTINEL")" = "$(tree_hash)" ]; then
+    exit 0
+  fi
+fi
+
+echo ""
+echo "═══ $(basename "$REPO_ROOT") ════════════════════════════════════"
+
+bundle check >/dev/null 2>&1 || bundle install --quiet
+
+log="$(mktemp)"
+trap 'rm -f "$log"' EXIT
+
+spin() {
+  local spin_label="$1" i=0 frames='|/-\'
+  while :; do
+    printf '\rbin/ci: %s %s ' "$spin_label" "${frames:i++%4:1}"
+    sleep 0.1
+  done
+}
+
+step=0
+run_step() {
+  local name="$1"
+  shift
+  step=$((step + 1))
+  local step_label="[$step/4] $name"
+  local rc=0
+  if [ -t 1 ]; then
+    spin "$step_label" &
+    local sp=$!
+    "$@" >>"$log" 2>&1 || rc=$?
+    kill "$sp" 2>/dev/null || true
+    wait "$sp" 2>/dev/null || true
+    local mark="✓"
+    [ "$rc" -eq 0 ] || mark="✗"
+    printf '\rbin/ci: %s %s\033[K\n' "$step_label" "$mark"
+  else
+    "$@" >>"$log" 2>&1 || rc=$?
+    local mark="✓"
+    [ "$rc" -eq 0 ] || mark="✗"
+    echo "bin/ci: $step_label $mark"
+  fi
+  if [ "$rc" -ne 0 ]; then
+    cat "$log" >&2
+    echo "bin/ci: gate RED ($BRANCH) — step '$name' failed (above)." >&2
+    exit "$rc"
+  fi
+}
+
+run_step format "$HERE/format"
+run_step lint "$HERE/lint"
+run_step build "$HERE/build"
+run_step test "$HERE/test"
+RC=0
+
+if [ -n "$SENTINEL" ]; then
+  if [ "$RC" -eq 0 ]; then
+    mkdir -p "$(dirname "$SENTINEL")"
+    tree_hash > "$SENTINEL"
+  elif [ -f "$SENTINEL" ]; then
+    rm -f "$SENTINEL"
+  fi
+fi
+
+exit $RC

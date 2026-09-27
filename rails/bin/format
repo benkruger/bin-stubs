@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+# Format phase — called standalone and by `bin/ci`.
+#
+# The autocorrecting linter runs in the lint phase, so the gate needs no
+# separate format step. This phase is an intentional, honest no-op — not an
+# unconfigured stub.
+set -euo pipefail
+
+echo "  → no separate format step (linting runs in the lint phase)"
+exit 0

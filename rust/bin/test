@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+# Test this package. Extra arguments are forwarded to cargo test.
+# Usage: bin/test [args...]
+set -euo pipefail
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [ "$(basename "$here")" = "_root" ]; then
+  root="$(cd "$here/../.." && pwd)"
+else
+  root="$(cd "$here/.." && pwd)"
+fi
+cd "$root"
+cargo test "$@"

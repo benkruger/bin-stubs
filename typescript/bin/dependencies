@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+# bin/dependencies — bun update, then biome migrate --write so the
+# version move and its config change land together. bun is the machine
+# runtime; biome is this folder's node_modules/.bin.
+#
+# Usage: bin/dependencies
+set -euo pipefail
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [ "$(basename "$here")" = "_root" ]; then
+  root="$(cd "$here/../.." && pwd)"
+else
+  root="$(cd "$here/.." && pwd)"
+fi
+cd "$root"
+export PATH="${HOME}/.bun/bin:${PATH}"
+
+bun update
+"$root/node_modules/.bin/biome" migrate --write
+
+# The refreshed bun.lock must install as written on any machine — a
+# lockfile out of sync with package.json fails here, not on the next
+# checkout's install.
+bun install --frozen-lockfile

@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+# Dependency maintenance: update gems, then audit.
+set -euo pipefail
+
+cd "$(dirname "$0")/.."
+
+echo "  → updating gems (bundle update --all)"
+bundle update --all
+
+# The refreshed lockfile must satisfy the Gemfile before the run counts
+# as done — a desynced Gemfile.lock fails here, not on the next
+# machine's bundle install.
+echo "  → rails (bundle check)"
+bundle check
+
+echo "  → rails (bundler-audit)"
+bin/bundler-audit check --update
+
+echo "  → rails (brakeman)"
+exec bin/brakeman --quiet --no-pager --exit-on-warn --exit-on-error
