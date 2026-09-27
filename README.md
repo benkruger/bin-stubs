@@ -1,56 +1,105 @@
 # bin-stubs
 
-Copy a language `bin/` into an app. Copy the root `bin/` onto a mono-repo. The scripts are the gate.
+## What
 
-```
-bin/                         copy onto the mono-repo root
-ios/bin/                     copy into the iOS app
-rails/bin/                   copy into the Rails app
-typescript/bin/              copy into the TypeScript app
-javascript/bin/              copy into the JavaScript app
-python/bin/                  copy into the Python app
-rust/bin/                    copy into the Rust app
-```
+A set of `bin` scripts your harness runs so each commit is as fast as possible. `format` rewrites the files. `lint` catches mistakes. `build` proves it compiles. `test` runs the tests. `changed` runs format, lint, and the tests for the files since the last commit. `ci` runs all four on the whole app and writes the sentinel. `dependencies` is where versions change. The sentinel is the saved pass.
 
-An app that lives at the repo root gets its language `bin/` copied to `bin/_root/` instead of `<app>/bin/`. The folder needs its project file (`Gemfile`, `package.json`, `pyproject.toml`, `Cargo.toml`, `Package.swift`, or an Xcode project) before the dispatcher treats it as an app. This catalog has the scripts only, so `bin/ci` here runs the suite. An unchanged tree returns immediately. `bin/ci --force` re-runs it.
+The root `bin/ci` picks the apps and runs each app's `bin/ci`. The root `bin/changed` does the same with `bin/changed`.
 
-## Configuring a mono-repo
+## Why
 
-1. Copy `bin/` to the target root.
-2. For each app folder, copy the matching language `bin/` into that folder.
-3. Run `bin/ci`. The summary lists every app.
-4. Run `bin/ci` again. An unchanged app is `SKIP`.
+No GitHub Actions. The check runs on your machine, before the commit. The scripts are separate so the harness can run one step without paying for the whole gate. `changed` is the fast loop while writing, because it skips the build. `ci` is the commit. The sentinel makes an unchanged app free the next time. A pass shows the step lines. A failure shows the step that broke.
 
-`tests/run` copies those same directories into fixture repos and runs them.
+## How
 
-## Dispatcher
+After an edit, the harness runs `changed`, or one step. It runs again until that command passes. Before the commit, it runs `ci`. A matching sentinel finishes at once. Otherwise the four steps run and a new sentinel is written. The commit happens when `ci` exits 0. Version changes go through `dependencies`, then `ci`.
 
-`bin/ci`, `format`, `lint`, `build`, `test`, `changed`, and `dependencies` are stubs. Each one hands its phase to `bin/_dispatch`.
+### The sentinel
 
-The dispatcher discovers folders that have `bin/<phase>`. It does not have a language list.
+| | |
+| --- | --- |
+| Remembers | The last commit, every change since that commit, and files not committed yet |
+| Ignores | `.flow-states/`, `.venv/`, `node_modules/`, `vendor/`, `target/`, `.build/`, and symlinks |
+| Written | After the four steps pass |
+| Match | Exit 0. The app prints nothing |
+| `--force` | Run the four steps, then write the sentinel |
+| `--clean` | Delete the sentinel and exit |
+| Failure | The old sentinel stays |
 
-- A dirty path inside a folder selects that folder.
-- `CLAUDE.md`, `README.md`, `.claude/`, `tests/`, and `checks/` select the suite.
-- A dirty path in no folder selects the root app when `bin/_root` exists, and every folder otherwise.
-- On `ci` and `test`, any selected folder also selects the suite. The suite reads the other trees, so it runs before any format step.
-- A clean tree selects every target, so each sentinel can report.
-- `changed` with nothing dirty exits green.
-- `dependencies` refreshes every folder.
-- `--force` selects every target and re-runs `ci`.
+A root app (`bin/_root/`) leaves the other apps, `CLAUDE.md`, `.claude/`, `checks/`, and `tests/` out of its sentinel.
 
-The summary lists every discovered target. `PASS` means the leaf ran green. `SKIP` means a `ci` leaf exited 0 without rewriting its sentinel. `skip` means it was not selected. `FAIL` is a non-zero exit. The exit code is the verdict.
+### `bin/changed`
 
-## Sentinel
+1. No files changed since the last commit, and none waiting to be committed. Exit 0. No output.
+2. Format the changed files, then lint them.
+3. TypeScript, JavaScript, Python, and Rails: each changed source file needs a matching test. Those tests run. Each of those files must be 100/100. Rust and iOS format, lint, and test the changed files.
+4. No build. No sentinel.
 
-Each folder stores `.flow-states/<branch>/ci-sentinel`. The hash covers that folder's committed tree, both diffs, and untracked regular files. Dependency directories and the sentinel directory are left out. A root app hashes the repo minus the other app folders and the corpus paths.
+At the repo root, that same case prints `bin/changed: nothing dirty` and exits 0.
 
-A matching hash exits green before format, lint, build, and test. A green run stores a new hash taken after those leaves, because format rewrites files. A red run leaves the previous hash in place. `bin/format` and `bin/lint` on their own stay on the dirty set. `bin/ci` passes `--all`, so the run that writes the sentinel has formatted and linted the folder.
+### `bin/ci`
 
-These are the misses a later edit has to keep:
+1. Compare the app with the sentinel.
+2. A match exits 0 and prints nothing.
+3. When the sentinel is stale, or the command is `--force`, install first where the app has an installer. TypeScript runs `bun install`. JavaScript uses the package manager named by its lockfile. Python runs `uv sync`. Rails runs `bundle install` when gems are missing.
+4. Format, lint, build, test. A terminal shows `bin/ci: [1/4] format /` through `test ✓`.
+5. A failed step prints its log. The old sentinel stays.
+6. When all four pass, a new sentinel is written.
 
-- The hash is stored after the run, because format rewrites files.
-- The path includes the branch, so two worktrees stay apart.
-- A folder hashes its own tree, so a sibling edit leaves it unchanged.
-- The modification time only labels `SKIP` versus `PASS`.
-- Only regular files are hashed.
-- An empty `changed` does not turn into a full run.
+### Which apps run
+
+1. A dirty path inside an app selects that app.
+2. `CLAUDE.md`, `README.md`, `.claude/`, `tests/`, and `checks/` select `bin/_root-tests` on `ci` and `test`, and `bin/_root-changed` on `changed`.
+3. On `ci` and `test`, a selected app also selects `bin/_root-tests`, and that check runs first.
+4. A path outside every app selects the root app when `bin/_root/` is present, and every app otherwise.
+5. On `ci`, `format`, `lint`, `build`, and `test`, a clean tree selects every app and `bin/_root-tests`.
+6. `dependencies` selects every app.
+7. `--force` selects every app, and on `ci` and `test` it also selects `bin/_root-tests`.
+8. A folder of scripts with no project file is not an app. The project file is a `Gemfile`, `package.json`, `pyproject.toml`, `Cargo.toml`, `Package.swift`, or an Xcode project.
+
+### Root scripts
+
+| Script | What it does |
+| --- | --- |
+| `bin/ci` | Run `ci` for the selected apps |
+| `bin/changed` | Run `changed` for the selected apps |
+| `bin/format` | Run `format` for the selected apps |
+| `bin/lint` | Run `lint` for the selected apps |
+| `bin/build` | Run `build` for the selected apps |
+| `bin/test` | Run `test` for the selected apps |
+| `bin/dependencies` | Refresh dependencies in every app |
+| `bin/_dispatch` | Pick the apps and run the phase |
+| `bin/_root-tests` | Repo-level check for `ci` and `test` |
+| `bin/_root-changed` | Repo-level check for `changed` |
+
+### App scripts
+
+Copy one language `bin/` into the app. An app at the repo root goes in `bin/_root/`.
+
+| Script | What it does |
+| --- | --- |
+| `bin/ci` | The whole app. Uses the sentinel |
+| `bin/changed` | Files changed since the last commit. No sentinel |
+| `bin/format` | Format |
+| `bin/lint` | Lint |
+| `bin/build` | Build. Used by `bin/ci` |
+| `bin/test` | Test |
+| `bin/dependencies` | Refresh the lockfile and install it |
+
+| App | Format | Lint | Build | Test |
+| --- | --- | --- | --- | --- |
+| TypeScript | Biome write | Biome check | `tsc` | `bun test`, 100/100 on changed sources |
+| JavaScript | Biome write | Biome check | Package build, or `node --check` | Package test under c8, 100/100 on changed sources |
+| Python | Ruff format | Ruff check | `compileall` | pytest, 100/100 on changed sources |
+| Rails | None | RuboCop `-A`, Brakeman, markdownlint | Zeitwerk | `db:test:prepare`, RSpec, warnings fail |
+| Rust | `cargo fmt` | Clippy | `cargo build` | `cargo test` |
+| iOS | `swift-format` | `swift-format` lint | `swift build`, or `xcodebuild` | `swift test`, or `xcodebuild` with a 100% line bar |
+
+### Summary
+
+| Word | Meaning |
+| --- | --- |
+| `PASS` | The work ran and exited 0 |
+| `SKIP` | The sentinel matched, or that app was not selected |
+| `FAIL` | Exited non-zero |
+| Exit code | The result. One `FAIL` fails the command |
