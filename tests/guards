@@ -1,0 +1,117 @@
+#!/usr/bin/env bash
+set -euo pipefail
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$ROOT"
+
+MAX_RULE_LINES=40
+MAX_RULE_CHARS=8000
+MAX_CLAUDE_LINES=400
+MAX_CLAUDE_CHARS=12000
+
+BANNED_SUPPRESSIONS='shellcheck[ ]disable|eslint[-](disable|enable)|@ts[-](ignore|expect-error|nocheck)|(istanbul|v8|c8)[ ]ignore|biome[-]ignore|rubocop[:](disable|todo)|:no[c]ov:|#[ ]no[q]a|pragma[:] no cover|prettier[-]ignore'
+BACKWARD_FACING='\bwe hit\b|during PR #|after the fix|\bused to\b|\bno longer\b|\b(previously|formerly)\b|in the past|removed in PR|\bport(ed)? (of|from)\b'
+NARRATIVE_HEADING='^##[[:space:]]+(why|rationale|background|history|cross-references?|how to apply)\b'
+
+failures=0
+fail() {
+  echo "guards: $*" >&2
+  failures=$((failures + 1))
+}
+
+files=()
+while IFS= read -r -d '' path; do
+  [ -f "$path" ] && [ ! -L "$path" ] || continue
+  files+=("$path")
+done < <(git ls-files -z --cached --others --exclude-standard)
+
+scripts=()
+for path in "${files[@]}"; do
+  if [ "$(head -n 1 "$path")" = "#!/usr/bin/env bash" ]; then
+    scripts+=("$path")
+  elif head -n 1 "$path" | grep -q '^#!'; then
+    fail "$path: shebang is not #!/usr/bin/env bash"
+  fi
+done
+
+is_sourced() {
+  case "$1" in
+    */lib/*.sh | tests/lib.sh | */_run_quiet) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+first_command() {
+  grep -vE '^[[:space:]]*(#|$)' "$1" | head -n 1
+}
+
+if ! shellcheck -x -P SCRIPTDIR "${scripts[@]}" >&2; then
+  fail "shellcheck reported findings (above)"
+fi
+
+for path in "${scripts[@]}"; do
+  if is_sourced "$path"; then
+    continue
+  fi
+  [ -x "$path" ] || fail "$path: entry point is not executable"
+  [ "$(first_command "$path")" = "set -euo pipefail" ] ||
+    fail "$path: first command is not set -euo pipefail"
+done
+
+for path in "${files[@]}"; do
+  if [ "$path" = "tests/guards" ]; then
+    continue
+  fi
+  while IFS= read -r hit; do
+    fail "$path:$hit: suppression comment"
+  done < <(grep -nE "$BANNED_SUPPRESSIONS" "$path" | cut -d: -f1 || true)
+done
+
+check_markdown() {
+  local path="$1" max_lines="$2" max_chars="$3" lines chars h1s
+  lines="$(wc -l <"$path" | tr -d ' ')"
+  chars="$(wc -c <"$path" | tr -d ' ')"
+  [ "$lines" -le "$max_lines" ] || fail "$path: $lines lines (cap $max_lines)"
+  [ "$chars" -le "$max_chars" ] || fail "$path: $chars characters (cap $max_chars)"
+  [ "$(grep -vE '^[[:space:]]*$' "$path" | head -n 1 | cut -c1-2)" = "# " ] ||
+    fail "$path: does not lead with an H1"
+  h1s="$(grep -cE '^# ' "$path" || true)"
+  [ "$h1s" -eq 1 ] || fail "$path: $h1s H1 headings (want 1)"
+  if grep -qiE "$BACKWARD_FACING" "$path"; then
+    fail "$path: backward-facing wording"
+  fi
+}
+
+rules=()
+while IFS= read -r -d '' path; do
+  rules+=("$path")
+done < <(find .claude/rules -name '*.md' -type f -print0 2>/dev/null | sort -z)
+
+[ "${#rules[@]}" -gt 0 ] || fail ".claude/rules holds no rules"
+
+for path in "${rules[@]}"; do
+  check_markdown "$path" "$MAX_RULE_LINES" "$MAX_RULE_CHARS"
+  [ "$(head -n 1 "$path")" != "---" ] || fail "$path: frontmatter"
+  if grep -qiE "$NARRATIVE_HEADING" "$path"; then
+    fail "$path: narrative heading"
+  fi
+  while IFS= read -r ref; do
+    [ -f ".claude/rules/$ref" ] || [ "$ref" = "CLAUDE.md" ] ||
+      fail "$path: cites missing $ref"
+  done < <(grep -oE "\`[a-z0-9/-]+\.md\`" "$path" | tr -d "\`" || true)
+done
+
+check_markdown CLAUDE.md "$MAX_CLAUDE_LINES" "$MAX_CLAUDE_CHARS"
+if grep -q '\.claude/rules' CLAUDE.md; then
+  fail "CLAUDE.md: points at the rules directory"
+fi
+for path in "${rules[@]}"; do
+  if grep -qF "$(basename "$path")" CLAUDE.md; then
+    fail "CLAUDE.md: names the rule $(basename "$path")"
+  fi
+done
+
+if [ "$failures" -gt 0 ]; then
+  echo "guards: $failures failure(s)" >&2
+  exit 1
+fi
+echo "guards: green"

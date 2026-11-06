@@ -4,7 +4,7 @@
 SPIN_PID=
 
 spin_label() {
-  local label="$1" i=0 frames='|/-\'
+  local label="$1" i=0 frames="|/-\\"
   while :; do
     printf '\rbin/ci: %s %s ' "$label" "${frames:i++%4:1}"
     sleep 0.1

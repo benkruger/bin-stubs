@@ -42,12 +42,25 @@ expect_fail() {
 
 summary() { tail -n 20 "${LAST_LOG}"; }
 
+test_guards() {
+  say "repo guards"
+  expect_ok "$HERE/guards"
+}
+
+test_caps_pinned() {
+  say "guard caps pinned"
+  local cap
+  for cap in MAX_RULE_LINES=40 MAX_RULE_CHARS=8000 MAX_CLAUDE_LINES=400 MAX_CLAUDE_CHARS=12000; do
+    grep -qx "$cap" "$HERE/guards" || die "tests/guards does not pin $cap"
+  done
+}
+
 test_copies_match() {
   say "copied sentinel libs match"
   local lang
   for lang in ios rails typescript javascript python rust; do
     [ -x "$REPO/$lang/bin/ci" ] || die "$lang bin/ci is not executable"
-    grep -q '\[$step/4\]' "$REPO/$lang/bin/ci" || die "$lang ci has no step line"
+    grep -qF "[\$step/4]" "$REPO/$lang/bin/ci" || die "$lang ci has no step line"
   done
 }
 
@@ -489,6 +502,8 @@ test_dependencies() {
   assert_eq "$(row_of rust "$sum")" "PASS" "dependencies"
 }
 
+test_guards
+test_caps_pinned
 test_copies_match
 test_changed_empty
 test_language typescript

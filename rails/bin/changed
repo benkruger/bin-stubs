@@ -27,14 +27,14 @@ quietly() {
 
 is_source() {
   case "$1" in
-    app/*.rb | app/*/*.rb | app/*/*/*.rb | app/*/*/*/*.rb) return 0 ;;
+    app/*.rb) return 0 ;;
     *) return 1 ;;
   esac
 }
 
 is_test() {
   case "$1" in
-    spec/*_spec.rb | spec/*/*_spec.rb | spec/*/*/*_spec.rb) return 0 ;;
+    spec/*_spec.rb) return 0 ;;
     *) return 1 ;;
   esac
 }

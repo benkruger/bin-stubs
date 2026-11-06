@@ -7,7 +7,7 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$HERE/.." && pwd)"
 cd "$REPO_ROOT"
 
-# shellcheck source=bin/_run_quiet
+# shellcheck source=_run_quiet
 . "$HERE/_run_quiet"
 
 run_quiet "rails (rubocop -A)" bundle exec rubocop -A --format quiet --display-cop-names

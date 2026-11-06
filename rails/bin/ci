@@ -47,7 +47,7 @@ log="$(mktemp)"
 trap 'rm -f "$log"' EXIT
 
 spin() {
-  local spin_label="$1" i=0 frames='|/-\'
+  local spin_label="$1" i=0 frames="|/-\\"
   while :; do
     printf '\rbin/ci: %s %s ' "$spin_label" "${frames:i++%4:1}"
     sleep 0.1

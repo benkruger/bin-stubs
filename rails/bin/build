@@ -5,7 +5,7 @@ set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 cd "$HERE/.."
 
-# shellcheck source=bin/_run_quiet
+# shellcheck source=_run_quiet
 . "$HERE/_run_quiet"
 
 run_quiet "rails (zeitwerk:check)" env RAILS_LOG_LEVEL=error bundle exec rails zeitwerk:check
