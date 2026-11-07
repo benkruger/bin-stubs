@@ -1,7 +1,7 @@
 # Script Standards
 
-Every script in the kit is strict, shellcheck-clean bash, because it runs
-unattended in other people's repos.
+Every script in the kit is strict, formatted, shellcheck-clean bash, because
+it runs unattended in other people's repos.
 
 ## The Rule
 
@@ -12,6 +12,7 @@ unattended in other people's repos.
 - `shellcheck -x -P SCRIPTDIR` reports nothing for any script. A finding is
   fixed in the code; a `# shellcheck source=` directive is the only
   shellcheck comment allowed.
+- Every script is formatted exactly as `shfmt -i 2 -ci` writes it.
 - A sourced helper uses only what it defines or receives as arguments,
   never a variable its caller happens to set.
 - A script nothing calls is deleted, not shipped.

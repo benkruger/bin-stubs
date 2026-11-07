@@ -11,13 +11,20 @@ cd "$REPO_ROOT"
 
 FORCE=0
 case "${1:-}" in
-  --force) FORCE=1; shift ;;
-  --format|--lint|--build|--test)
-    PHASE="${1#--}"; shift
+  --force)
+    FORCE=1
+    shift
+    ;;
+  --format | --lint | --build | --test)
+    PHASE="${1#--}"
+    shift
     exec "$HERE/$PHASE" "$@"
     ;;
   "") ;;
-  *) echo "[ci] unknown arg: $1 (expected --format|--lint|--build|--test|--force)" >&2; exit 2 ;;
+  *)
+    echo "[ci] unknown arg: $1 (expected --format|--lint|--build|--test|--force)" >&2
+    exit 2
+    ;;
 esac
 
 BRANCH="$(git branch --show-current 2>/dev/null || echo)"
@@ -92,7 +99,7 @@ RC=0
 if [ -n "$SENTINEL" ]; then
   if [ "$RC" -eq 0 ]; then
     mkdir -p "$(dirname "$SENTINEL")"
-    tree_hash > "$SENTINEL"
+    tree_hash >"$SENTINEL"
   elif [ -f "$SENTINEL" ]; then
     rm -f "$SENTINEL"
   fi

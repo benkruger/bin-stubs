@@ -12,7 +12,10 @@ cd "$root"
 for arg in "$@"; do
   case "$arg" in
     --all) ;;
-    *) echo "bin/lint: unknown argument: $arg" >&2; exit 2 ;;
+    *)
+      echo "bin/lint: unknown argument: $arg" >&2
+      exit 2
+      ;;
   esac
 done
 args=()

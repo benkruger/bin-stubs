@@ -8,8 +8,9 @@ check that fails when the standard breaks, and `bin/ci` runs it.
 - `starter/tests/guards` is the one guard suite: this repo runs it on itself
   through `starter/tests/run`, and every repo that copies `starter/` runs the
   same file. It checks the 65,536-byte file cap, suppression comments, lint
-  configuration, every bash script, and the size and shape of `CLAUDE.md`
-  and every rule.
+  configuration, every bash script (shellcheck, shfmt, strict mode), every
+  Markdown file (markdownlint), and the size and shape of `CLAUDE.md` and
+  every rule.
 - `starter/tests/run` pins every cap in the guards; changing a cap edits
   both files in the same change.
 - `tests/run` also copies `starter/` and every language's rules into a

@@ -13,7 +13,10 @@ cd "$root"
 for arg in "$@"; do
   case "$arg" in
     --all) ;;
-    *) echo "bin/format: unknown argument: $arg" >&2; exit 2 ;;
+    *)
+      echo "bin/format: unknown argument: $arg" >&2
+      exit 2
+      ;;
   esac
 done
 cargo fmt

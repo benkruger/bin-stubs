@@ -49,7 +49,10 @@ root_app_fingerprint() {
     skip=0
     for e in "${excludes[@]}"; do
       case "$path" in
-        "$e" | "$e"/*) skip=1; break ;;
+        "$e" | "$e"/*)
+          skip=1
+          break
+          ;;
       esac
     done
     [ "$skip" -eq 1 ] && continue
