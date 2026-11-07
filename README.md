@@ -2,17 +2,61 @@
 
 ## What
 
-A set of `bin` scripts your harness runs so each commit is as fast as possible. `format` rewrites the files. `lint` catches mistakes. `build` proves it compiles. `test` runs the tests. `changed` runs format, lint, and the tests for the files since the last commit. `ci` runs all four on the whole app and writes the sentinel. `dependencies` is where versions change. The sentinel is the saved pass.
+Everything a repo needs before an agent codes in it:
 
-The root `bin/ci` picks the apps and runs each app's `bin/ci`. The root `bin/changed` does the same with `bin/changed`.
+1. **How to behave here**: `CLAUDE.md`.
+2. **What the code must meet**: `.claude/rules/`.
+3. **One gate that proves it**: `bin/ci`. Nothing is committed unless it passes.
+
+Instructions without a gate are hopes. Wherever a standard can be checked, a script checks it.
+
+The kit is a set of `bin` scripts, one folder per language, plus a starter for the repo root. `format` rewrites the files. `lint` catches mistakes. `build` proves it compiles. `test` runs the tests. `changed` runs format, lint, and the tests for the files since the last commit. `ci` runs all four on the whole app and writes the sentinel. `dependencies` is where versions change. The sentinel is the saved pass.
+
+The root `bin/ci` runs the repo-level guards, then picks the apps and runs each app's `bin/ci`. The root `bin/changed` does the same with `bin/changed`.
 
 ## Why
 
-No GitHub Actions. The check runs on your machine, before the commit. The scripts are separate so the harness can run one step without paying for the whole gate. `changed` is the fast loop while writing, because it skips the build. `ci` is the commit. The sentinel makes an unchanged app free the next time. A pass shows the step lines. A failure shows the step that broke.
+No GitHub Actions. The check runs on your machine, before the commit. The scripts are separate so the agent can run one step without paying for the whole gate. `changed` is the fast loop while writing, because it skips the build. `ci` is the commit. The sentinel makes an unchanged app free the next time. A pass shows the step lines. A failure shows the step that broke.
+
+## Set up a repo
+
+1. Copy `bin/` into the repo root.
+2. For each app, copy that language's `bin/` into the app folder. An app at the repo root goes in `bin/_root/`. Copy that language's `.claude/rules/` into the repo's `.claude/rules/`.
+3. Copy the contents of `starter/` into the repo root: `CLAUDE.md`, `.claude/rules/`, `tests/run` and `tests/guards`. Put the project's name in the `CLAUDE.md` heading.
+4. Ignore `.flow-states/`, `.claude/cost/`, and the dependency folders (`node_modules/`, `.venv/`, `vendor/`, `target/`, `.build/`).
+5. Run `bin/ci` until it passes. From then on every commit goes through it.
 
 ## How
 
-After an edit, the harness runs `changed`, or one step. It runs again until that command passes. Before the commit, it runs `ci`. A matching sentinel finishes at once. Otherwise the four steps run and a new sentinel is written. The commit happens when `ci` exits 0. Version changes go through `dependencies`, then `ci`.
+After an edit, the agent runs `changed`, or one step. It runs again until that command passes. Before the commit, it runs `ci`. A matching sentinel finishes at once. Otherwise the four steps run and a new sentinel is written. The commit happens when `ci` exits 0. Version changes go through `dependencies`, then `ci`.
+
+## `CLAUDE.md` and rules
+
+Both are written for the agent. No person needs to read them.
+
+| File | Holds |
+| --- | --- |
+| `~/.claude/CLAUDE.md` | How the agent behaves in every repo: change control, verifying work, git, replies |
+| `CLAUDE.md` | How the agent behaves in this repo: which scripts to run and when, which files need an explicit go |
+| `.claude/rules/*.md` | What the code must meet: architecture invariants, test, lint, size and dependency standards. One topic per file |
+
+- Sort by subject. About the agent's actions: `CLAUDE.md`. About the code: a rule. Say each thing once.
+- Neither holds plan notes, command lists, maps of where things live, or anything the agent can read from the code. Those go stale and still get trusted.
+- A rule leads with one H1 naming the constraint, then one line a reader can act on, then `## The Rule` with present-tense statements of what the code is, and where each one is checked.
+- A rule that would die with the feature it mentions is documentation. Drop it.
+
+The starter ships these rules. Each language folder adds `<language>-standards.md`, which states what its scripts enforce.
+
+| Rule | Holds the code to |
+| --- | --- |
+| `no-lint-exceptions` | Every linter rule on. No suppression comments, no configuration that turns a rule off |
+| `authored-file-size` | No text file over 65,536 bytes. Split by responsibility |
+| `guard-tests` | Every standard has a check in `tests/guards`, and every cap is pinned |
+| `script-standards` | Every bash script strict, executable, and shellcheck-clean |
+
+Add one rule for each invariant of the app that the code alone does not explain.
+
+## The gate
 
 ### The sentinel
 
@@ -69,12 +113,10 @@ At the repo root, that same case prints `bin/changed: nothing dirty` and exits 0
 | `bin/test` | Run `test` for the selected apps |
 | `bin/dependencies` | Refresh dependencies in every app |
 | `bin/_dispatch` | Pick the apps and run the phase |
-| `bin/_root-tests` | Repo-level check for `ci` and `test` |
-| `bin/_root-changed` | Repo-level check for `changed` |
+| `bin/_root-tests` | Repo-level check for `ci` and `test`: runs `tests/run` |
+| `bin/_root-changed` | Repo-level check for `changed`: runs `tests/run` |
 
 ### App scripts
-
-Copy one language `bin/` into the app. An app at the repo root goes in `bin/_root/`. Copy that language's `.claude/rules/` into the repo's `.claude/rules/`; it states what those scripts enforce.
 
 | Script | What it does |
 | --- | --- |
@@ -95,9 +137,18 @@ Copy one language `bin/` into the app. An app at the repo root goes in `bin/_roo
 | Rust | `cargo fmt` | Clippy | `cargo build` | `cargo test` |
 | iOS | `swift-format` | `swift-format` lint | `swift build`, or `xcodebuild` | `swift test`, or `xcodebuild` with a 100% line bar |
 
-### Repo starter
+### Summary
 
-Copy the contents of `starter/` into the repo root once: `CLAUDE.md`, `.claude/rules/`, and `tests/run` with `tests/guards`. `bin/_root-tests` runs `tests/run` on `ci` and `test`, so the guards are part of the gate.
+| Word | Meaning |
+| --- | --- |
+| `PASS` | The work ran and exited 0 |
+| `SKIP` | The sentinel matched, or that app was not selected |
+| `FAIL` | Exited non-zero |
+| Exit code | The result. One `FAIL` fails the command |
+
+## Guards
+
+The app scripts check the code. `tests/guards` checks the standards themselves. `bin/_root-tests` runs `tests/run`, and `tests/run` runs the guards, so a broken standard fails the gate like a failing test.
 
 | `tests/guards` fails when | Cap |
 | --- | --- |
@@ -107,13 +158,25 @@ Copy the contents of `starter/` into the repo root once: `CLAUDE.md`, `.claude/r
 | Any file silences a linter, `biome.json` turns rules off, `.rubocop.yml` disables a cop, or `Cargo.toml` allows a lint | |
 | A bash script has a shellcheck finding, or an entry point is not executable or does not start with `set -euo pipefail` | |
 
-`tests/run` pins every cap, so raising one means editing both files.
+When you add a check:
 
-### Summary
+- **Pin every cap twice.** The constant lives in `tests/guards`; `tests/run` asserts its value. Raising a cap means editing both, never a quiet bump inside the change that wanted it.
+- **Run scripts, don't read them.** Copy the script into a throwaway git repo, feed it a case, and assert its exit code and message.
+- **Never write the token you ban.** Build it at run time, or the guard trips over its own text.
+- **Prove the check fails.** Plant one violation, watch the gate go red, then remove it. This repo's `tests/run` keeps one planted violation per check.
+- **A new standard lands with its check**, in the same change.
 
-| Word | Meaning |
+## Beyond the kit
+
+The kit does not ship these. A repo ready for an agent has them too.
+
+| Piece | Why |
 | --- | --- |
-| `PASS` | The work ran and exited 0 |
-| `SKIP` | The sentinel matched, or that app was not selected |
-| `FAIL` | Exited non-zero |
-| Exit code | The result. One `FAIL` fails the command |
+| `.claude/settings.json` | Allow `Bash(bin/*)` so the gate runs without approval prompts. That rule matches only the relative form, so scripts are always run as `bin/ci`. Deny destructive git: `rebase`, `checkout`, `reset --hard`, `stash`, `clean`, force-push |
+| Hooks | A `PreToolUse` hook that blocks calling the toolchain directly, so the agent goes through `bin/`. A `SessionStart` hook for cloud sessions that installs the toolchain and runs `bin/ci` |
+| Pinned toolchain | `.nvmrc`, `.ruby-version`, `.python-version` or `rust-toolchain.toml`, checked before the gate runs |
+| Lockfile | Versions move only through `bin/dependencies`. A vulnerable transitive dependency is lifted to the latest version, never pinned down |
+| Commit tool | `flow-pro commit` runs `bin/ci` and commits only on a pass. Branch names have no `/` |
+| End-to-end QA | A `bin/qa` that drives a fresh production build through the UI. The browser reaches only `127.0.0.1`. Timeouts and workers are pinned, nothing retries, and a console error fails the test |
+| Test isolation | Every test resets the global state it touches. No test reaches the network or production data |
+| Secrets | Never in the repo or the agent's output. A wrapper script injects them at run time and never prints them |
