@@ -42,17 +42,70 @@ expect_fail() {
 
 summary() { tail -n 20 "${LAST_LOG}"; }
 
-test_guards() {
-  say "repo guards"
-  expect_ok "$HERE/guards"
+test_repo_guards() {
+  say "repo guards (starter suite on this repo)"
+  expect_ok "$REPO/starter/tests/run"
 }
 
-test_caps_pinned() {
-  say "guard caps pinned"
-  local cap
-  for cap in MAX_RULE_LINES=40 MAX_RULE_CHARS=8000 MAX_CLAUDE_LINES=400 MAX_CLAUDE_CHARS=12000; do
-    grep -qx "$cap" "$HERE/guards" || die "tests/guards does not pin $cap"
+test_kit_scripts_are_bash() {
+  say "every kit script is bash"
+  local path first
+  while IFS= read -r -d '' path; do
+    first="$(head -n 1 "$REPO/$path")"
+    case "$first" in
+      "#!"*) [ "$first" = "#!/usr/bin/env bash" ] || die "$path: shebang is $first" ;;
+    esac
+  done < <(git -C "$REPO" ls-files -z --cached --others --exclude-standard)
+}
+
+test_starter() {
+  say "starter in a fresh repo"
+  local repo lang probe token
+  repo="$(new_repo)"
+  KEEP="$repo"
+  copy_dir "$REPO/starter" "$repo"
+  copy_dir "$REPO/bin" "$repo/bin"
+  for lang in typescript javascript python rails rust ios; do
+    copy_dir "$REPO/$lang/.claude" "$repo/.claude"
   done
+  expect_ok "$repo/tests/run"
+  expect_ok "$repo/bin/ci"
+  assert_eq "$(row_of suite "$(summary)")" "PASS" "starter suite through bin/ci"
+
+  { printf '# Notes\n\n'; head -c 70000 /dev/zero | tr '\0' 'a'; printf '\n'; } >"$repo/notes.md"
+  expect_fail "$repo/tests/run"
+  grep -q "notes.md: 70010 bytes, over the 65536-byte cap" "${LAST_LOG}" || die "size cap not enforced"
+  rm "$repo/notes.md"
+
+  probe="$repo/probe.py"
+  token="no"
+  token+="qa"
+  printf 'value = 1  # %s\n' "$token" >"$probe"
+  expect_fail "$repo/tests/run"
+  grep -q "probe.py:1: suppression comment" "${LAST_LOG}" || die "suppression ban not enforced"
+  rm "$probe"
+
+  printf '{\n  "linter": { "%s": {} }\n}\n' "rules" >"$repo/biome.json"
+  expect_fail "$repo/tests/run"
+  grep -q "biome.json: turns Biome rules off" "${LAST_LOG}" || die "Biome config not checked"
+  rm "$repo/biome.json"
+
+  { printf '# Long\n\n'; for _ in $(seq 1 45); do printf -- '- line\n'; done; } >"$repo/.claude/rules/long.md"
+  expect_fail "$repo/tests/run"
+  grep -q "long.md: 47 lines (cap 40)" "${LAST_LOG}" || die "rule cap not enforced"
+  rm "$repo/.claude/rules/long.md"
+
+  printf '%s\n' '#!/usr/bin/env bash' 'echo "loose"' >"$repo/bin/loose"
+  chmod +x "$repo/bin/loose"
+  expect_fail "$repo/tests/run"
+  grep -q "bin/loose: first command is not set -euo pipefail" "${LAST_LOG}" || die "strict mode not enforced"
+  rm "$repo/bin/loose"
+
+  sed 's/^MAX_AUTHORED_BYTES=65536$/MAX_AUTHORED_BYTES=99999/' "$repo/tests/guards" >"$repo/tests/guards.raised"
+  mv "$repo/tests/guards.raised" "$repo/tests/guards"
+  chmod +x "$repo/tests/guards"
+  expect_fail "$repo/tests/run"
+  grep -q "does not pin MAX_AUTHORED_BYTES=65536" "${LAST_LOG}" || die "raised cap not caught"
 }
 
 test_copies_match() {
@@ -502,8 +555,9 @@ test_dependencies() {
   assert_eq "$(row_of rust "$sum")" "PASS" "dependencies"
 }
 
-test_guards
-test_caps_pinned
+test_repo_guards
+test_kit_scripts_are_bash
+test_starter
 test_copies_match
 test_changed_empty
 test_language typescript

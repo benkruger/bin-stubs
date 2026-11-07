@@ -74,7 +74,7 @@ At the repo root, that same case prints `bin/changed: nothing dirty` and exits 0
 
 ### App scripts
 
-Copy one language `bin/` into the app. An app at the repo root goes in `bin/_root/`.
+Copy one language `bin/` into the app. An app at the repo root goes in `bin/_root/`. Copy that language's `.claude/rules/` into the repo's `.claude/rules/`; it states what those scripts enforce.
 
 | Script | What it does |
 | --- | --- |
@@ -94,6 +94,20 @@ Copy one language `bin/` into the app. An app at the repo root goes in `bin/_roo
 | Rails | None | RuboCop `-A`, Brakeman, markdownlint | Zeitwerk | `db:test:prepare`, RSpec, warnings fail |
 | Rust | `cargo fmt` | Clippy | `cargo build` | `cargo test` |
 | iOS | `swift-format` | `swift-format` lint | `swift build`, or `xcodebuild` | `swift test`, or `xcodebuild` with a 100% line bar |
+
+### Repo starter
+
+Copy the contents of `starter/` into the repo root once: `CLAUDE.md`, `.claude/rules/`, and `tests/run` with `tests/guards`. `bin/_root-tests` runs `tests/run` on `ci` and `test`, so the guards are part of the gate.
+
+| `tests/guards` fails when | Cap |
+| --- | --- |
+| A text file is too big. Generated lockfiles are exempt by name; other exemptions are exact paths | 65,536 bytes |
+| A rule is too long, lacks one leading H1, has frontmatter or a "Why"/"History" heading, uses past-tense wording, or cites a missing rule | 40 lines, 8,000 characters |
+| `CLAUDE.md` is too long, lacks one leading H1, or points at the rules | 400 lines, 12,000 characters |
+| Any file silences a linter, `biome.json` turns rules off, `.rubocop.yml` disables a cop, or `Cargo.toml` allows a lint | |
+| A bash script has a shellcheck finding, or an entry point is not executable or does not start with `set -euo pipefail` | |
+
+`tests/run` pins every cap, so raising one means editing both files.
 
 ### Summary
 

@@ -1,0 +1,17 @@
+# JavaScript Standards
+
+The JavaScript app is held by Biome and its own test script under c8 at full
+strength.
+
+## The Rule
+
+- A source is any `.js`, `.mjs`, `.cjs` or `.jsx` file below a directory,
+  outside `tests/`, `dist/`, `public/` and `node_modules/`. Root-level files
+  are configuration.
+- Every source has a twin: the first that exists of
+  `tests/<path>.test.js` (or `.mjs`), `<dir>/<name>.test.js` (or `.mjs`), or
+  `<dir>/test-<name>.mjs` (or `.js`). `bin/changed` fails a changed source
+  with no twin.
+- Every changed source is at 100% functions and lines under c8.
+- Biome formats and lints every file; `biome.json` keeps every rule on
+  (`no-lint-exceptions.md`).

@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+set -euo pipefail
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+for cap in MAX_RULE_LINES=40 MAX_RULE_CHARS=8000 MAX_CLAUDE_LINES=400 MAX_CLAUDE_CHARS=12000 MAX_AUTHORED_BYTES=65536; do
+  if ! grep -qx "$cap" "$HERE/guards"; then
+    echo "tests/run: tests/guards does not pin $cap" >&2
+    exit 1
+  fi
+done
+
+exec "$HERE/guards"

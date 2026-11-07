@@ -5,7 +5,7 @@ unattended in other people's repos.
 
 ## The Rule
 
-- Every script starts with `#!/usr/bin/env bash`.
+- Every script starts with `#!/usr/bin/env bash`; `tests/run` checks it.
 - An entry point is executable and its first command is
   `set -euo pipefail`. A sourced helper (`lib/*.sh`, `_run_quiet`,
   `tests/lib.sh`) is never run directly.
@@ -15,4 +15,4 @@ unattended in other people's repos.
 - A sourced helper uses only what it defines or receives as arguments,
   never a variable its caller happens to set.
 - A script nothing calls is deleted, not shipped.
-- `tests/guards` enforces all of the above.
+- `starter/tests/guards` enforces the rest.
