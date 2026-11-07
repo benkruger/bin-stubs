@@ -3,8 +3,12 @@
 # Markdown under this app.
 set -euo pipefail
 
-HERE="$(cd "$(dirname "$0")" && pwd)"
-REPO_ROOT="$(cd "$HERE/.." && pwd)"
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [ "$(basename "$HERE")" = "_root" ]; then
+  REPO_ROOT="$(cd "$HERE/../.." && pwd)"
+else
+  REPO_ROOT="$(cd "$HERE/.." && pwd)"
+fi
 cd "$REPO_ROOT"
 
 # shellcheck source=_run_quiet

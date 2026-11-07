@@ -1,57 +1,78 @@
 #!/usr/bin/env bash
-# Local CI gate. Default: format + lint + build + test in order.
-# --force runs unconditionally even on a sentinel hit.
+# bin/ci — the gate conductor for this Rails app. Runs format → lint → build →
+# test in order and is sentinel-aware: when this folder is byte-for-byte
+# unchanged since the last green run, it skips and reports green. A changed
+# tree always re-runs. The sentinel never weakens the gate.
 #
-# Sentinel skip: the working-tree fingerprint is written to
-# `.flow-states/<branch>/ci-sentinel` after each green run.
+# Quiet on green, full on red: the four tools' output is captured and surfaced
+# only on failure. A green run shows per-step progress ([n/4]
+# format/lint/build/test, a live spinner on a real terminal).
+#
+# Usage: bin/ci [--force] [--clean]
+#   --force  run the four even on a sentinel hit (still writes the sentinel)
+#   --clean  delete the branch sentinel and exit
 set -euo pipefail
-HERE="$(cd "$(dirname "$0")" && pwd)"
-REPO_ROOT="$(cd "$HERE/.." && pwd)"
-cd "$REPO_ROOT"
 
-FORCE=0
-case "${1:-}" in
-  --force)
-    FORCE=1
-    shift
-    ;;
-  --format | --lint | --build | --test)
-    PHASE="${1#--}"
-    shift
-    exec "$HERE/$PHASE" "$@"
-    ;;
-  "") ;;
-  *)
-    echo "[ci] unknown arg: $1 (expected --format|--lint|--build|--test|--force)" >&2
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [ "$(basename "$here")" = "_root" ]; then
+  root="$(cd "$here/../.." && pwd)"
+else
+  root="$(cd "$here/.." && pwd)"
+fi
+cd "$root"
+
+force=0
+clean=0
+for arg in "$@"; do
+  case "$arg" in
+    --force) force=1 ;;
+    --clean) clean=1 ;;
+    *)
+      echo "bin/ci: unknown argument: $arg" >&2
+      exit 2
+      ;;
+  esac
+done
+
+branch="$(git rev-parse --abbrev-ref HEAD)"
+case "$branch" in
+  "" | "." | "..")
+    echo "bin/ci: refusing to build a sentinel path for unsafe branch: '$branch'" >&2
     exit 2
     ;;
 esac
 
-BRANCH="$(git branch --show-current 2>/dev/null || echo)"
-SENTINEL=""
-[ -n "$BRANCH" ] && SENTINEL="$REPO_ROOT/.flow-states/${BRANCH}/ci-sentinel"
+sentinel="$root/.flow-states/$branch/ci-sentinel"
 
-# Fingerprint through the shared lib (bin/lib/tree-sentinel.sh): one
-# batched `git hash-object` over the untracked set, dependency trees
-# excluded, non-regular files skipped.
-if [ "$(basename "$HERE")" = "_root" ]; then
+if [ "$clean" -eq 1 ]; then
+  rm -f "$sentinel"
+  echo "bin/ci: cleaned sentinel for $branch"
+  exit 0
+fi
+
+if [ "$(basename "$here")" = "_root" ]; then
   ROOT_APP=1
 fi
-. "$REPO_ROOT/bin/lib/tree-sentinel.sh"
+# shellcheck source=lib/tree-sentinel.sh
+. "$root/bin/lib/tree-sentinel.sh"
 
-if [ -n "$SENTINEL" ] && [ "$FORCE" -eq 0 ] && [ -f "$SENTINEL" ]; then
-  if [ "$(cat "$SENTINEL")" = "$(tree_hash)" ]; then
-    exit 0
-  fi
+pre_hash="$(tree_hash)"
+
+if [ "$force" -eq 0 ] && [ -f "$sentinel" ] && [ "$(cat "$sentinel")" = "$pre_hash" ]; then
+  exit 0
 fi
 
+label="$(basename "$root")"
 echo ""
-echo "═══ $(basename "$REPO_ROOT") ════════════════════════════════════"
-
-bundle check >/dev/null 2>&1 || bundle install --quiet
-
+echo "═══ $label ════════════════════════════════════"
 log="$(mktemp)"
 trap 'rm -f "$log"' EXIT
+
+if ! { bundle check || bundle install --quiet; } >>"$log" 2>&1; then
+  cat "$log" >&2
+  echo "bin/ci: gate RED ($branch) — bundle install failed (above)." >&2
+  exit 1
+fi
 
 spin() {
   local spin_label="$1" i=0 frames="|/-\\"
@@ -85,24 +106,16 @@ run_step() {
   fi
   if [ "$rc" -ne 0 ]; then
     cat "$log" >&2
-    echo "bin/ci: gate RED ($BRANCH) — step '$name' failed (above)." >&2
+    echo "bin/ci: gate RED ($branch) — step '$name' failed (above)." >&2
     exit "$rc"
   fi
 }
 
-run_step format "$HERE/format"
-run_step lint "$HERE/lint"
-run_step build "$HERE/build"
-run_step test "$HERE/test"
-RC=0
+run_step format "$here/format"
+run_step lint "$here/lint"
+run_step build "$here/build"
+run_step test "$here/test"
 
-if [ -n "$SENTINEL" ]; then
-  if [ "$RC" -eq 0 ]; then
-    mkdir -p "$(dirname "$SENTINEL")"
-    tree_hash >"$SENTINEL"
-  elif [ -f "$SENTINEL" ]; then
-    rm -f "$SENTINEL"
-  fi
-fi
-
-exit $RC
+mkdir -p "$(dirname "$sentinel")"
+tree_hash >"$sentinel"
+echo "bin/ci: gate green ($branch) — sentinel written."

@@ -1,22 +1,30 @@
 #!/usr/bin/env bash
-# Test phase — db:test:prepare then rspec. Full suite requires 100% line and
-# branch coverage on app/. Path args run those specs; bin/changed scopes
-# SimpleCov to dirty sources via COVERAGE_DIRTY_FILES.
+# Test phase — db:test:prepare when the app has config/database.yml, then the
+# Minitest suite through `rails test`. Ruby runs with warnings on, and a
+# warning from the app's own code fails the run (bin/warning_filter.rb).
+# The app's test/test_helper.rb starts SimpleCov at 100% line and branch
+# coverage and, when COVERAGE_DIRTY_FILES names a file list, counts only those
+# files; bin/changed sets it. Path args run those test files.
+#
+# Usage: bin/test [test files...]
 set -euo pipefail
 
-HERE="$(cd "$(dirname "$0")" && pwd)"
-REPO_ROOT="$(cd "$HERE/.." && pwd)"
-cd "$REPO_ROOT"
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [ "$(basename "$here")" = "_root" ]; then
+  root="$(cd "$here/../.." && pwd)"
+else
+  root="$(cd "$here/.." && pwd)"
+fi
+cd "$root"
 
 # shellcheck source=_run_quiet
-. "$HERE/_run_quiet"
+. "$here/_run_quiet"
 
 export RAILS_ENV=test
-export RUBYOPT="-w -r${HERE}/warning_filter.rb${RUBYOPT:+:$RUBYOPT}"
+export RUBYOPT="-w -r${here}/warning_filter.rb${RUBYOPT:+ $RUBYOPT}"
 
-run_quiet "rails (db:test:prepare)" bundle exec rails db:test:prepare
-echo "  → rspec"
-if [ "$#" -gt 0 ]; then
-  exec bundle exec rspec "$@"
+if [ -f config/database.yml ]; then
+  run_quiet "rails (db:test:prepare)" bundle exec rails db:test:prepare
 fi
-exec bundle exec rspec
+echo "  → rails test"
+exec bundle exec rails test "$@"

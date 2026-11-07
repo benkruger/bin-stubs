@@ -256,24 +256,74 @@ EOF
 
 seed_rails() {
   local app="$1"
-  mkdir -p "$app/lib" "$app/test"
+  mkdir -p "$app/app/models" "$app/config" "$app/test/models"
+  cat >"$app/.gitignore" <<'EOF'
+/coverage/
+/log/
+/tmp/
+EOF
   cat >"$app/Gemfile" <<'EOF'
+# frozen_string_literal: true
+
 source 'https://rubygems.org'
+
+gem 'brakeman'
 gem 'minitest'
+gem 'railties'
 gem 'rubocop'
+gem 'simplecov'
 EOF
   cat >"$app/.rubocop.yml" <<'EOF'
 AllCops:
   NewCops: enable
   SuggestExtensions: false
-Style/Documentation:
-  Enabled: false
-Style/FrozenStringLiteralComment:
-  Enabled: false
-Metrics:
-  Enabled: false
 EOF
-  cat >"$app/lib/add.rb" <<'EOF'
+  cat >"$app/Rakefile" <<'EOF'
+# frozen_string_literal: true
+
+require_relative 'config/application'
+Rails.application.load_tasks
+EOF
+  cat >"$app/bin/rails" <<'EOF'
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+APP_PATH = File.expand_path('../config/application', __dir__)
+require_relative '../config/boot'
+require 'rails/commands'
+EOF
+  chmod +x "$app/bin/rails"
+  cat >"$app/config/boot.rb" <<'EOF'
+# frozen_string_literal: true
+
+ENV['BUNDLE_GEMFILE'] ||= File.expand_path('../Gemfile', __dir__)
+require 'bundler/setup'
+EOF
+  cat >"$app/config/application.rb" <<'EOF'
+# frozen_string_literal: true
+
+require_relative 'boot'
+require 'rails'
+require 'action_controller/railtie'
+
+module Fixture
+  # The app the Rails gate runs against.
+  class Application < Rails::Application
+    config.load_defaults 8.1
+    config.eager_load = false
+  end
+end
+EOF
+  cat >"$app/config/environment.rb" <<'EOF'
+# frozen_string_literal: true
+
+require_relative 'application'
+Rails.application.initialize!
+EOF
+  cat >"$app/app/models/add.rb" <<'EOF'
+# frozen_string_literal: true
+
+# Adds two numbers.
 module Add
   module_function
 
@@ -282,12 +332,26 @@ module Add
   end
 end
 EOF
-  cat >"$app/test/add_test.rb" <<'EOF'
-require 'minitest/autorun'
-require_relative '../lib/add'
+  cat >"$app/test/test_helper.rb" <<'EOF'
+# frozen_string_literal: true
 
-class AddTest < Minitest::Test
-  def test_call
+require 'simplecov'
+SimpleCov.start do
+  enable_coverage :branch
+  minimum_coverage line: 100, branch: 100
+  skip %w[/config/ /test/]
+end
+
+require_relative '../config/environment'
+require 'rails/test_help'
+EOF
+  cat >"$app/test/models/add_test.rb" <<'EOF'
+# frozen_string_literal: true
+
+require 'test_helper'
+
+class AddTest < ActiveSupport::TestCase
+  test 'adds two numbers' do
     assert_equal 3, Add.call(1, 2)
   end
 end
@@ -351,7 +415,7 @@ source_of() {
     typescript) printf '%s\n' src/add.ts ;;
     javascript) printf '%s\n' src/index.js ;;
     python) printf '%s\n' src/add.py ;;
-    rails) printf '%s\n' lib/add.rb ;;
+    rails) printf '%s\n' app/models/add.rb ;;
     rust) printf '%s\n' src/lib.rs ;;
     ios) printf '%s\n' Sources/App/Add.swift ;;
   esac
@@ -398,10 +462,12 @@ EOF
       ;;
     rails)
       cat >"$app/test/red_test.rb" <<'EOF'
-require "minitest/autorun"
+# frozen_string_literal: true
 
-class RedTest < Minitest::Test
-  def test_red
+require 'test_helper'
+
+class RedTest < ActiveSupport::TestCase
+  test 'fails' do
     assert_equal 1, 0
   end
 end
@@ -581,6 +647,7 @@ test_changed_empty
 test_language typescript
 test_language javascript
 test_language python
+test_language rails
 test_language rust
 test_language ios
 test_dispatch

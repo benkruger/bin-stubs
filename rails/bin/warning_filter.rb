@@ -1,24 +1,26 @@
 # frozen_string_literal: true
 
-# Warnings from this app fail the test run. Warnings from gems stay quiet.
 return if defined?(WarningFilter)
 
+# Raises on any Ruby warning from this app's own code. Warnings from gems and
+# vendor/ stay quiet. bin/test loads it through RUBYOPT.
 module WarningFilter
-  REPO_ROOT = File.expand_path('..', __dir__).freeze
-  VENDOR = "#{REPO_ROOT}/vendor/".freeze
+  UP = File.basename(__dir__) == '_root' ? '../..' : '..'
+  ROOTS = [__dir__, File.dirname(File.expand_path(__FILE__))].uniq.map do |dir|
+    File.expand_path(UP, dir)
+  end.freeze
 
   def self.from_repo?(message)
-    message.start_with?(REPO_ROOT) && !message.start_with?(VENDOR)
+    ROOTS.any? do |root|
+      message.start_with?("#{root}/") && !message.start_with?("#{root}/vendor/")
+    end
   end
-end
 
-warn_verbose = $VERBOSE
-$VERBOSE = nil
-module Warning
   def warn(message, **)
     raise "Ruby warning (no-warnings gate):\n#{message}" if WarningFilter.from_repo?(message)
 
     nil
   end
 end
-$VERBOSE = warn_verbose
+
+Warning.extend(WarningFilter)

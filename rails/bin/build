@@ -2,8 +2,12 @@
 # Build phase — Zeitwerk eager-load check. Rails runs from source.
 set -euo pipefail
 
-HERE="$(cd "$(dirname "$0")" && pwd)"
-cd "$HERE/.."
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [ "$(basename "$HERE")" = "_root" ]; then
+  cd "$HERE/../.."
+else
+  cd "$HERE/.."
+fi
 
 # shellcheck source=_run_quiet
 . "$HERE/_run_quiet"

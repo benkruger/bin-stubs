@@ -187,7 +187,8 @@ Both repo-level checks run `tests/run`.
 - **Python**: Ruff format, Ruff check, `compileall`, then pytest with 100/100
   on changed sources.
 - **Rails**: no formatter; RuboCop `-A`, Brakeman and markdownlint; Zeitwerk;
-  then `db:test:prepare` and RSpec, where warnings fail.
+  then `db:test:prepare` when the app has a database, and Minitest through
+  `rails test`, where warnings fail.
 - **Rust**: `cargo fmt`, Clippy, `cargo build`, `cargo test`.
 - **iOS**: `swift-format`, `swift-format` lint, `swift build` or
   `xcodebuild`, then `swift test` or `xcodebuild` with a 100% line bar.

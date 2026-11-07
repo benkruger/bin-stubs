@@ -1,15 +1,21 @@
 #!/usr/bin/env bash
 # bin/changed — coding-time gate for files this folder changed. RuboCop
 # -A then a check (leftover offenses stay red), markdownlint --fix then
-# a check, tests for dirty twins, 100/100 on those dirty files.
+# a check, Minitest for dirty twins, 100/100 on those dirty files.
+# A source app/<path>.rb has its twin at test/<path>_test.rb; a source
+# lib/<path>.rb has its twin at test/lib/<path>_test.rb.
 # SimpleCov's 100% gate stays on; COVERAGE_DIRTY_FILES limits which files
 # count. No twin → red. Empty diff → green. No build, no sentinel, not
 # bin/ci.
 #
 # Usage: bin/changed
 set -euo pipefail
-HERE="$(cd "$(dirname "$0")" && pwd)"
-REPO_ROOT="$(cd "$HERE/.." && pwd)"
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [ "$(basename "$HERE")" = "_root" ]; then
+  REPO_ROOT="$(cd "$HERE/../.." && pwd)"
+else
+  REPO_ROOT="$(cd "$HERE/.." && pwd)"
+fi
 cd "$REPO_ROOT"
 
 quietly() {
@@ -27,39 +33,28 @@ quietly() {
 
 is_source() {
   case "$1" in
-    app/*.rb) return 0 ;;
+    app/*.rb | lib/*.rb) return 0 ;;
     *) return 1 ;;
   esac
 }
 
 is_test() {
   case "$1" in
-    spec/*_spec.rb) return 0 ;;
+    test/*_test.rb) return 0 ;;
     *) return 1 ;;
   esac
 }
 
 test_for_source() {
-  local rel="${1#app/}"
-  local twin="spec/${rel%.rb}_spec.rb"
-  if [ -f "$twin" ]; then
-    echo "$twin"
-    return
-  fi
-  if [ "${1#app/controllers/}" != "$1" ]; then
-    local base
-    base="$(basename "$1" .rb)"
-    if [ -f "spec/requests/${base}_spec.rb" ]; then
-      echo "spec/requests/${base}_spec.rb"
-      return
-    fi
-    local short="${base%_controller}"
-    if [ -f "spec/requests/${short}_spec.rb" ]; then
-      echo "spec/requests/${short}_spec.rb"
-      return
-    fi
-  fi
-  echo "$twin"
+  case "$1" in
+    app/*)
+      local rel="${1#app/}"
+      echo "test/${rel%.rb}_test.rb"
+      ;;
+    lib/*)
+      echo "test/${1%.rb}_test.rb"
+      ;;
+  esac
 }
 
 already() {
