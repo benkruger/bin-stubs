@@ -15,5 +15,7 @@
   added or removed them), `log <git-log-args>`, `grep <rg-args>`,
   `files <pathspec>`.
 - Version changes go through `bin/dependencies`, then `bin/ci`.
+- A toolchain mismatch from `bin/ci` is fixed by installing the pinned
+  version, never by editing the pin to match what is installed.
 - The gate (`bin/`, `tests/guards`, `tests/run`), lint configuration,
   `.claude/` and this file change only with an explicit go.

@@ -12,3 +12,5 @@ The Python app is held by Ruff and pytest at full strength.
 - Ruff formats every file and lints it with every rule
   (`no-lint-exceptions.md`).
 - `bin/build` compiles every module.
+- `.python-version` pins Python; `bin/ci` fails unless uv finds an installed
+  Python that matches it.

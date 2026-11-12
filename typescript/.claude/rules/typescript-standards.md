@@ -12,3 +12,4 @@ The TypeScript app is held by Biome, `tsc` and `bun test` at full strength.
 - Biome formats and lints every file; `biome.json` keeps every rule on
   (`no-lint-exceptions.md`).
 - `bin/build` type-checks the whole app with `tsc`.
+- `.bun-version` pins bun; `bin/ci` fails unless that version is active.

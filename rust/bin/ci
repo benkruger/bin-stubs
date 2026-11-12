@@ -41,6 +41,13 @@ if [ "$clean" -eq 1 ]; then
   exit 0
 fi
 
+# shellcheck source=lib/toolchain.sh
+. "$here/lib/toolchain.sh"
+if [ -z "${CI:-}" ] && ! toolchain_check "$root"; then
+  echo "bin/ci: gate RED ($branch) — the toolchain does not match its pin (above)." >&2
+  exit 1
+fi
+
 if [ "$(basename "$here")" = "_root" ]; then
   ROOT_APP=1
 fi

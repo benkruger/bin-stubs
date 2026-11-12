@@ -254,6 +254,8 @@ test_changed_empty() {
 
 seed_typescript() {
   local app="$1"
+  mkdir -p "$app"
+  PATH="${HOME}/.bun/bin:${PATH}" bun --version >"$app/.bun-version"
   mkdir -p "$app/src" "$app/tests"
   cat >"$app/package.json" <<'EOF'
 {
@@ -297,6 +299,8 @@ EOF
 
 seed_javascript() {
   local app="$1"
+  mkdir -p "$app"
+  node --version | sed 's/^v//' >"$app/.nvmrc"
   mkdir -p "$app/src" "$app/tests"
   cat >"$app/package.json" <<'EOF'
 {
@@ -329,7 +333,10 @@ EOF
 }
 
 seed_python() {
-  local app="$1"
+  local app="$1" python
+  mkdir -p "$app"
+  python="$(cd "$app" && uv python find)"
+  "$python" -c 'import sys; print("%d.%d" % sys.version_info[:2])' >"$app/.python-version"
   mkdir -p "$app/src" "$app/tests"
   cat >"$app/pyproject.toml" <<'EOF'
 [project]
@@ -361,6 +368,8 @@ EOF
 
 seed_rails() {
   local app="$1"
+  mkdir -p "$app"
+  (cd "$app" && ruby -e 'print RUBY_VERSION') >"$app/.ruby-version"
   mkdir -p "$app/app/models" "$app/config" "$app/test/models"
   cat >"$app/.gitignore" <<'EOF'
 /coverage/
@@ -465,6 +474,8 @@ EOF
 
 seed_rust() {
   local app="$1"
+  mkdir -p "$app"
+  printf '[toolchain]\nchannel = "%s"\n' "$(rustc --version | cut -d' ' -f2)" >"$app/rust-toolchain.toml"
   mkdir -p "$app/src"
   cat >"$app/Cargo.toml" <<'EOF'
 [package]
@@ -489,6 +500,8 @@ EOF
 
 seed_ios() {
   local app="$1"
+  mkdir -p "$app"
+  xcodebuild -version | head -n 1 | cut -d' ' -f2 >"$app/.xcode-version"
   mkdir -p "$app/Sources/App" "$app/Tests/AppTests"
   cat >"$app/Package.swift" <<'EOF'
 // swift-tools-version: 6.0
@@ -600,7 +613,7 @@ EOF
 }
 
 test_language() {
-  local lang="$1" repo app sent hash
+  local lang="$1" repo app sent hash pin
   say "$lang bin"
   repo="$(new_repo)"
   KEEP="$repo"
@@ -636,6 +649,28 @@ test_language() {
   grep -q "sentinel written" "${LAST_LOG}" || die "$lang --force did not write"
   expect_ok "$app/bin/ci" --clean
   [ ! -f "$sent" ] || die "$lang --clean left the sentinel"
+
+  pin="$app/$(pin_file_of "$lang")"
+  cp "$pin" "$pin.keep"
+  if [ "$lang" = "rust" ]; then
+    printf '[toolchain]\nchannel = "1.0.0"\n' >"$pin"
+  else
+    echo "1.0.0" >"$pin"
+  fi
+  expect_fail "$app/bin/ci" --force
+  grep -q "toolchain: " "${LAST_LOG}" || die "$lang did not enforce its toolchain pin"
+  mv "$pin.keep" "$pin"
+}
+
+pin_file_of() {
+  case "$1" in
+    typescript) printf '%s\n' .bun-version ;;
+    javascript) printf '%s\n' .nvmrc ;;
+    python) printf '%s\n' .python-version ;;
+    rails) printf '%s\n' .ruby-version ;;
+    rust) printf '%s\n' rust-toolchain.toml ;;
+    ios) printf '%s\n' .xcode-version ;;
+  esac
 }
 
 test_dispatch() {

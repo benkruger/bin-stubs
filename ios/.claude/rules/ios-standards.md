@@ -9,3 +9,4 @@ The iOS app is held by swift-format and its tests at full strength.
   project or workspace and `swift test` for a Swift package.
 - No swift-format or SwiftLint rule is silenced in code
   (`no-lint-exceptions.md`).
+- `.xcode-version` pins Xcode; `bin/ci` fails unless that Xcode is selected.

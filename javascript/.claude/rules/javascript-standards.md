@@ -15,3 +15,5 @@ strength.
 - Every changed source is at 100% functions and lines under c8.
 - Biome formats and lints every file; `biome.json` keeps every rule on
   (`no-lint-exceptions.md`).
+- `.nvmrc` pins Node; `bin/ci` activates it through nvm and fails unless it
+  is active.

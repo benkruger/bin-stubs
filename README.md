@@ -43,7 +43,8 @@ time. A pass shows the step lines. A failure shows the step that broke.
    (`node_modules/`, `.venv/`, `vendor/`, `target/`, `.build/`).
 5. Install shellcheck, shfmt, markdownlint-cli2 and jq; the guards and the
    hooks need them.
-6. Run `bin/ci` until it passes. From then on every commit goes through it.
+6. Pin each app's toolchain (see "Pinned toolchain").
+7. Run `bin/ci` until it passes. From then on every commit goes through it.
 
 ## How
 
@@ -121,8 +122,9 @@ At the repo root, that same case prints `bin/changed: nothing dirty` and exits
 
 ### `bin/ci`
 
-1. Compare the app with the sentinel.
-2. A match exits 0 and prints nothing.
+1. Check the toolchain against its pin. A mismatch fails before anything
+   else runs.
+2. Compare the app with the sentinel. A match exits 0 and prints nothing.
 3. When the sentinel is stale, or the command is `--force`, install first
    where the app has an installer. TypeScript runs `bun install`. JavaScript
    uses the package manager named by its lockfile. Python runs `uv sync`.
@@ -267,12 +269,27 @@ The starter's `.claude/settings.json` sets what the agent may run:
 
 The guards fail when the file is missing, invalid, or drops any of these.
 
+## Pinned toolchain
+
+Each app pins its toolchain in a file, and its `bin/ci` fails unless that
+version is the one running. The check is skipped when `CI` is set.
+
+- **TypeScript**: `.bun-version` must match `bun --version`.
+- **JavaScript**: `.nvmrc`. `bin/ci` switches to it through nvm when nvm is
+  installed, then requires it.
+- **Python**: `.python-version`. uv must find an installed Python matching it.
+- **Rails**: `.ruby-version` must match the active Ruby.
+- **Rust**: `rust-toolchain.toml`. A numbered channel must match the active
+  `rustc`; a named one such as `stable` is left to rustup.
+- **iOS**: `.xcode-version` must match the selected Xcode.
+
+A mismatch names the fix, such as `rbenv install 3.4.8`. The gate never
+installs a toolchain itself.
+
 ## Beyond the kit
 
 The kit does not ship these. A repo ready for an agent has them too.
 
-- **Pinned toolchain**: `.nvmrc`, `.ruby-version`, `.python-version` or
-  `rust-toolchain.toml`, checked before the gate runs.
 - **Lockfile**: versions move only through `bin/dependencies`. A vulnerable
   transitive dependency is lifted to the latest version, never pinned down.
 - **Commit tool**: `flow-pro commit` runs `bin/ci` and commits only on a

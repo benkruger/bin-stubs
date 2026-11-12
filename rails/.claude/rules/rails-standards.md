@@ -18,3 +18,4 @@ strength.
 - RuboCop autocorrects, then any offense left fails. Brakeman fails on any
   warning. Neither is configured off (`no-lint-exceptions.md`).
 - `bin/build` eager-loads the app with Zeitwerk.
+- `.ruby-version` pins Ruby; `bin/ci` fails unless that version is active.
