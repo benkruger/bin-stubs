@@ -10,6 +10,9 @@ behaves the same whatever its stack.
   `dependencies` in its `bin/`, and `.claude/rules/<language>-standards.md`
   stating exactly what those scripts enforce. A change to what a script
   enforces updates that rule in the same change.
+- A language whose apps run a local server (`typescript`, `javascript`,
+  `rails`) also ships `bin/open`: it starts the app bound to 127.0.0.1 and
+  opens it in the browser.
 - Each `bin/ci` prints `[n/4]` step lines, writes the sentinel only after all
   four steps pass, leaves the old sentinel on a red run, and honors `--force`
   and `--clean`.

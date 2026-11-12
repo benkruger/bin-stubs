@@ -1,0 +1,33 @@
+#!/usr/bin/env bash
+# bin/open — run this Rails app locally on 127.0.0.1 and open it in the
+# browser as soon as it answers. PORT picks the port (default 3000). Installs
+# gems first when they are missing. Extra arguments go to `rails server`.
+#
+# Usage: bin/open [args...]
+set -euo pipefail
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [ "$(basename "$here")" = "_root" ]; then
+  root="$(cd "$here/../.." && pwd)"
+else
+  root="$(cd "$here/.." && pwd)"
+fi
+cd "$root"
+
+port="${PORT:-3000}"
+url="http://127.0.0.1:$port"
+opener=open
+command -v open >/dev/null 2>&1 || opener=xdg-open
+
+bundle check >/dev/null 2>&1 || bundle install --quiet
+
+(
+  for _ in $(seq 1 120); do
+    if curl -s -o /dev/null "$url"; then
+      "$opener" "$url"
+      exit 0
+    fi
+    sleep 0.5
+  done
+) &
+
+exec bundle exec rails server -b 127.0.0.1 -p "$port" "$@"

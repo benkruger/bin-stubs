@@ -182,6 +182,11 @@ Both repo-level checks run `tests/run`. `bin/scan` takes `refs <string>`
 | `bin/build`        | Build. Used by `bin/ci`                          |
 | `bin/test`         | Test                                             |
 | `bin/dependencies` | Refresh the lockfile and install it              |
+| `bin/open`         | Run the app on 127.0.0.1 and open it             |
+
+TypeScript, JavaScript and Rails ship `bin/open`. TypeScript and JavaScript
+run the `dev` script with `--host 127.0.0.1 --open`; Rails starts
+`rails server` on `PORT` (default 3000) and opens the browser once it answers.
 
 - **TypeScript**: Biome write, Biome check, `tsc`, then `bun test` with
   100/100 on changed sources.

@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+# bin/open — run this app locally and open it: the package.json `dev` script,
+# bound to 127.0.0.1, with --open for the browser. The package manager is read
+# from the lockfile (pnpm-lock.yaml → pnpm, yarn.lock → yarn, bun.lock → bun,
+# else npm). Installs dependencies first when node_modules is missing. Extra
+# arguments go to the dev script.
+#
+# Usage: bin/open [args...]
+set -euo pipefail
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [ "$(basename "$here")" = "_root" ]; then
+  root="$(cd "$here/../.." && pwd)"
+else
+  root="$(cd "$here/.." && pwd)"
+fi
+cd "$root"
+
+pm=npm
+if [ -f pnpm-lock.yaml ]; then
+  pm=pnpm
+elif [ -f yarn.lock ]; then
+  pm=yarn
+elif [ -f bun.lock ] || [ -f bun.lockb ]; then
+  pm=bun
+  export PATH="${HOME}/.bun/bin:${PATH}"
+fi
+
+[ -d node_modules ] || "$pm" install
+if [ "$pm" = npm ]; then
+  exec npm run dev -- --host 127.0.0.1 --open "$@"
+fi
+exec "$pm" run dev --host 127.0.0.1 --open "$@"

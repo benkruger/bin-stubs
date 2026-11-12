@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+# bin/open — run this app locally and open it: the package.json `dev` script,
+# bound to 127.0.0.1, with --open for the browser. Installs dependencies
+# first when node_modules is missing. Extra arguments go to the dev script.
+#
+# Usage: bin/open [args...]
+set -euo pipefail
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [ "$(basename "$here")" = "_root" ]; then
+  root="$(cd "$here/../.." && pwd)"
+else
+  root="$(cd "$here/.." && pwd)"
+fi
+cd "$root"
+export PATH="${HOME}/.bun/bin:${PATH}"
+
+[ -d node_modules ] || bun install
+exec bun run dev --host 127.0.0.1 --open "$@"

@@ -10,6 +10,7 @@
 - Run scripts by relative path (`bin/ci`), never an absolute one. Never call
   the toolchain (bun, Biome, Ruff, RuboCop, cargo, swift) directly; call the
   `bin/` script that wraps it.
+- To see a web app running, use its `bin/open`.
 - Search with `bin/scan`: `refs <string>` (matches and the commits that
   added or removed them), `log <git-log-args>`, `grep <rg-args>`,
   `files <pathspec>`.
