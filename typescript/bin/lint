@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
-# bin/lint — every rule, only files this folder changed. Biome read-only
-# on non-markdown, markdownlint on dirty *.md. A sibling folder with its
-# own bin/lint is left alone. Not a formatter (bin/format owns writes).
-# --all checks every file git sees instead of the dirty set — the
-# one-time full pass an install runs so latent violations can't hide.
+# bin/lint — every rule, only files this folder changed. ESLint with zero
+# warnings on everything but Markdown (a file its config does not cover is
+# skipped), markdownlint on dirty *.md. A sibling folder with its own
+# bin/lint is left alone. Not a formatter (bin/format owns writes). --all
+# checks every file git sees instead of the dirty set — the one-time full
+# pass an install runs so latent violations can't hide.
 #
 # Usage: bin/lint [--all]
 set -euo pipefail
@@ -56,17 +57,17 @@ if [ "${#files[@]}" -eq 0 ]; then
   exit 0
 fi
 
-biome_files=()
+eslint_files=()
 md_files=()
 for path in "${files[@]}"; do
   case "$path" in
     *.md) md_files+=("$path") ;;
-    *) biome_files+=("$path") ;;
+    *) eslint_files+=("$path") ;;
   esac
 done
 
-if [ "${#biome_files[@]}" -gt 0 ]; then
-  "$root/node_modules/.bin/biome" check "${biome_files[@]}"
+if [ "${#eslint_files[@]}" -gt 0 ]; then
+  "$root/node_modules/.bin/eslint" --max-warnings=0 --no-warn-ignored "${eslint_files[@]}"
 fi
 
 if [ "${#md_files[@]}" -eq 0 ]; then

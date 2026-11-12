@@ -71,6 +71,11 @@ for path in "${files[@]}"; do
         fail "$path: turns Biome rules off or overrides them"
       fi
       ;;
+    eslint.config.js | eslint.config.mjs | eslint.config.cjs | eslint.config.ts | eslint.config.mts | eslint.config.cts)
+      if grep -qE "[\"'](off|warn)[\"']|linterOptions" "$path"; then
+        fail "$path: turns ESLint rules off or down to warnings"
+      fi
+      ;;
     .rubocop.yml)
       if grep -qE '^[[:space:]]*Enabled:[[:space:]]*false' "$path"; then
         fail "$path: disables a RuboCop cop"

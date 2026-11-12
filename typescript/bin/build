@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# bin/build — type-check this folder (tsc --noEmit). tsc is the project's
-# node_modules/.bin (configure added it).
+# bin/build — the package's own build script (`npm run build`) when
+# package.json declares one; otherwise a type-check of this folder
+# (tsc --noEmit). tsc is the project's node_modules/.bin.
 #
 # Usage: bin/build
 set -euo pipefail
@@ -11,4 +12,8 @@ else
   root="$(cd "$here/.." && pwd)"
 fi
 cd "$root"
+
+if node -e 'const p = require("./package.json"); process.exit(p.scripts && p.scripts.build ? 0 : 1)'; then
+  exec npm run build
+fi
 exec "$root/node_modules/.bin/tsc" --noEmit

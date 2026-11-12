@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# bin/test — bun test --coverage, then 100/100 on every source file this
-# folder changed. A changed test still requires its mirrored source at
-# 100/100. Path args still require 100/100 on the mirrored source when
-# that twin exists; a path with no twin (a throwaway probe) is
-# assertion-only. Capture-then-filter (never a live pipe): a coverage
-# table bursting into a slow reader aborts bun with WriteFailed. bun's
-# exit code is the suite result; the ratchet is a second gate after green.
+# bin/test — Vitest with v8 coverage, then 100/100 (functions, lines) on
+# every source file this folder changed. A changed test still requires its
+# mirrored source at 100/100. Path args are Vitest file filters: they switch
+# off the app's own coverage thresholds for that run, and still require
+# 100/100 on the mirrored source when that twin exists; a path with no twin
+# (a throwaway probe) is assertion-only. Vitest's exit code is the suite
+# result; the ratchet is a second gate after green.
 #
 # Usage: bin/test [args...]
 set -euo pipefail
@@ -16,13 +16,30 @@ else
   root="$(cd "$here/.." && pwd)"
 fi
 cd "$root"
-export PATH="${HOME}/.bun/bin:${PATH}"
 
-out="$(mktemp)"
-trap 'rm -f "$out"' EXIT
+covdir="$(mktemp -d)"
+trap 'rm -rf "$covdir"' EXIT
+
+filtered=0
+for arg in "$@"; do
+  case "$arg" in
+    -*) ;;
+    *) filtered=1 ;;
+  esac
+done
+
+run=("$root/node_modules/.bin/vitest" run --coverage
+  --coverage.reporter=json-summary "--coverage.reportsDirectory=$covdir")
+if [ "$filtered" -eq 1 ]; then
+  run+=(--coverage.thresholds.lines=0 --coverage.thresholds.branches=0
+    --coverage.thresholds.functions=0 --coverage.thresholds.statements=0)
+fi
 rc=0
-bun test --coverage "$@" >"$out" 2>&1 || rc=$?
-grep -vE '^[[:space:]]*✓|^[[:space:]]*\((pass|skip|todo)\)|^tests/.*:$|^[[:space:]]*$|\| *100\.00 *\| *100\.00 *\|' "$out" || true
+"${run[@]}" "$@" || rc=$?
+if [ "$rc" -ne 0 ]; then
+  exit "$rc"
+fi
+covjson="$covdir/coverage-summary.json"
 
 has_own_test() {
   local top="$1"
@@ -81,29 +98,20 @@ source_for_test() {
   fi
 }
 
-# % Funcs and % Lines for a repo-relative source path. "missing" if bun
-# printed no row (treat as 0).
+# % functions and % lines for a repo-relative source path, from Vitest's
+# json-summary. "missing" when the source has no row (never loaded by a test).
 file_cov() {
-  local file="$1" row funcs lines
-  row="$(awk -v f="$file" -F'|' '
-    {
-      key = $1
-      gsub(/^[ \t]+|[ \t]+$/, "", key)
-      if (key == f) {
-        g = $2
-        l = $3
-        gsub(/[ \t]/, "", g)
-        gsub(/[ \t]/, "", l)
-        print g, l
-        exit
-      }
+  node -e '
+    const summary = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"));
+    const want = process.argv[2];
+    const key = Object.keys(summary).find((k) => k === want || k.endsWith("/" + want));
+    if (key === undefined) {
+      console.log("missing");
+    } else {
+      const row = summary[key];
+      console.log(row.functions.pct.toFixed(2) + " " + row.lines.pct.toFixed(2));
     }
-  ' "$out")"
-  if [ -z "$row" ]; then
-    echo "missing"
-    return
-  fi
-  echo "$row"
+  ' "$covjson" "$1"
 }
 
 already() {

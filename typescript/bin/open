@@ -12,7 +12,6 @@ else
   root="$(cd "$here/.." && pwd)"
 fi
 cd "$root"
-export PATH="${HOME}/.bun/bin:${PATH}"
 
-[ -d node_modules ] || bun install
-exec bun run dev --host 127.0.0.1 --open "$@"
+[ -d node_modules ] || npm install
+exec npm run dev -- --host 127.0.0.1 --open "$@"

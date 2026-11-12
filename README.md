@@ -126,7 +126,7 @@ At the repo root, that same case prints `bin/changed: nothing dirty` and exits
    else runs.
 2. Compare the app with the sentinel. A match exits 0 and prints nothing.
 3. When the sentinel is stale, or the command is `--force`, install first
-   where the app has an installer. TypeScript runs `bun install`. JavaScript
+   where the app has an installer. TypeScript runs `npm install`. JavaScript
    uses the package manager named by its lockfile. Python runs `uv sync`.
    Rails runs `bundle install` when gems are missing.
 4. Format, lint, build, test. A terminal shows `bin/ci: [1/4] format /`
@@ -195,8 +195,8 @@ TypeScript, JavaScript and Rails ship `bin/open`. TypeScript and JavaScript
 run the `dev` script with `--host 127.0.0.1 --open`; Rails starts
 `rails server` on `PORT` (default 3000) and opens the browser once it answers.
 
-- **TypeScript**: Biome write, Biome check, `tsc`, then `bun test` with
-  100/100 on changed sources.
+- **TypeScript**: Prettier write, ESLint with zero warnings, the package
+  build or `tsc`, then Vitest with 100/100 on changed sources.
 - **JavaScript**: Biome write, Biome check, the package build or
   `node --check`, then the package test under c8 with 100/100 on changed
   sources.
@@ -233,8 +233,9 @@ guards, so a broken standard fails the gate like a failing test.
   cites a missing rule.
 - `CLAUDE.md` is over 400 lines or 12,000 characters, lacks one leading H1,
   or points at the rules.
-- Any file silences a linter, `biome.json` turns rules off, `.rubocop.yml`
-  disables a cop, or `Cargo.toml` allows a lint.
+- Any file silences a linter, `biome.json` turns rules off, an ESLint config
+  sets a rule to `off` or `warn`, `.rubocop.yml` disables a cop, or
+  `Cargo.toml` allows a lint.
 - A bash script has a shellcheck finding or is not formatted by
   `shfmt -i 2 -ci`, or an entry point is not executable or does not start
   with `set -euo pipefail`.
@@ -279,9 +280,8 @@ The guards fail when the file is missing, invalid, or drops any of these.
 Each app pins its toolchain in a file, and its `bin/ci` fails unless that
 version is the one running. The check is skipped when `CI` is set.
 
-- **TypeScript**: `.bun-version` must match `bun --version`.
-- **JavaScript**: `.nvmrc`. `bin/ci` switches to it through nvm when nvm is
-  installed, then requires it.
+- **TypeScript** and **JavaScript**: `.nvmrc`. `bin/ci` switches to it
+  through nvm when nvm is installed, then requires it.
 - **Python**: `.python-version`. uv must find an installed Python matching it.
 - **Rails**: `.ruby-version` must match the active Ruby.
 - **Rust**: `rust-toolchain.toml`. A numbered channel must match the active

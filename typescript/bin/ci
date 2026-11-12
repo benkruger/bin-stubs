@@ -25,7 +25,6 @@ else
   root="$(cd "$here/.." && pwd)"
 fi
 cd "$root"
-export PATH="${HOME}/.bun/bin:${PATH}"
 
 force=0
 clean=0
@@ -89,9 +88,9 @@ trap 'rm -f "$log"' EXIT
 
 # Provision before the four steps. A fresh worktree carries no node_modules
 # (untracked, never mirrored by symlink). An already-provisioned tree no-ops.
-# bun install resolves only what package.json itself changed — versions
-# never move here (that is bin/dependencies' bun update).
-if ! bun install >>"$log" 2>&1; then
+# npm install resolves only what package.json itself changed — versions
+# never move here (that is bin/dependencies' npm update).
+if ! npm install >>"$log" 2>&1; then
   cat "$log" >&2
   echo "bin/ci: gate RED ($branch) — dependency provisioning failed (above)." >&2
   exit 1
@@ -142,7 +141,7 @@ run_step lint "$here/lint"
 run_step build "$here/build"
 run_step test "$here/test"
 
-tally="$(grep -E '^Ran [0-9]+ tests' "$log" | tail -n1 || true)"
+tally="$(grep -E '^ *Tests +[0-9]+' "$log" | tail -n1 | tr -s ' ' | sed 's/^ //' || true)"
 
 # Re-fingerprint after the run: bin/format mutates in place, so the durable
 # sentinel must reflect the post-format tree.

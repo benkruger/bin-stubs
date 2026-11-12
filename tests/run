@@ -115,7 +115,7 @@ test_open() {
   home="$repo/.home"
   log="$repo/stub.log"
   mkdir -p "$stubs" "$home"
-  for tool in bun npm bundle curl open; do
+  for tool in npm bundle curl open; do
     make_stub "$stubs" "$tool"
   done
   for lang in typescript javascript rails; do
@@ -125,8 +125,9 @@ test_open() {
 
   run_log env PATH="$stubs:$PATH" HOME="$home" STUB_LOG="$log" "$repo/typescript/bin/open"
   assert_rc 0 "typescript bin/open"
-  grep -qx "bun run dev --host 127.0.0.1 --open" "$log" || die "typescript bin/open ran the wrong command"
+  grep -qx "npm run dev -- --host 127.0.0.1 --open" "$log" || die "typescript bin/open ran the wrong command"
 
+  : >"$log"
   run_log env PATH="$stubs:$PATH" HOME="$home" STUB_LOG="$log" "$repo/javascript/bin/open"
   assert_rc 0 "javascript bin/open"
   grep -qx "npm run dev -- --host 127.0.0.1 --open" "$log" || die "javascript bin/open ran the wrong command"
@@ -208,6 +209,11 @@ test_starter() {
   grep -q "biome.json: turns Biome rules off" "${LAST_LOG}" || die "Biome config not checked"
   rm "$repo/biome.json"
 
+  printf 'export default [{ rules: { "no-unused-vars": "%s" } }];\n' "off" >"$repo/eslint.config.js"
+  expect_fail "$repo/tests/run"
+  grep -q "eslint.config.js: turns ESLint rules off" "${LAST_LOG}" || die "ESLint config not checked"
+  rm "$repo/eslint.config.js"
+
   {
     printf '# Long\n\n'
     for _ in $(seq 1 45); do printf -- '- line\n'; done
@@ -272,7 +278,7 @@ test_changed_empty() {
 seed_typescript() {
   local app="$1"
   mkdir -p "$app"
-  PATH="${HOME}/.bun/bin:${PATH}" bun --version >"$app/.bun-version"
+  node --version | sed 's/^v//' >"$app/.nvmrc"
   mkdir -p "$app/src" "$app/tests"
   cat >"$app/package.json" <<'EOF'
 {
@@ -280,10 +286,27 @@ seed_typescript() {
   "private": true,
   "type": "module",
   "devDependencies": {
-    "@biomejs/biome": "2.2.4",
-    "typescript": "5.9.2"
+    "@eslint/js": "10.0.1",
+    "@vitest/coverage-v8": "5.1.0",
+    "eslint": "10.14.0",
+    "prettier": "3.9.10",
+    "typescript": "6.0.3",
+    "typescript-eslint": "8.72.1",
+    "vitest": "5.1.0"
   }
 }
+EOF
+  cat >"$app/eslint.config.js" <<'EOF'
+import js from "@eslint/js";
+import { defineConfig } from "eslint/config";
+import tseslint from "typescript-eslint";
+
+export default defineConfig([
+  {
+    files: ["**/*.ts"],
+    extends: [js.configs.recommended, tseslint.configs.recommended],
+  },
+]);
 EOF
   cat >"$app/tsconfig.json" <<'EOF'
 {
@@ -305,7 +328,7 @@ return a+b
 }
 EOF
   cat >"$app/tests/add.test.ts" <<'EOF'
-import { expect, test } from "bun:test";
+import { expect, test } from "vitest";
 import { add } from "../src/add";
 
 test("add", () => {
@@ -572,7 +595,7 @@ red_file() {
   case "$lang" in
     typescript)
       cat >"$app/tests/red.test.ts" <<'EOF'
-import { expect, test } from "bun:test";
+import { expect, test } from "vitest";
 
 test("red", () => {
   expect(1).toBe(0);
@@ -681,7 +704,7 @@ test_language() {
 
 pin_file_of() {
   case "$1" in
-    typescript) printf '%s\n' .bun-version ;;
+    typescript) printf '%s\n' .nvmrc ;;
     javascript) printf '%s\n' .nvmrc ;;
     python) printf '%s\n' .python-version ;;
     rails) printf '%s\n' .ruby-version ;;

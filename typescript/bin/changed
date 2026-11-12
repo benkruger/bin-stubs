@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# bin/changed — coding-time gate for files this folder changed. Biome
-# --write (format and safe lint fixes), then lint (leftover stays red),
-# tests for the dirty tree, 100/100 on every dirty source. No twin test
-# → red. Empty diff → green. No build, no sentinel, not bin/ci.
+# bin/changed — coding-time gate for files this folder changed. bin/format
+# (Prettier), then bin/lint (ESLint, markdownlint), tests for the dirty
+# tree, 100/100 on every dirty source. No twin test → red. Empty diff →
+# green. No build, no sentinel, not bin/ci.
 #
 # Usage: bin/changed
 set -euo pipefail
@@ -13,7 +13,6 @@ else
   root="$(cd "$here/.." && pwd)"
 fi
 cd "$root"
-export PATH="${HOME}/.bun/bin:${PATH}"
 
 has_own() {
   local top="$1" leaf="$2"
@@ -85,18 +84,7 @@ if [ "${#files[@]}" -eq 0 ]; then
   exit 0
 fi
 
-biome_files=()
-for path in "${files[@]}"; do
-  case "$path" in
-    *.md) ;;
-    *) biome_files+=("$path") ;;
-  esac
-done
-
-if [ "${#biome_files[@]}" -gt 0 ]; then
-  "$root/node_modules/.bin/biome" check --write "${biome_files[@]}" || true
-fi
-
+"$here/format"
 "$here/lint"
 
 tests=()

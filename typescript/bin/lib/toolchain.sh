@@ -1,20 +1,36 @@
 #!/usr/bin/env bash
-# Sourced by bin/ci. toolchain_check <root> passes when the active bun is the
-# version pinned in <root>/.bun-version, and explains the fix otherwise.
+# Sourced by bin/ci. toolchain_check <root> activates the Node pinned in
+# <root>/.nvmrc through nvm when nvm is installed, then passes when the active
+# Node is that version, and explains the fix otherwise. It never installs a
+# Node itself.
 
 toolchain_check() {
-  local root="$1" pinned active
-  if [ ! -f "$root/.bun-version" ]; then
-    echo "toolchain: .bun-version is missing; pin bun with: bun --version > .bun-version" >&2
+  local root="$1" pinned active nvm_script options
+  if [ ! -f "$root/.nvmrc" ]; then
+    echo "toolchain: .nvmrc is missing; pin Node with: node --version | sed 's/^v//' > .nvmrc" >&2
     return 1
   fi
-  pinned="$(tr -d '[:space:]' <"$root/.bun-version")"
-  if ! active="$(bun --version 2>/dev/null)"; then
-    echo "toolchain: bun is not installed; .bun-version pins $pinned" >&2
+  pinned="$(tr -d '[:space:]' <"$root/.nvmrc")"
+  pinned="${pinned#v}"
+
+  nvm_script="${NVM_DIR:-$HOME/.nvm}/nvm.sh"
+  if [ -s "$nvm_script" ]; then
+    options="$-"
+    set +eu
+    # shellcheck source=/dev/null
+    . "$nvm_script"
+    nvm use "$pinned" >/dev/null 2>&1
+    case "$options" in *e*) set -e ;; esac
+    case "$options" in *u*) set -u ;; esac
+  fi
+
+  if ! active="$(node --version 2>/dev/null)"; then
+    echo "toolchain: node is not installed; .nvmrc pins $pinned (nvm install $pinned)" >&2
     return 1
   fi
+  active="${active#v}"
   if [ "$active" != "$pinned" ]; then
-    echo "toolchain: bun $active is active but .bun-version pins $pinned; install it with: curl -fsSL https://bun.sh/install | bash -s bun-v$pinned" >&2
+    echo "toolchain: node $active is active but .nvmrc pins $pinned; install it with: nvm install $pinned" >&2
     return 1
   fi
 }

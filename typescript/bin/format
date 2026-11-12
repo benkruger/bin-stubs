@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# bin/format — format files this folder changed (Biome write, linter off).
-# Git diff vs HEAD plus untracked, owned by this gate. A sibling folder
-# with its own bin/format is left alone. Not a linter (bin/lint owns lint).
+# bin/format — format files this folder changed with Prettier. Git diff vs
+# HEAD plus untracked, owned by this gate. Markdown is left to markdownlint;
+# a file Prettier has no parser for is skipped. A sibling folder with its own
+# bin/format is left alone. Not a linter (bin/lint owns lint).
 #
 # Usage: bin/format
 set -euo pipefail
@@ -26,6 +27,7 @@ while IFS= read -r path; do
     node_modules/* | .venv/* | .flow-states/* | flume/* | */node_modules/* | */.venv/* | */.flow-states/*)
       continue
       ;;
+    *.md) continue ;;
   esac
   top="${path%%/*}"
   if [ "$top" != "$path" ] && has_own_format "$top"; then
@@ -43,4 +45,4 @@ if [ "${#files[@]}" -eq 0 ]; then
   exit 0
 fi
 
-exec "$root/node_modules/.bin/biome" check --write --linter-enabled=false "${files[@]}"
+exec "$root/node_modules/.bin/prettier" --write --ignore-unknown --log-level=warn "${files[@]}"
