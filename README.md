@@ -165,8 +165,11 @@ At the repo root, that same case prints `bin/changed: nothing dirty` and exits
 | `bin/_dispatch`     | Pick the apps and run the phase      |
 | `bin/_root-tests`   | Repo-level check for `ci` and `test` |
 | `bin/_root-changed` | Repo-level check for `changed`       |
+| `bin/scan`          | Search the repo                      |
 
-Both repo-level checks run `tests/run`.
+Both repo-level checks run `tests/run`. `bin/scan` takes `refs <string>`
+(matches, and the commits that added or removed them), `log <git-log-args>`,
+`grep <rg-args>` (needs ripgrep) or `files <pathspec>`.
 
 ### App scripts
 

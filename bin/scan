@@ -1,0 +1,35 @@
+#!/usr/bin/env bash
+set -euo pipefail
+cd "$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+cmd="${1:-}"
+shift || true
+
+case "$cmd" in
+  refs)
+    [ "$#" -ge 1 ] || {
+      echo "usage: bin/scan refs <string>" >&2
+      exit 2
+    }
+    git grep -n -F -- "$1" || true
+    echo "--- history (pickaxe: commits that add/remove the string) ---"
+    git log --oneline -S "$1"
+    ;;
+  log)
+    git log "$@"
+    ;;
+  grep)
+    command -v rg >/dev/null 2>&1 || {
+      echo "bin/scan grep: ripgrep (rg) not installed" >&2
+      exit 2
+    }
+    rg "$@"
+    ;;
+  files)
+    git ls-files "$@"
+    ;;
+  *)
+    echo "usage: bin/scan {refs <string> | log <git-log-args> | grep <rg-args> | files <pathspec>}" >&2
+    exit 2
+    ;;
+esac

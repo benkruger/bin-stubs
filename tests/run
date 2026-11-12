@@ -59,6 +59,28 @@ test_kit_scripts_are_bash() {
   done < <(git -C "$REPO" ls-files -z --cached --others --exclude-standard)
 }
 
+test_scan() {
+  say "scan"
+  local repo
+  repo="$(new_repo)"
+  KEEP="$repo"
+  copy_dir "$REPO/bin" "$repo/bin"
+  printf 'needle here\n' >"$repo/notes.txt"
+  git -C "$repo" add -A
+  git -C "$repo" commit -q -m "add the needle"
+  expect_ok "$repo/bin/scan" refs needle
+  grep -q "notes.txt:1:needle here" "${LAST_LOG}" || die "scan refs missed the match"
+  grep -q "add the needle" "${LAST_LOG}" || die "scan refs missed the commit"
+  expect_ok "$repo/bin/scan" log --oneline
+  grep -q "add the needle" "${LAST_LOG}" || die "scan log missed the commit"
+  expect_ok "$repo/bin/scan" grep needle
+  grep -q "needle here" "${LAST_LOG}" || die "scan grep missed the match"
+  expect_ok "$repo/bin/scan" files
+  grep -qx "notes.txt" "${LAST_LOG}" || die "scan files missed the file"
+  expect_fail "$repo/bin/scan" sideways
+  grep -q "usage: bin/scan" "${LAST_LOG}" || die "scan printed no usage"
+}
+
 hook_on() {
   LAST_LOG="$(mktemp)"
   if jq -n --arg c "$1" "{tool_input:{command:\$c}}" |
@@ -680,6 +702,7 @@ test_dependencies() {
 
 test_repo_guards
 test_kit_scripts_are_bash
+test_scan
 test_hooks
 test_starter
 test_copies_match

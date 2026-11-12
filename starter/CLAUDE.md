@@ -10,6 +10,9 @@
 - Run scripts by relative path (`bin/ci`), never an absolute one. Never call
   the toolchain (bun, Biome, Ruff, RuboCop, cargo, swift) directly; call the
   `bin/` script that wraps it.
+- Search with `bin/scan`: `refs <string>` (matches and the commits that
+  added or removed them), `log <git-log-args>`, `grep <rg-args>`,
+  `files <pathspec>`.
 - Version changes go through `bin/dependencies`, then `bin/ci`.
 - The gate (`bin/`, `tests/guards`, `tests/run`), lint configuration,
   `.claude/` and this file change only with an explicit go.
