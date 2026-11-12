@@ -128,7 +128,8 @@ At the repo root, that same case prints `bin/changed: nothing dirty` and exits
 3. When the sentinel is stale, or the command is `--force`, install first
    where the app has an installer. TypeScript runs `npm install`. JavaScript
    uses the package manager named by its lockfile. Python runs `uv sync`.
-   Rails runs `bundle install` when gems are missing.
+   Rails runs `bundle install` when gems are missing. TypeScript and
+   JavaScript then fail on any moderate or worse audit advisory.
 4. Format, lint, build, test. A terminal shows `bin/ci: [1/4] format /`
    through `test ✓`.
 5. A failed step prints its log. The old sentinel stays.

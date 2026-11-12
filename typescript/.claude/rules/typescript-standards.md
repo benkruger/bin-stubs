@@ -24,3 +24,6 @@ strength.
   app with `tsc --noEmit` when there is none.
 - npm installs from `package-lock.json`; `.nvmrc` pins Node, and `bin/ci`
   activates it through nvm and fails unless it is active.
+- `npm audit` reports no moderate or worse advisory; `bin/ci` fails after
+  install otherwise. A vulnerable transitive package is lifted through
+  `overrides` in `package.json`.

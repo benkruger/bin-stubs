@@ -20,3 +20,6 @@ strength.
 - `biome.json` keeps every rule on (`no-lint-exceptions.md`).
 - `.nvmrc` pins Node; `bin/ci` activates it through nvm and fails unless it
   is active.
+- The lockfile's package manager audits with no moderate or worse advisory;
+  `bin/ci` fails after install otherwise. A vulnerable transitive package is
+  lifted through the package manager's overrides.
