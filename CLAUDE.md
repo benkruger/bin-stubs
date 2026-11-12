@@ -3,7 +3,7 @@
 ## Running Things
 
 - `bin/ci` is this repo's gate. It runs `tests/run`, which needs bun, node,
-  uv, cargo, swift, shellcheck, shfmt and markdownlint-cli2 installed.
+  uv, cargo, swift, shellcheck, shfmt, markdownlint-cli2 and jq installed.
 - Iterate with `starter/tests/run` (the guard suite on this repo, seconds);
   run `bin/ci` before every commit.
 - Run scripts by their relative path (`bin/ci`, `tests/run`), never an

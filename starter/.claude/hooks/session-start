@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+# SessionStart hook. In a cloud session (CLAUDE_CODE_REMOTE=true) it runs the
+# gate once, so the session starts from a known state: dependencies installed
+# by each app's bin/ci, and every check green or its failure in view. A local
+# session is left alone.
+set -euo pipefail
+
+if [ "${CLAUDE_CODE_REMOTE:-}" != "true" ]; then
+  exit 0
+fi
+
+cd "${CLAUDE_PROJECT_DIR:-$(git rev-parse --show-toplevel)}"
+bin/ci

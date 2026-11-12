@@ -37,11 +37,12 @@ time. A pass shows the step lines. A failure shows the step that broke.
    repo root goes in `bin/_root/`. Copy that language's `.claude/rules/` into
    the repo's `.claude/rules/`.
 3. Copy the contents of `starter/` into the repo root: `CLAUDE.md`,
-   `.claude/rules/`, `tests/run` and `tests/guards`. Put the project's name in
-   the `CLAUDE.md` heading.
+   `.claude/rules/`, `.claude/settings.json`, `.claude/hooks/`, `tests/run`
+   and `tests/guards`. Put the project's name in the `CLAUDE.md` heading.
 4. Ignore `.flow-states/`, `.claude/cost/`, and the dependency folders
    (`node_modules/`, `.venv/`, `vendor/`, `target/`, `.build/`).
-5. Install shellcheck, shfmt and markdownlint-cli2; the guards need them.
+5. Install shellcheck, shfmt, markdownlint-cli2 and jq; the guards and the
+   hooks need them.
 6. Run `bin/ci` until it passes. From then on every commit goes through it.
 
 ## How
@@ -223,6 +224,8 @@ guards, so a broken standard fails the gate like a failing test.
   `shfmt -i 2 -ci`, or an entry point is not executable or does not start
   with `set -euo pipefail`.
 - A Markdown file breaks a markdownlint rule.
+- `.claude/settings.json` is missing or invalid, does not allow `Bash(bin/*)`,
+  does not deny destructive git, or does not wire both hooks.
 
 When you add a check:
 
@@ -237,17 +240,29 @@ When you add a check:
   remove it. This repo's `tests/run` keeps one planted violation per check.
 - **A new standard lands with its check**, in the same change.
 
+## Permissions and hooks
+
+The starter's `.claude/settings.json` sets what the agent may run:
+
+- **Allows** `Bash(bin/*)`, `Bash(*/bin/*)` and `Bash(tests/run)`, so the gate
+  runs without approval prompts. These match the relative form, so scripts
+  are always run as `bin/ci`.
+- **Denies** destructive git: `commit` (commits go through `flow-pro commit`),
+  `rebase`, `checkout`, `reset`, `stash`, `clean`, and force-push, with or
+  without `git -C`.
+- **`require-bin`** (`PreToolUse`) blocks a command that calls the toolchain
+  directly (bun, Biome, Ruff, RuboCop, cargo, swift, `rails test` and the
+  rest), anywhere in a compound command and through runners like `npx`,
+  `bundle exec` and `uv run`. The agent is told to use the `bin/` script.
+- **`session-start`** (`SessionStart`) runs `bin/ci` once in a cloud session,
+  so the session starts from a known state. A local session is left alone.
+
+The guards fail when the file is missing, invalid, or drops any of these.
+
 ## Beyond the kit
 
 The kit does not ship these. A repo ready for an agent has them too.
 
-- **`.claude/settings.json`**: allow `Bash(bin/*)` so the gate runs without
-  approval prompts. That rule matches only the relative form, so scripts are
-  always run as `bin/ci`. Deny destructive git: `rebase`, `checkout`,
-  `reset --hard`, `stash`, `clean`, force-push.
-- **Hooks**: a `PreToolUse` hook that blocks calling the toolchain directly,
-  so the agent goes through `bin/`. A `SessionStart` hook for cloud sessions
-  that installs the toolchain and runs `bin/ci`.
 - **Pinned toolchain**: `.nvmrc`, `.ruby-version`, `.python-version` or
   `rust-toolchain.toml`, checked before the gate runs.
 - **Lockfile**: versions move only through `bin/dependencies`. A vulnerable

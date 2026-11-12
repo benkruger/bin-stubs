@@ -51,11 +51,42 @@ test_kit_scripts_are_bash() {
   say "every kit script is bash"
   local path first
   while IFS= read -r -d '' path; do
+    [ -f "$REPO/$path" ] && [ ! -L "$REPO/$path" ] || continue
     first="$(head -n 1 "$REPO/$path")"
     case "$first" in
       "#!"*) [ "$first" = "#!/usr/bin/env bash" ] || die "$path: shebang is $first" ;;
     esac
   done < <(git -C "$REPO" ls-files -z --cached --others --exclude-standard)
+}
+
+hook_on() {
+  LAST_LOG="$(mktemp)"
+  if jq -n --arg c "$1" "{tool_input:{command:\$c}}" |
+    "$REPO/starter/.claude/hooks/require-bin" >"${LAST_LOG}" 2>&1; then
+    LAST_RC=0
+  else
+    LAST_RC=$?
+  fi
+}
+
+test_hooks() {
+  say "starter hooks"
+  local cmd
+  for cmd in "bun test" "cd app && cargo build" "bundle exec rubocop -A" \
+    "RAILS_ENV=test bundle exec rails test" "npx biome check ." "uv run pytest" \
+    "xcrun swift-format lint Sources" "ls; /opt/homebrew/bin/ruff check ."; do
+    hook_on "$cmd"
+    assert_rc 2 "require-bin should block: $cmd"
+    grep -q "Blocked: call the bin/ script" "${LAST_LOG}" || die "no block message for: $cmd"
+  done
+  for cmd in "bin/test src/add.ts" "typescript/bin/ci" "git status" \
+    "bundle exec rails runner 1" "npm test" "ls -la"; do
+    hook_on "$cmd"
+    assert_rc 0 "require-bin should allow: $cmd"
+  done
+  run_log env -u CLAUDE_CODE_REMOTE "$REPO/starter/.claude/hooks/session-start"
+  assert_rc 0 "session-start outside the cloud"
+  [ ! -s "${LAST_LOG}" ] || die "session-start ran something outside the cloud"
 }
 
 test_starter() {
@@ -118,6 +149,14 @@ test_starter() {
   expect_fail "$repo/tests/run"
   grep -q "notes.md:3.*MD018" "${LAST_LOG}" || die "markdownlint not enforced"
   rm "$repo/notes.md"
+
+  cp "$repo/.claude/settings.json" "$repo/settings.json.keep"
+  jq '.permissions.deny -= ["Bash(git reset *)"] | del(.hooks.SessionStart)' \
+    "$repo/settings.json.keep" >"$repo/.claude/settings.json"
+  expect_fail "$repo/tests/run"
+  grep -q "does not deny Bash(git reset \*)" "${LAST_LOG}" || die "missing deny not caught"
+  grep -q "no SessionStart hook runs" "${LAST_LOG}" || die "missing hook not caught"
+  mv "$repo/settings.json.keep" "$repo/.claude/settings.json"
 
   sed 's/^MAX_AUTHORED_BYTES=65536$/MAX_AUTHORED_BYTES=99999/' "$repo/tests/guards" >"$repo/tests/guards.raised"
   mv "$repo/tests/guards.raised" "$repo/tests/guards"
@@ -641,6 +680,7 @@ test_dependencies() {
 
 test_repo_guards
 test_kit_scripts_are_bash
+test_hooks
 test_starter
 test_copies_match
 test_changed_empty

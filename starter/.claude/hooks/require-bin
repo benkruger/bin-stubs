@@ -1,0 +1,50 @@
+#!/usr/bin/env bash
+# PreToolUse hook for Bash. Blocks a command that calls the toolchain
+# directly (bun, Biome, Ruff, RuboCop, cargo, swift, ...) so the agent goes
+# through the bin/ script that wraps it. Exit 2 blocks the call and hands the
+# message to the agent. Every segment of a compound command is checked, after
+# leading VAR=value assignments and through runners such as npx, bundle exec
+# and uv run.
+set -euo pipefail
+
+TOOLS=" bun bunx biome tsc eslint prettier vitest jest c8 ruff pytest rubocop brakeman rspec cargo swift swift-format xcodebuild shellcheck shfmt markdownlint-cli2 "
+RUNNERS=" npx pnpm yarn npm bundle uv xcrun "
+
+if ! command -v jq >/dev/null 2>&1; then
+  echo "require-bin hook: jq is not installed (brew install jq)" >&2
+  exit 2
+fi
+
+command="$(jq -r '.tool_input.command // empty')"
+[ -n "$command" ] || exit 0
+
+blocked=""
+while IFS= read -r segment; do
+  read -r -a words <<<"$segment"
+  i=0
+  while [ "$i" -lt "${#words[@]}" ] && [[ "${words[$i]}" == [A-Za-z_]*=* ]]; do
+    i=$((i + 1))
+  done
+  [ "$i" -lt "${#words[@]}" ] || continue
+  word="${words[$i]##*/}"
+  if [[ "$RUNNERS" == *" $word "* ]]; then
+    i=$((i + 1))
+    case "${words[$i]:-}" in
+      exec | run | x) i=$((i + 1)) ;;
+    esac
+    word="${words[$i]:-}"
+  fi
+  if [[ "$TOOLS" == *" $word "* ]]; then
+    blocked="$word"
+    break
+  fi
+  if [ "$word" = "rails" ] && [ "${words[$((i + 1))]:-}" = "test" ]; then
+    blocked="rails test"
+    break
+  fi
+done < <(printf '%s\n' "$command" | awk '{ gsub(/&&|\|\||;|\|/, "\n"); print }')
+
+if [ -n "$blocked" ]; then
+  echo "Blocked: call the bin/ script that wraps $blocked (bin/changed, bin/test <file>, bin/ci, bin/format, bin/lint, bin/build, bin/dependencies), not $blocked directly." >&2
+  exit 2
+fi

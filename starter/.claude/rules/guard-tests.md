@@ -8,8 +8,9 @@ standard breaks, and `bin/ci` runs it.
 - `tests/run` is the repo-level suite `bin/ci` runs. It runs `tests/guards`,
   which checks the file-size cap, suppression comments, lint configuration,
   every bash script (shellcheck, shfmt, strict mode), every Markdown file
-  (markdownlint with its default rules), and the size and shape of
-  `CLAUDE.md` and every rule.
+  (markdownlint with its default rules), the size and shape of `CLAUDE.md`
+  and every rule, and `.claude/settings.json`: it allows `Bash(bin/*)`,
+  denies destructive git, and wires both hooks in `.claude/hooks/`.
 - `tests/run` pins every cap in `tests/guards`: rules at 40 lines and 8,000
   characters, `CLAUDE.md` at 400 lines and 12,000 characters, authored files
   at 65,536 bytes. Changing a cap edits both files in the same change.

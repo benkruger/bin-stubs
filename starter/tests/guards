@@ -186,6 +186,40 @@ else
   done
 fi
 
+SETTINGS=.claude/settings.json
+REQUIRED_ALLOW=("Bash(bin/*)")
+REQUIRED_DENY=(
+  "Bash(git commit *)" "Bash(git rebase *)" "Bash(git checkout *)"
+  "Bash(git reset *)" "Bash(git stash *)" "Bash(git clean *)"
+  "Bash(git push --force *)" "Bash(git push -f *)"
+)
+REQUIRED_HOOKS=(PreToolUse:require-bin SessionStart:session-start)
+
+if [ ! -f "$SETTINGS" ]; then
+  fail "$SETTINGS is missing"
+elif ! command -v jq >/dev/null 2>&1; then
+  fail "jq is not installed (brew install jq)"
+elif ! jq empty "$SETTINGS" >/dev/null 2>&1; then
+  fail "$SETTINGS is not valid JSON"
+else
+  for entry in "${REQUIRED_ALLOW[@]}"; do
+    jq -e --arg e "$entry" ".permissions.allow // [] | index(\$e) != null" "$SETTINGS" >/dev/null ||
+      fail "$SETTINGS: does not allow $entry"
+  done
+  for entry in "${REQUIRED_DENY[@]}"; do
+    jq -e --arg e "$entry" ".permissions.deny // [] | index(\$e) != null" "$SETTINGS" >/dev/null ||
+      fail "$SETTINGS: does not deny $entry"
+  done
+  for pair in "${REQUIRED_HOOKS[@]}"; do
+    event="${pair%%:*}"
+    hook="${pair#*:}"
+    jq -e --arg ev "$event" --arg h ".claude/hooks/$hook" \
+      "[.hooks[\$ev][]?.hooks[]?.command | select(contains(\$h))] | length > 0" "$SETTINGS" >/dev/null ||
+      fail "$SETTINGS: no $event hook runs .claude/hooks/$hook"
+    [ -x ".claude/hooks/$hook" ] || fail ".claude/hooks/$hook is missing or not executable"
+  done
+fi
+
 if [ "$failures" -gt 0 ]; then
   echo "guards: $failures failure(s)" >&2
   exit 1

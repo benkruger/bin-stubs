@@ -1,0 +1,46 @@
+{
+  "permissions": {
+    "allow": ["Bash(bin/*)", "Bash(*/bin/*)", "Bash(tests/run)"],
+    "deny": [
+      "Bash(git commit *)",
+      "Bash(git rebase *)",
+      "Bash(git checkout *)",
+      "Bash(git reset *)",
+      "Bash(git stash *)",
+      "Bash(git clean *)",
+      "Bash(git push --force *)",
+      "Bash(git push -f *)",
+      "Bash(git -C * commit *)",
+      "Bash(git -C * rebase *)",
+      "Bash(git -C * checkout *)",
+      "Bash(git -C * reset *)",
+      "Bash(git -C * stash *)",
+      "Bash(git -C * clean *)",
+      "Bash(git -C * push --force *)",
+      "Bash(git -C * push -f *)"
+    ]
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/require-bin"
+          }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/session-start"
+          }
+        ]
+      }
+    ]
+  }
+}
