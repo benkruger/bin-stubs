@@ -5,7 +5,8 @@
 #
 # Discovers first-level folders that have an executable bin/<phase>.
 # bin/_root/<phase> is the app that lives at the repo root. The corpus
-# suite is bin/_root-tests (ci, test) or bin/_root-changed (changed).
+# suite is bin/_root-tests (ci, test), bin/_root-changed (changed) or
+# bin/_root-format (format, which always runs it).
 #
 # A path inside a folder selects that folder. A corpus path
 # (CLAUDE.md, README.md, .claude, tests, checks) selects the suite.
@@ -95,6 +96,7 @@ suite_leaf=""
 case "$PHASE" in
   ci | test) [ -x "$REPO_ROOT/bin/_root-tests" ] && suite_leaf="bin/_root-tests" ;;
   changed) [ -x "$REPO_ROOT/bin/_root-changed" ] && suite_leaf="bin/_root-changed" ;;
+  format) [ -x "$REPO_ROOT/bin/_root-format" ] && suite_leaf="bin/_root-format" ;;
 esac
 
 if [ "${#targets[@]}" -eq 0 ] && [ "$has_root_app" -eq 0 ] && [ -z "$suite_leaf" ]; then
@@ -188,6 +190,10 @@ if [ "$PHASE" = "ci" ] || [ "$PHASE" = "test" ]; then
       run_suite=1
     fi
   fi
+fi
+
+if [ "$PHASE" = "format" ] && [ -n "$suite_leaf" ]; then
+  run_suite=1
 fi
 
 if [ "${#selected[@]}" -eq 0 ] && [ "$run_root_app" -eq 0 ] && [ "$run_suite" -eq 0 ]; then

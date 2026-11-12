@@ -152,6 +152,7 @@ At the repo root, that same case prints `bin/changed: nothing dirty` and exits
 8. A folder of scripts with no project file is not an app. The project file is
    a `Gemfile`, `package.json`, `pyproject.toml`, `Cargo.toml`,
    `Package.swift`, or an Xcode project.
+9. `format` always runs `bin/_root-format` first, whatever is dirty.
 
 ### Root scripts
 
@@ -167,9 +168,13 @@ At the repo root, that same case prints `bin/changed: nothing dirty` and exits
 | `bin/_dispatch`     | Pick the apps and run the phase      |
 | `bin/_root-tests`   | Repo-level check for `ci` and `test` |
 | `bin/_root-changed` | Repo-level check for `changed`       |
+| `bin/_root-format`  | Repo-level format for `format`       |
 | `bin/scan`          | Search the repo                      |
 
-Both repo-level checks run `tests/run`. `bin/scan` takes `refs <string>`
+Both repo-level checks run `tests/run`. `bin/_root-format` rewrites every
+bash script with `shfmt -i 2 -ci` and fixes every Markdown file with
+markdownlint, so a formatting finding from the guards is fixed by
+`bin/format`. `bin/scan` takes `refs <string>`
 (matches, and the commits that added or removed them), `log <git-log-args>`,
 `grep <rg-args>` (needs ripgrep) or `files <pathspec>`.
 

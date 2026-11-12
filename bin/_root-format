@@ -1,0 +1,41 @@
+#!/usr/bin/env bash
+# Repo-level format. The dispatcher runs it on every bin/format, before the
+# apps. Rewrites the files the guards check outside any app's own formatter:
+# every bash script (shfmt -i 2 -ci) and every Markdown file (markdownlint
+# --fix). What --fix cannot repair is left for the guards to report.
+# Arguments are ignored; it always formats the whole set.
+#
+# Usage: bin/_root-format
+set -euo pipefail
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$ROOT"
+
+scripts=()
+markdown=()
+while IFS= read -r -d '' path; do
+  [ -f "$path" ] && [ ! -L "$path" ] || continue
+  case "$path" in
+    *.md) markdown+=("$path") ;;
+    *)
+      if head -n 1 "$path" | grep -qE '^#!.*\bbash\b'; then
+        scripts+=("$path")
+      fi
+      ;;
+  esac
+done < <(git ls-files -z --cached --others --exclude-standard)
+
+if [ "${#scripts[@]}" -gt 0 ]; then
+  if ! command -v shfmt >/dev/null 2>&1; then
+    echo "bin/format: shfmt is not installed (brew install shfmt)" >&2
+    exit 1
+  fi
+  shfmt -i 2 -ci -l -w "${scripts[@]}"
+fi
+
+if [ "${#markdown[@]}" -gt 0 ]; then
+  if ! command -v markdownlint-cli2 >/dev/null 2>&1; then
+    echo "bin/format: markdownlint-cli2 is not installed (brew install markdownlint-cli2)" >&2
+    exit 1
+  fi
+  markdownlint-cli2 --fix "${markdown[@]}" >/dev/null 2>&1 || true
+fi

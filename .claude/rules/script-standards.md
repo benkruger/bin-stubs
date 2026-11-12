@@ -12,7 +12,8 @@ it runs unattended in other people's repos.
 - `shellcheck -x -P SCRIPTDIR` reports nothing for any script. A finding is
   fixed in the code; a `# shellcheck source=` directive is the only
   shellcheck comment allowed.
-- Every script is formatted exactly as `shfmt -i 2 -ci` writes it.
+- Every script is formatted exactly as `shfmt -i 2 -ci` writes it;
+  `bin/format` writes it that way.
 - A sourced helper uses only what it defines or receives as arguments,
   never a variable its caller happens to set.
 - A script nothing calls is deleted, not shipped.

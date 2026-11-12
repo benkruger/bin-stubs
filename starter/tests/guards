@@ -111,7 +111,7 @@ if [ "${#scripts[@]}" -gt 0 ]; then
   if ! command -v shfmt >/dev/null 2>&1; then
     fail "shfmt is not installed (brew install shfmt)"
   elif ! shfmt -i 2 -ci -d "${scripts[@]}" >&2; then
-    fail "shfmt would reformat the scripts above (shfmt -i 2 -ci -w <file>)"
+    fail "shfmt would reformat the scripts above (run bin/format)"
   fi
 fi
 
@@ -127,7 +127,7 @@ if [ "${#markdown[@]}" -gt 0 ]; then
     fail "markdownlint-cli2 is not installed (brew install markdownlint-cli2)"
   elif ! markdownlint-cli2 "${markdown[@]}" >/dev/null 2>&1; then
     markdownlint-cli2 "${markdown[@]}" 2>&1 | grep -E ' (error|warning) ' >&2 || true
-    fail "markdownlint reported findings (above)"
+    fail "markdownlint reported findings (above; bin/format fixes what it can)"
   fi
 fi
 

@@ -81,6 +81,23 @@ test_scan() {
   grep -q "usage: bin/scan" "${LAST_LOG}" || die "scan printed no usage"
 }
 
+test_root_format() {
+  say "repo-level format"
+  local repo
+  repo="$(new_repo)"
+  KEEP="$repo"
+  copy_dir "$REPO/bin" "$repo/bin"
+  printf '%s\n' '#!/usr/bin/env bash' 'set -euo pipefail' 'if true;then' 'echo   "messy"' 'fi' >"$repo/messy"
+  chmod +x "$repo/messy"
+  printf '%s\n' '# Notes' '' '#Heading without a space' >"$repo/notes.md"
+  expect_ok "$repo/bin/format"
+  assert_eq "$(row_of suite "$(summary)")" "PASS" "format runs the repo-level formatter"
+  grep -qx "if true; then" "$repo/messy" || die "bin/format did not reformat the script"
+  grep -qx "## Heading without a space" "$repo/notes.md" ||
+    grep -qx "# Heading without a space" "$repo/notes.md" ||
+    die "bin/format did not fix the Markdown"
+}
+
 make_stub() {
   cat >"$1/$2" <<'EOF'
 #!/usr/bin/env bash
@@ -782,6 +799,7 @@ test_dependencies() {
 test_repo_guards
 test_kit_scripts_are_bash
 test_scan
+test_root_format
 test_open
 test_hooks
 test_starter
