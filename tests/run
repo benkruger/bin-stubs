@@ -287,6 +287,7 @@ seed_typescript() {
   "type": "module",
   "devDependencies": {
     "@eslint/js": "10.0.1",
+    "@eslint/json": "2.1.1",
     "@vitest/coverage-v8": "5.1.0",
     "eslint": "10.14.0",
     "prettier": "3.9.10",
@@ -298,6 +299,7 @@ seed_typescript() {
 EOF
   cat >"$app/eslint.config.js" <<'EOF'
 import js from "@eslint/js";
+import json from "@eslint/json";
 import { defineConfig } from "eslint/config";
 import tseslint from "typescript-eslint";
 
@@ -305,6 +307,16 @@ export default defineConfig([
   {
     files: ["**/*.ts"],
     extends: [js.configs.recommended, tseslint.configs.recommended],
+  },
+  {
+    files: ["**/*.js"],
+    extends: [js.configs.recommended],
+  },
+  {
+    files: ["**/*.json"],
+    plugins: { json },
+    language: "json/json",
+    extends: ["json/recommended"],
   },
 ]);
 EOF
@@ -700,6 +712,23 @@ test_language() {
   expect_fail "$app/bin/ci" --force
   grep -q "toolchain: " "${LAST_LOG}" || die "$lang did not enforce its toolchain pin"
   mv "$pin.keep" "$pin"
+
+  case "$lang" in
+    typescript)
+      echo "plain text" >"$app/notes.txt"
+      printf 'a {\n  color: red;\n}\n' >"$app/styles.css"
+      expect_fail "$app/bin/ci" --force
+      grep -q "notes.txt: no formatter (Prettier)" "${LAST_LOG}" || die "$lang let a file with no formatter through"
+      grep -q "styles.css: no linter (no ESLint rules apply)" "${LAST_LOG}" || die "$lang let a file with no linter through"
+      rm "$app/notes.txt" "$app/styles.css"
+      ;;
+    javascript)
+      echo "plain text" >"$app/notes.txt"
+      expect_fail "$app/bin/ci" --force
+      grep -q "notes.txt: no formatter or linter (Biome)" "${LAST_LOG}" || die "$lang let a file with no formatter through"
+      rm "$app/notes.txt"
+      ;;
+  esac
 
   if branch_gap "$app" "$lang"; then
     expect_fail "$app/bin/ci" --force

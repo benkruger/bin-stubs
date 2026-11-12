@@ -195,12 +195,12 @@ TypeScript, JavaScript and Rails ship `bin/open`. TypeScript and JavaScript
 run the `dev` script with `--host 127.0.0.1 --open`; Rails starts
 `rails server` on `PORT` (default 3000) and opens the browser once it answers.
 
-- **TypeScript**: Prettier write, ESLint with zero warnings, the package
-  build or `tsc`, then Vitest with 100% functions, lines, branches and
-  statements on changed sources.
-- **JavaScript**: Biome write, Biome check, the package build or
-  `node --check`, then the package test under c8 with 100% functions,
-  lines, branches and statements on changed sources.
+- **TypeScript**: Prettier write, a formatter and a linter for every file,
+  ESLint with zero warnings, the package build or `tsc`, then Vitest with
+  100% functions, lines, branches and statements on changed sources.
+- **JavaScript**: Biome write, a formatter and a linter for every file, Biome
+  check, the package build or `node --check`, then the package test under c8
+  with 100% functions, lines, branches and statements on changed sources.
 - **Python**: Ruff format, Ruff check, `compileall`, then pytest with 100/100
   on changed sources.
 - **Rails**: no formatter; RuboCop `-A`, Brakeman and markdownlint; Zeitwerk;

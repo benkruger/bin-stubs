@@ -1,12 +1,18 @@
 #!/usr/bin/env bash
-# bin/lint — every rule, only files this folder changed. Biome read-only
-# on JavaScript/JSON/CSS, markdownlint on dirty *.md. A sibling folder
-# with its own bin/lint is left alone. Not a formatter (bin/format owns
-# writes). --all checks every file git sees instead of the dirty set —
-# the one-time full pass an install runs so latent violations can't hide.
+# bin/lint — every rule, only files this folder changed. Each file needs a
+# formatter and a linter: Biome for JavaScript/JSON/CSS, markdownlint for
+# Markdown, or shfmt and shellcheck (tests/guards) for a bash script. Then
+# Biome read-only, and markdownlint on dirty *.md. A sibling folder with its
+# own bin/lint is left alone. Not a formatter (bin/format owns writes).
+# --all checks every file git sees instead of the dirty set — the one-time
+# full pass an install runs so latent violations can't hide.
 #
 # Usage: bin/lint [--all]
 set -euo pipefail
+
+# Files no formatter or linter can check: by name anywhere, or by exact path.
+UNGATED_NAMES=(.gitignore .nvmrc package-lock.json bun.lock bun.lockb yarn.lock pnpm-lock.yaml)
+UNGATED_PATHS=()
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 if [ "$(basename "$here")" = "_root" ]; then
   root="$(cd "$here/../.." && pwd)"
@@ -56,14 +62,37 @@ if [ "${#files[@]}" -eq 0 ]; then
   exit 0
 fi
 
+is_ungated() {
+  local path="$1" name entry
+  name="$(basename "$path")"
+  for entry in "${UNGATED_NAMES[@]}"; do
+    [ "$name" = "$entry" ] && return 0
+  done
+  for entry in "${UNGATED_PATHS[@]+"${UNGATED_PATHS[@]}"}"; do
+    [ "$path" = "$entry" ] && return 0
+  done
+  return 1
+}
+
 biome_files=()
 md_files=()
+ungated=0
 for path in "${files[@]}"; do
   case "$path" in
     *.md) md_files+=("$path") ;;
     *.js | *.mjs | *.cjs | *.jsx | *.json | *.jsonc | *.css) biome_files+=("$path") ;;
+    *)
+      if [ -L "$path" ] || is_ungated "$path" || head -n 1 "$path" | grep -qE '^#!.*\bbash\b'; then
+        continue
+      fi
+      echo "$path: no formatter or linter (Biome)" >&2
+      ungated=1
+      ;;
   esac
 done
+if [ "$ungated" -ne 0 ]; then
+  exit 1
+fi
 
 if [ "${#biome_files[@]}" -gt 0 ]; then
   "$root/node_modules/.bin/biome" check "${biome_files[@]}"

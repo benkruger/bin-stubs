@@ -14,7 +14,9 @@ strength.
   with no twin.
 - Every changed source is at 100% functions, lines, branches and
   statements under c8.
-- Biome formats and lints every file; `biome.json` keeps every rule on
-  (`no-lint-exceptions.md`).
+- Biome formats and lints every file except Markdown (markdownlint) and
+  bash scripts (shfmt and shellcheck). `bin/lint` fails any other file type
+  unless `UNGATED_NAMES` or the exact paths in `UNGATED_PATHS` name it.
+- `biome.json` keeps every rule on (`no-lint-exceptions.md`).
 - `.nvmrc` pins Node; `bin/ci` activates it through nvm and fails unless it
   is active.

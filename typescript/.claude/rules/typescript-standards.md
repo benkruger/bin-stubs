@@ -13,6 +13,11 @@ strength.
   the same bar.
 - Prettier formats every file it has a parser for except Markdown, which
   markdownlint owns.
+- Every file has a formatter and a linter: Prettier and ESLint rules,
+  markdownlint for Markdown, or shfmt and shellcheck for a bash script.
+  `bin/lint` fails any other file unless `UNGATED_NAMES` or the exact paths
+  in `UNGATED_PATHS` name it; a new file type gets its `eslint.config.js`
+  block in the same change.
 - ESLint passes with zero warnings on every file its config covers;
   `eslint.config.js` keeps every rule on (`no-lint-exceptions.md`).
 - `bin/build` runs the package's `build` script, or type-checks the whole

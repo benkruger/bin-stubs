@@ -1,13 +1,19 @@
 #!/usr/bin/env bash
-# bin/lint — every rule, only files this folder changed. ESLint with zero
-# warnings on everything but Markdown (a file its config does not cover is
-# skipped), markdownlint on dirty *.md. A sibling folder with its own
-# bin/lint is left alone. Not a formatter (bin/format owns writes). --all
-# checks every file git sees instead of the dirty set — the one-time full
-# pass an install runs so latent violations can't hide.
+# bin/lint — every rule, only files this folder changed. Each file needs a
+# formatter and a linter: Prettier and ESLint rules, markdownlint for
+# Markdown, or shfmt and shellcheck (tests/guards) for a bash script. Then
+# ESLint with zero warnings on the files it covers, and markdownlint on
+# dirty *.md. A sibling folder with its own bin/lint is left alone. Not a
+# formatter (bin/format owns writes). --all checks every file git sees
+# instead of the dirty set — the one-time full pass an install runs so
+# latent violations can't hide.
 #
 # Usage: bin/lint [--all]
 set -euo pipefail
+
+# Files no formatter or linter can check: by name anywhere, or by exact path.
+UNGATED_NAMES=(.gitignore .prettierignore .nvmrc package-lock.json)
+UNGATED_PATHS=()
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 if [ "$(basename "$here")" = "_root" ]; then
   root="$(cd "$here/../.." && pwd)"
@@ -57,17 +63,55 @@ if [ "${#files[@]}" -eq 0 ]; then
   exit 0
 fi
 
-eslint_files=()
+is_ungated() {
+  local path="$1" name entry
+  name="$(basename "$path")"
+  for entry in "${UNGATED_NAMES[@]}"; do
+    [ "$name" = "$entry" ] && return 0
+  done
+  for entry in "${UNGATED_PATHS[@]+"${UNGATED_PATHS[@]}"}"; do
+    [ "$path" = "$entry" ] && return 0
+  done
+  return 1
+}
+
+gated=()
 md_files=()
 for path in "${files[@]}"; do
   case "$path" in
-    *.md) md_files+=("$path") ;;
-    *) eslint_files+=("$path") ;;
+    *.md)
+      md_files+=("$path")
+      continue
+      ;;
   esac
+  if [ -L "$path" ] || is_ungated "$path" || head -n 1 "$path" | grep -qE '^#!.*\bbash\b'; then
+    continue
+  fi
+  gated+=("$path")
 done
 
-if [ "${#eslint_files[@]}" -gt 0 ]; then
-  "$root/node_modules/.bin/eslint" --max-warnings=0 --no-warn-ignored "${eslint_files[@]}"
+if [ "${#gated[@]}" -gt 0 ]; then
+  node --input-type=module -e '
+    import { ESLint } from "eslint";
+    import * as prettier from "prettier";
+    const eslint = new ESLint();
+    let failed = false;
+    for (const file of process.argv.slice(1)) {
+      const info = await prettier.getFileInfo(file, { resolveConfig: true });
+      if (info.ignored || info.inferredParser === null) {
+        console.error(file + ": no formatter (Prettier)");
+        failed = true;
+      }
+      const ignored = await eslint.isPathIgnored(file);
+      const config = ignored ? undefined : await eslint.calculateConfigForFile(file);
+      if (Object.keys(config?.rules ?? {}).length === 0) {
+        console.error(file + ": no linter (no ESLint rules apply)");
+        failed = true;
+      }
+    }
+    process.exit(failed ? 1 : 0);
+  ' "${gated[@]}"
+  "$root/node_modules/.bin/eslint" --max-warnings=0 "${gated[@]}"
 fi
 
 if [ "${#md_files[@]}" -eq 0 ]; then
