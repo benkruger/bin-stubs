@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
 # Sourced by bin/ci. toolchain_check <root> activates the Node pinned in
 # <root>/.nvmrc through nvm when nvm is installed, then passes when the active
-# Node is that version, and explains the fix otherwise. It never installs a
-# Node itself.
+# Node is that version and the active package manager is the one
+# <root>/package.json pins in packageManager, and explains the fix
+# otherwise. It never installs a Node or a package manager itself.
 
 toolchain_check() {
-  local root="$1" pinned active nvm_script options
+  local root="$1" pinned active nvm_script options manager name version current
   if [ ! -f "$root/.nvmrc" ]; then
     echo "toolchain: .nvmrc is missing; pin Node with: node --version | sed 's/^v//' > .nvmrc" >&2
     return 1
@@ -31,6 +32,30 @@ toolchain_check() {
   active="${active#v}"
   if [ "$active" != "$pinned" ]; then
     echo "toolchain: node $active is active but .nvmrc pins $pinned; install it with: nvm install $pinned" >&2
+    return 1
+  fi
+
+  manager="$(node -p 'require(process.argv[1]).packageManager || ""' "$root/package.json")"
+  if [ -z "$manager" ]; then
+    echo "toolchain: package.json pins no packageManager; pin npm with: npm pkg set packageManager=npm@\$(npm --version)" >&2
+    return 1
+  fi
+  name="${manager%%@*}"
+  version="${manager#*@}"
+  version="${version%%+*}"
+  case "$name" in
+    npm | pnpm | yarn | bun) ;;
+    *)
+      echo "toolchain: package.json pins an unknown packageManager: $manager" >&2
+      return 1
+      ;;
+  esac
+  if ! current="$("$name" --version 2>/dev/null)"; then
+    echo "toolchain: $name is not installed; package.json pins $name@$version" >&2
+    return 1
+  fi
+  if [ "$current" != "$version" ]; then
+    echo "toolchain: $name $current is active but package.json pins $version; install it with: npm install -g $name@$version" >&2
     return 1
   fi
 }

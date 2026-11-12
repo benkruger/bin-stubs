@@ -300,6 +300,7 @@ seed_typescript() {
   }
 }
 EOF
+  (cd "$app" && npm pkg set "packageManager=npm@$(npm --version)")
   cat >"$app/eslint.config.js" <<'EOF'
 import js from "@eslint/js";
 import json from "@eslint/json";
@@ -375,6 +376,7 @@ seed_javascript() {
   }
 }
 EOF
+  (cd "$app" && npm pkg set "packageManager=npm@$(npm --version)")
   cat >"$app/src/index.js" <<'EOF'
 export function add(a, b) {
 return a+b
@@ -719,6 +721,16 @@ test_language() {
   expect_fail "$app/bin/ci" --force
   grep -q "toolchain: " "${LAST_LOG}" || die "$lang did not enforce its toolchain pin"
   mv "$pin.keep" "$pin"
+
+  case "$lang" in
+    typescript | javascript)
+      cp "$app/package.json" "$app/package.json.keep"
+      (cd "$app" && npm pkg set packageManager=npm@1.0.0)
+      expect_fail "$app/bin/ci" --force
+      grep -q "but package.json pins 1.0.0" "${LAST_LOG}" || die "$lang did not enforce its npm pin"
+      mv "$app/package.json.keep" "$app/package.json"
+      ;;
+  esac
 
   case "$lang" in
     typescript)
