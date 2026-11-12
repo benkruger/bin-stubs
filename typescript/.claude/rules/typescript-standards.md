@@ -22,10 +22,10 @@ strength.
   `eslint.config.js` keeps every rule on (`no-lint-exceptions.md`).
 - `bin/build` runs the package's `build` script, or type-checks the whole
   app with `tsc --noEmit` when there is none.
-- npm installs from `package-lock.json`; `.nvmrc` pins Node, and `bin/ci`
-  activates it through nvm and fails unless it is active.
-- `packageManager` in `package.json` pins npm's exact version; `bin/ci`
-  fails unless that npm is active.
+- npm installs from `package-lock.json`; `.nvmrc` pins Node, and every
+  `bin/` script activates it through nvm and fails unless it is active.
+- `packageManager` in `package.json` pins npm's exact version; every `bin/`
+  script fails unless that npm is active.
 - `npm audit` reports no moderate or worse advisory; `bin/ci` fails after
   install otherwise. A vulnerable transitive package is lifted through
   `overrides` in `package.json`.

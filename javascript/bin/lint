@@ -21,6 +21,12 @@ else
 fi
 cd "$root"
 
+# shellcheck source=lib/toolchain.sh
+. "$here/lib/toolchain.sh"
+if [ -z "${CI:-}" ]; then
+  toolchain_check "$root"
+fi
+
 all=0
 for arg in "$@"; do
   case "$arg" in

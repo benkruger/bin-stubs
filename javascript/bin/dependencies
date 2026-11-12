@@ -25,6 +25,12 @@ elif [ -f bun.lock ] || [ -f bun.lockb ]; then
   export PATH="${HOME}/.bun/bin:${PATH}"
 fi
 
+# shellcheck source=lib/toolchain.sh
+. "$here/lib/toolchain.sh"
+if [ -z "${CI:-}" ]; then
+  toolchain_check "$root"
+fi
+
 case "$pm" in
   yarn) yarn upgrade ;;
   *) "$pm" update ;;

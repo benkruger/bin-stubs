@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Sourced by bin/ci. toolchain_check <root> activates the Node pinned in
-# <root>/.nvmrc through nvm when nvm is installed, then passes when the active
+# Sourced by every bin/ script. toolchain_check <root> activates the Node
+# pinned in <root>/.nvmrc through nvm when it is not already active and nvm
+# is installed, then passes when the active
 # Node is that version and the active package manager is the one
 # <root>/package.json pins in packageManager, and explains the fix
 # otherwise. It never installs a Node or a package manager itself.
@@ -14,8 +15,9 @@ toolchain_check() {
   pinned="$(tr -d '[:space:]' <"$root/.nvmrc")"
   pinned="${pinned#v}"
 
+  active="$(node --version 2>/dev/null || true)"
   nvm_script="${NVM_DIR:-$HOME/.nvm}/nvm.sh"
-  if [ -s "$nvm_script" ]; then
+  if [ "${active#v}" != "$pinned" ] && [ -s "$nvm_script" ]; then
     options="$-"
     set +eu
     # shellcheck source=/dev/null
@@ -50,6 +52,9 @@ toolchain_check() {
       return 1
       ;;
   esac
+  if [ "$name" = bun ]; then
+    PATH="${HOME}/.bun/bin:${PATH}"
+  fi
   if ! current="$("$name" --version 2>/dev/null)"; then
     echo "toolchain: $name is not installed; package.json pins $name@$version" >&2
     return 1

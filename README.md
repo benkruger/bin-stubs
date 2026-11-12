@@ -282,10 +282,10 @@ The guards fail when the file is missing, invalid, or drops any of these.
 Each app pins its toolchain in a file, and its `bin/ci` fails unless that
 version is the one running. The check is skipped when `CI` is set.
 
-- **TypeScript** and **JavaScript**: `.nvmrc`. `bin/ci` switches to it
-  through nvm when nvm is installed, then requires it. `packageManager` in
-  `package.json` pins the package manager, and its exact version must be
-  active.
+- **TypeScript** and **JavaScript**: `.nvmrc`. Every `bin/` script, not
+  only `bin/ci`, switches to it through nvm when nvm is installed, then
+  requires it. `packageManager` in `package.json` pins the package manager,
+  and its exact version must be active.
 - **Python**: `.python-version`. uv must find an installed Python matching it.
 - **Rails**: `.ruby-version` must match the active Ruby.
 - **Rust**: `rust-toolchain.toml`. A numbered channel must match the active

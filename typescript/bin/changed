@@ -14,6 +14,12 @@ else
 fi
 cd "$root"
 
+# shellcheck source=lib/toolchain.sh
+. "$here/lib/toolchain.sh"
+if [ -z "${CI:-}" ]; then
+  toolchain_check "$root"
+fi
+
 has_own() {
   local top="$1" leaf="$2"
   [ -x "$root/$top/bin/$leaf" ]

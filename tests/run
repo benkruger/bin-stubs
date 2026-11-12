@@ -123,12 +123,12 @@ test_open() {
     copy_dir "$REPO/$lang/bin" "$repo/$lang/bin"
   done
 
-  run_log env PATH="$stubs:$PATH" HOME="$home" STUB_LOG="$log" "$repo/typescript/bin/open"
+  run_log env CI=1 PATH="$stubs:$PATH" HOME="$home" STUB_LOG="$log" "$repo/typescript/bin/open"
   assert_rc 0 "typescript bin/open"
   grep -qx "npm run dev -- --host 127.0.0.1 --open" "$log" || die "typescript bin/open ran the wrong command"
 
   : >"$log"
-  run_log env PATH="$stubs:$PATH" HOME="$home" STUB_LOG="$log" "$repo/javascript/bin/open"
+  run_log env CI=1 PATH="$stubs:$PATH" HOME="$home" STUB_LOG="$log" "$repo/javascript/bin/open"
   assert_rc 0 "javascript bin/open"
   grep -qx "npm run dev -- --host 127.0.0.1 --open" "$log" || die "javascript bin/open ran the wrong command"
 
@@ -674,7 +674,7 @@ EOF
 }
 
 test_language() {
-  local lang="$1" repo app sent hash pin
+  local lang="$1" repo app sent hash pin script
   say "$lang bin"
   repo="$(new_repo)"
   KEEP="$repo"
@@ -720,6 +720,14 @@ test_language() {
   fi
   expect_fail "$app/bin/ci" --force
   grep -q "toolchain: " "${LAST_LOG}" || die "$lang did not enforce its toolchain pin"
+  case "$lang" in
+    typescript | javascript)
+      for script in changed format lint build test dependencies open; do
+        expect_fail "$app/bin/$script"
+        grep -q "toolchain: " "${LAST_LOG}" || die "$lang bin/$script did not enforce its toolchain pin"
+      done
+      ;;
+  esac
   mv "$pin.keep" "$pin"
 
   case "$lang" in

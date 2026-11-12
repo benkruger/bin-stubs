@@ -18,10 +18,10 @@ strength.
   bash scripts (shfmt and shellcheck). `bin/lint` fails any other file type
   unless `UNGATED_NAMES` or the exact paths in `UNGATED_PATHS` name it.
 - `biome.json` keeps every rule on (`no-lint-exceptions.md`).
-- `.nvmrc` pins Node; `bin/ci` activates it through nvm and fails unless it
-  is active.
+- `.nvmrc` pins Node; every `bin/` script activates it through nvm and
+  fails unless it is active.
 - `packageManager` in `package.json` pins the package manager's exact
-  version; `bin/ci` fails unless that version is active.
+  version; every `bin/` script fails unless that version is active.
 - The lockfile's package manager audits with no moderate or worse advisory;
   `bin/ci` fails after install otherwise. A vulnerable transitive package is
   lifted through the package manager's overrides.

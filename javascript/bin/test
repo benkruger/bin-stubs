@@ -33,6 +33,12 @@ elif [ -f bun.lock ] || [ -f bun.lockb ]; then
   export PATH="${HOME}/.bun/bin:${PATH}"
 fi
 
+# shellcheck source=lib/toolchain.sh
+. "$here/lib/toolchain.sh"
+if [ -z "${CI:-}" ]; then
+  toolchain_check "$root"
+fi
+
 covdir="$root/.coverage-ratchet"
 rm -rf "$covdir"
 mkdir -p "$covdir"
