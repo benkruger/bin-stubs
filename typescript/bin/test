@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# bin/test — Vitest with v8 coverage, then 100/100 (functions, lines) on
-# every source file this folder changed. A changed test still requires its
-# mirrored source at 100/100. Path args are Vitest file filters: they switch
-# off the app's own coverage thresholds for that run, and still require
-# 100/100 on the mirrored source when that twin exists; a path with no twin
-# (a throwaway probe) is assertion-only. Vitest's exit code is the suite
-# result; the ratchet is a second gate after green.
+# bin/test — Vitest with v8 coverage, then 100% functions, lines, branches
+# and statements on every source file this folder changed. A changed test
+# still requires its mirrored source at 100%. Path args are Vitest file
+# filters: they switch off the app's own coverage thresholds for that run,
+# and still require 100% on the mirrored source when that twin exists; a
+# path with no twin (a throwaway probe) is assertion-only. Vitest's exit
+# code is the suite result; the ratchet is a second gate after green.
 #
 # Usage: bin/test [args...]
 set -euo pipefail
@@ -98,8 +98,9 @@ source_for_test() {
   fi
 }
 
-# % functions and % lines for a repo-relative source path, from Vitest's
-# json-summary. "missing" when the source has no row (never loaded by a test).
+# % functions, lines, branches and statements for a repo-relative source
+# path, from the json-summary. "missing" when the source has no row (never
+# loaded by a test).
 file_cov() {
   node -e '
     const summary = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"));
@@ -109,7 +110,8 @@ file_cov() {
       console.log("missing");
     } else {
       const row = summary[key];
-      console.log(row.functions.pct.toFixed(2) + " " + row.lines.pct.toFixed(2));
+      const metrics = [row.functions, row.lines, row.branches, row.statements];
+      console.log(metrics.map((m) => m.pct.toFixed(2)).join(" "));
     }
   ' "$covjson" "$1"
 }
@@ -178,20 +180,19 @@ done
 
 for src in "${required[@]+"${required[@]}"}"; do
   if [ ! -f "$src" ]; then
-    echo "bin/test: $src is required at 100/100 but is missing" >&2
+    echo "bin/test: $src is required at 100% but is missing" >&2
     ratchet=1
     continue
   fi
   cov="$(file_cov "$src")"
   if [ "$cov" = "missing" ]; then
-    echo "bin/test: $src has no coverage row (need 100/100)" >&2
+    echo "bin/test: $src has no coverage row (need 100%)" >&2
     ratchet=1
     continue
   fi
-  funcs="${cov%% *}"
-  lines="${cov##* }"
-  if [ "$funcs" != "100.00" ] || [ "$lines" != "100.00" ]; then
-    echo "bin/test: $src at ${funcs:-0}/${lines:-0} (need 100/100)" >&2
+  read -r funcs lines branches stmts <<<"$cov"
+  if [ "$cov" != "100.00 100.00 100.00 100.00" ]; then
+    echo "bin/test: $src at $funcs functions, $lines lines, $branches branches, $stmts statements (need 100% each)" >&2
     ratchet=1
   fi
 done

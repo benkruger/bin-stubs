@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # bin/changed — coding-time gate for files this folder changed. Biome
 # --write (format and safe lint fixes), then lint (leftover stays red),
-# tests for the dirty tree, 100/100 on every dirty source. No twin test
+# tests for the dirty tree, 100% coverage on every dirty source. No twin test
 # → red. Empty diff → green. No build, no sentinel, not bin/ci. Source and
 # twin rules are bin/test's.
 #

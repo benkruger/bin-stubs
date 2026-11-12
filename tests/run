@@ -700,6 +700,29 @@ test_language() {
   expect_fail "$app/bin/ci" --force
   grep -q "toolchain: " "${LAST_LOG}" || die "$lang did not enforce its toolchain pin"
   mv "$pin.keep" "$pin"
+
+  if branch_gap "$app" "$lang"; then
+    expect_fail "$app/bin/ci" --force
+    grep -qE "at 100\.00 functions, 100\.00 lines, [0-9]{1,2}\.[0-9]{2} branches" "${LAST_LOG}" ||
+      die "$lang did not hold branches to 100%"
+  fi
+}
+
+# Rewrites the source so its test runs every function and line but only one
+# arm of a branch; a language without a branch bar returns 1.
+branch_gap() {
+  local app="$1" lang="$2"
+  case "$lang" in
+    typescript)
+      printf '%s\n' 'export function add(a: number, b: number): number {' \
+        '  return a > 0 ? a + b : b;' '}' >"$app/src/add.ts"
+      ;;
+    javascript)
+      printf '%s\n' 'export function add(a, b) {' '  return a > 0 ? a + b : b;' '}' \
+        >"$app/src/index.js"
+      ;;
+    *) return 1 ;;
+  esac
 }
 
 pin_file_of() {

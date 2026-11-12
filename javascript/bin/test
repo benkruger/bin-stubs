@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # bin/test — the folder's own test script under c8 (`c8 <pm> run test`),
-# then 100/100 on every source file this folder changed. A changed test
-# still requires its mirrored source at 100/100. Path args are forwarded
-# to the test script and still require 100/100 on the mirrored source when
-# that twin exists; a path with no twin (a throwaway probe) is
-# assertion-only. The package manager is read from the lockfile
+# then 100% functions, lines, branches and statements on every source file
+# this folder changed. A changed test still requires its mirrored source at
+# 100%. Path args are forwarded to the test script and still require 100%
+# on the mirrored source when that twin exists; a path with no twin (a
+# throwaway probe) is assertion-only. The package manager is read from the lockfile
 # (pnpm-lock.yaml → pnpm, yarn.lock → yarn, bun.lock → bun, else npm).
 #
 # A source is any .js/.mjs/.cjs/.jsx below a directory (root-level files
@@ -49,8 +49,8 @@ run=("$pm" run test)
 if [ "${#paths[@]}" -gt 0 ]; then
   run+=(-- "${paths[@]}")
 fi
-"$root/node_modules/.bin/c8" --reporter=json --reports-dir="$covdir" "${run[@]}" || rc=$?
-covjson="$covdir/coverage-final.json"
+"$root/node_modules/.bin/c8" --reporter=json-summary --reports-dir="$covdir" "${run[@]}" || rc=$?
+covjson="$covdir/coverage-summary.json"
 
 has_own_test() {
   local top="$1"
@@ -208,52 +208,43 @@ for msg in "${missing_mirror[@]+"${missing_mirror[@]}"}"; do
 done
 
 if [ "${#required[@]}" -gt 0 ] && [ ! -f "$covjson" ]; then
-  echo "bin/test: missing coverage-final.json" >&2
+  echo "bin/test: missing coverage-summary.json" >&2
   exit 1
 fi
 
+# % functions, lines, branches and statements for a repo-relative source
+# path, from the json-summary. "missing" when the source has no row (never
+# loaded by a test).
 file_cov() {
-  local file="$1"
   node -e '
-    const fs = require("fs");
-    const path = require("path");
-    const cov = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+    const summary = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"));
     const want = process.argv[2];
-    const abs = path.resolve(want);
-    let entry = cov[abs];
-    if (!entry) {
-      for (const k of Object.keys(cov)) {
-        if (k === abs || k.endsWith("/" + want) || k.endsWith(want)) {
-          entry = cov[k];
-          break;
-        }
-      }
+    const key = Object.keys(summary).find((k) => k === want || k.endsWith("/" + want));
+    if (key === undefined) {
+      console.log("missing");
+    } else {
+      const row = summary[key];
+      const metrics = [row.functions, row.lines, row.branches, row.statements];
+      console.log(metrics.map((m) => m.pct.toFixed(2)).join(" "));
     }
-    if (!entry) { console.log("missing"); process.exit(0); }
-    const svals = Object.values(entry.s || {});
-    const fvals = Object.values(entry.f || {});
-    const slines = svals.length === 0 ? 100 : (svals.filter((n) => n > 0).length / svals.length) * 100;
-    const funcs = fvals.length === 0 ? 100 : (fvals.filter((n) => n > 0).length / fvals.length) * 100;
-    console.log(funcs.toFixed(2) + " " + slines.toFixed(2));
-  ' "$covjson" "$file"
+  ' "$covjson" "$1"
 }
 
 for src in "${required[@]+"${required[@]}"}"; do
   if [ ! -f "$src" ]; then
-    echo "bin/test: $src is required at 100/100 but is missing" >&2
+    echo "bin/test: $src is required at 100% but is missing" >&2
     ratchet=1
     continue
   fi
   cov="$(file_cov "$src")"
   if [ "$cov" = "missing" ]; then
-    echo "bin/test: $src has no coverage row (need 100/100)" >&2
+    echo "bin/test: $src has no coverage row (need 100%)" >&2
     ratchet=1
     continue
   fi
-  funcs="${cov%% *}"
-  lines="${cov##* }"
-  if [ "$funcs" != "100.00" ] || [ "$lines" != "100.00" ]; then
-    echo "bin/test: $src at ${funcs:-0}/${lines:-0} (need 100/100)" >&2
+  read -r funcs lines branches stmts <<<"$cov"
+  if [ "$cov" != "100.00 100.00 100.00 100.00" ]; then
+    echo "bin/test: $src at $funcs functions, $lines lines, $branches branches, $stmts statements (need 100% each)" >&2
     ratchet=1
   fi
 done

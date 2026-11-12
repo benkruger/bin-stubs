@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # bin/changed — coding-time gate for files this folder changed. bin/format
 # (Prettier), then bin/lint (ESLint, markdownlint), tests for the dirty
-# tree, 100/100 on every dirty source. No twin test → red. Empty diff →
+# tree, 100% coverage on every dirty source. No twin test → red. Empty diff →
 # green. No build, no sentinel, not bin/ci.
 #
 # Usage: bin/changed

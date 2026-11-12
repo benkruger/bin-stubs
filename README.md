@@ -113,7 +113,7 @@ A root app (`bin/_root/`) leaves the other apps, `CLAUDE.md`, `.claude/`,
    Exit 0. No output.
 2. Format the changed files, then lint them.
 3. TypeScript, JavaScript, Python, and Rails: each changed source file needs a
-   matching test. Those tests run. Each of those files must be 100/100. Rust
+   matching test. Those tests run. Each of those files must be 100% covered. Rust
    and iOS format, lint, and test the changed files.
 4. No build. No sentinel.
 
@@ -196,10 +196,11 @@ run the `dev` script with `--host 127.0.0.1 --open`; Rails starts
 `rails server` on `PORT` (default 3000) and opens the browser once it answers.
 
 - **TypeScript**: Prettier write, ESLint with zero warnings, the package
-  build or `tsc`, then Vitest with 100/100 on changed sources.
+  build or `tsc`, then Vitest with 100% functions, lines, branches and
+  statements on changed sources.
 - **JavaScript**: Biome write, Biome check, the package build or
-  `node --check`, then the package test under c8 with 100/100 on changed
-  sources.
+  `node --check`, then the package test under c8 with 100% functions,
+  lines, branches and statements on changed sources.
 - **Python**: Ruff format, Ruff check, `compileall`, then pytest with 100/100
   on changed sources.
 - **Rails**: no formatter; RuboCop `-A`, Brakeman and markdownlint; Zeitwerk;

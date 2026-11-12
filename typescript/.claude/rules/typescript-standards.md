@@ -8,8 +8,9 @@ strength.
 - Every source `src/<path>.ts` (or `.tsx`) has its twin
   `tests/<path>.test.ts`. `bin/changed` and `bin/test` fail a changed source
   with no twin.
-- Every changed source is at 100% functions and lines under Vitest's v8
-  coverage; a changed test holds its source to the same bar.
+- Every changed source is at 100% functions, lines, branches and
+  statements under Vitest's v8 coverage; a changed test holds its source to
+  the same bar.
 - Prettier formats every file it has a parser for except Markdown, which
   markdownlint owns.
 - ESLint passes with zero warnings on every file its config covers;

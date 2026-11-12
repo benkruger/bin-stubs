@@ -12,7 +12,8 @@ strength.
   `tests/<path>.test.js` (or `.mjs`), `<dir>/<name>.test.js` (or `.mjs`), or
   `<dir>/test-<name>.mjs` (or `.js`). `bin/changed` fails a changed source
   with no twin.
-- Every changed source is at 100% functions and lines under c8.
+- Every changed source is at 100% functions, lines, branches and
+  statements under c8.
 - Biome formats and lints every file; `biome.json` keeps every rule on
   (`no-lint-exceptions.md`).
 - `.nvmrc` pins Node; `bin/ci` activates it through nvm and fails unless it
