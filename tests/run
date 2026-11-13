@@ -869,6 +869,11 @@ test_dispatch() {
   sum="$(summary)"
   assert_eq "$(row_of typescript "$sum")" "PASS" "filtered test"
   assert_eq "$(row_of python "$sum")" "SKIP" "filter withheld python"
+  expect_ok "$repo/bin/ci" --force --python --suite
+  sum="$(summary)"
+  assert_eq "$(row_of python "$sum")" "PASS" "selected python"
+  assert_eq "$(row_of suite "$sum")" "PASS" "selected suite"
+  assert_eq "$(row_of typescript "$sum")" "SKIP" "unselected dirty typescript"
 }
 
 test_root_app() {

@@ -137,23 +137,28 @@ At the repo root, that same case prints `bin/changed: nothing dirty` and exits
 
 ### Which apps run
 
-1. A dirty path inside an app selects that app.
-2. `CLAUDE.md`, `README.md`, `.claude/`, `tests/`, and `checks/` select
+1. A flag named after a summary row runs only what it names, whatever is
+   dirty: `--<app>` (the folder name, `_` written as `-`), `--root` for the
+   root app, `--suite` for the repo-level check. Several combine, and
+   `--force` still reruns them past their sentinels. The rules below apply
+   when no such flag is given.
+2. A dirty path inside an app selects that app.
+3. `CLAUDE.md`, `README.md`, `.claude/`, `tests/`, and `checks/` select
    `bin/_root-tests` on `ci` and `test`, and `bin/_root-changed` on
    `changed`.
-3. On `ci` and `test`, a selected app also selects `bin/_root-tests`, and that
+4. On `ci` and `test`, a selected app also selects `bin/_root-tests`, and that
    check runs first.
-4. A path outside every app selects the root app when `bin/_root/` is present,
+5. A path outside every app selects the root app when `bin/_root/` is present,
    and every app otherwise.
-5. On `ci`, `format`, `lint`, `build`, and `test`, a clean tree selects every
+6. On `ci`, `format`, `lint`, `build`, and `test`, a clean tree selects every
    app and `bin/_root-tests`.
-6. `dependencies` selects every app.
-7. `--force` selects every app, and on `ci` and `test` it also selects
+7. `dependencies` selects every app.
+8. `--force` selects every app, and on `ci` and `test` it also selects
    `bin/_root-tests`.
-8. A folder of scripts with no project file is not an app. The project file is
+9. A folder of scripts with no project file is not an app. The project file is
    a `Gemfile`, `package.json`, `pyproject.toml`, `Cargo.toml`,
    `Package.swift`, or an Xcode project.
-9. `format` always runs `bin/_root-format` first, whatever is dirty.
+10. `format` always runs `bin/_root-format` first, whatever is dirty.
 
 ### Root scripts
 

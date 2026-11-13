@@ -8,19 +8,24 @@
 # suite is bin/_root-tests (ci, test), bin/_root-changed (changed) or
 # bin/_root-format (format, which always runs it).
 #
+# A flag named after a summary row runs only the targets it names,
+# whatever is dirty: --suite, --root, or --<folder> with _ written as -.
+# Several combine. With no such flag:
+#
 # A path inside a folder selects that folder. A corpus path
 # (CLAUDE.md, README.md, .claude, tests, checks) selects the suite.
 # A path in no folder selects the root app when one exists, and every
 # folder otherwise. Any folder selection on ci or test also selects the
 # suite. A clean tree selects every target. changed on an empty diff
 # exits green. dependencies with no narrower path list refreshes every
-# folder. --force selects every target and is forwarded to ci.
+# folder. --force selects every target.
 #
-# The suite runs first, then the root app, then the other folders, one
-# at a time. SKIP means a ci leaf exited 0 without rewriting its
-# sentinel. PASS means a green leaf rewrote it, or a non-ci leaf exited
-# SKIP means the target did not re-run. FAIL is a non-zero exit.
-# The exit code is the verdict.
+# --force is forwarded to every ci leaf. The suite runs first; then the
+# root app and the folders run at the same time, and their output is
+# replayed in roster order. SKIP means the target did not run: it was
+# not selected, or a ci leaf exited 0 without rewriting its sentinel.
+# PASS means a green ci leaf rewrote its sentinel, or a non-ci leaf
+# exited 0. FAIL is a non-zero exit. The exit code is the verdict.
 #
 # Usage: bin/_dispatch <phase> [args...]
 set -euo pipefail
@@ -40,11 +45,11 @@ case "$PHASE" in
 esac
 
 force=0
-leaf_args=()
+rest=()
 for arg in "$@"; do
   case "$arg" in
     --force) force=1 ;;
-    *) leaf_args+=("$arg") ;;
+    *) rest+=("$arg") ;;
   esac
 done
 
@@ -104,6 +109,36 @@ if [ "${#targets[@]}" -eq 0 ] && [ "$has_root_app" -eq 0 ] && [ -z "$suite_leaf"
   exit 1
 fi
 
+is_selector() {
+  local flag="$1" t
+  case "$flag" in
+    --root) [ "$has_root_app" -eq 1 ] && return 0 ;;
+    --suite) [ -n "$suite_leaf" ] && return 0 ;;
+  esac
+  for t in "${targets[@]+"${targets[@]}"}"; do
+    [ "$flag" = "--${t//_/-}" ] && return 0
+  done
+  return 1
+}
+
+picks=()
+leaf_args=()
+for arg in "${rest[@]+"${rest[@]}"}"; do
+  if is_selector "$arg"; then
+    picks+=("${arg#--}")
+  else
+    leaf_args+=("$arg")
+  fi
+done
+
+picked() {
+  local want="$1" p
+  for p in "${picks[@]+"${picks[@]}"}"; do
+    [ "$p" = "$want" ] && return 0
+  done
+  return 1
+}
+
 owner_of() {
   local path="$1" t best=""
   for t in "${targets[@]+"${targets[@]}"}"; do
@@ -142,7 +177,19 @@ collect_changed() {
   git -C "$REPO_ROOT" ls-files --others --exclude-standard
 }
 
-if [ "$force" -eq 1 ] || [ "$PHASE" = "dependencies" ]; then
+if [ "${#picks[@]}" -gt 0 ]; then
+  for t in "${targets[@]+"${targets[@]}"}"; do
+    if picked "${t//_/-}"; then
+      selected+=("$t")
+    fi
+  done
+  if picked root; then
+    run_root_app=1
+  fi
+  if picked suite; then
+    run_suite=1
+  fi
+elif [ "$force" -eq 1 ] || [ "$PHASE" = "dependencies" ]; then
   select_all=1
 else
   changed="$(
@@ -184,16 +231,17 @@ if [ "$select_all" -eq 1 ]; then
   fi
 fi
 
-if [ "$PHASE" = "ci" ] || [ "$PHASE" = "test" ]; then
-  if [ "${#selected[@]}" -gt 0 ] || [ "$run_root_app" -eq 1 ]; then
-    if [ -n "$suite_leaf" ]; then
-      run_suite=1
+if [ "${#picks[@]}" -eq 0 ]; then
+  if [ "$PHASE" = "ci" ] || [ "$PHASE" = "test" ]; then
+    if [ "${#selected[@]}" -gt 0 ] || [ "$run_root_app" -eq 1 ]; then
+      if [ -n "$suite_leaf" ]; then
+        run_suite=1
+      fi
     fi
   fi
-fi
-
-if [ "$PHASE" = "format" ] && [ -n "$suite_leaf" ]; then
-  run_suite=1
+  if [ "$PHASE" = "format" ] && [ -n "$suite_leaf" ]; then
+    run_suite=1
+  fi
 fi
 
 if [ "${#selected[@]}" -eq 0 ] && [ "$run_root_app" -eq 0 ] && [ "$run_suite" -eq 0 ]; then
