@@ -732,6 +732,12 @@ test_language() {
   unformat "$app" "$lang"
   expect_ok "$app/bin/changed"
   formatted "$app" "$lang" || die "$lang changed did not format the edited file"
+  unformat "$app" "$lang"
+  git -C "$repo" commit -q -a -m "$lang unformatted"
+  expect_ok "$app/bin/ci" --force
+  formatted "$app" "$lang" || die "$lang ci left a committed file unformatted"
+  git -C "$repo" commit -q -a -m "$lang formatted"
+  whole_app "$app" "$lang"
 
   pin="$app/$(pin_file_of "$lang")"
   cp "$pin" "$pin.keep"
@@ -793,6 +799,51 @@ test_language() {
         die "$lang let a package with an advisory through"
       ;;
   esac
+}
+
+# Commits a file bin/ci must reject though nothing is dirty: a lint finding,
+# then a source with no test. A language whose lint and coverage already
+# cover the whole package has nothing to plant.
+whole_app() {
+  local app="$1" lang="$2" lint_plant lint_body lint_find source_plant source_body
+  case "$lang" in
+    typescript)
+      lint_plant=src/unused.ts
+      lint_body='const unused = 1;'
+      lint_find="'unused' is assigned a value but never used"
+      source_plant=src/extra.ts
+      source_body=$'export function extra(): number {\n  return 1;\n}'
+      ;;
+    javascript)
+      lint_plant=src/dupe.js
+      lint_body='export const dupe = { a: 1, a: 2 };'
+      lint_find="noDuplicateObjectKeys"
+      source_plant=src/extra.js
+      source_body=$'export function extra() {\n  return 1;\n}'
+      ;;
+    python)
+      lint_plant=src/unused.py
+      lint_body=$'def unused() -> None:\n    value = 1'
+      lint_find="F841"
+      source_plant=src/extra.py
+      source_body=$'def extra() -> int:\n    return 1'
+      ;;
+    *) return 0 ;;
+  esac
+  printf '%s\n' "$lint_body" >"$app/$lint_plant"
+  git -C "$app" add -- "$lint_plant"
+  git -C "$app" commit -q -m "lint plant"
+  expect_fail "$app/bin/ci" --force
+  grep -qF "$lint_find" "${LAST_LOG}" || die "$lang ci did not lint a committed file"
+  git -C "$app" rm -qf -- "$lint_plant"
+  git -C "$app" commit -q -m "lint plant gone"
+  printf '%s\n' "$source_body" >"$app/$source_plant"
+  git -C "$app" add -- "$source_plant"
+  git -C "$app" commit -q -m "source plant"
+  expect_fail "$app/bin/ci" --force
+  grep -qF "no mirrored test for $source_plant" "${LAST_LOG}" || die "$lang ci did not test a committed source"
+  git -C "$app" rm -qf -- "$source_plant"
+  git -C "$app" commit -q -m "source plant gone"
 }
 
 # Rewrites the source so its test runs every function and line but only one

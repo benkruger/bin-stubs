@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # bin/test — the folder's own test script under c8 (`c8 <pm> run test`),
 # then 100% functions, lines, branches and statements on every source file
-# bin/changed --files lists. A changed test still requires its mirrored source at
+# bin/changed --files lists, or with --all (bin/ci passes it) on every source
+# file in the app. A changed test still requires its mirrored source at
 # 100%. Path args are forwarded to the test script and still require 100%
 # on the mirrored source when that twin exists; a path with no twin (a
 # throwaway probe) is assertion-only. The package manager is read from the lockfile
@@ -13,7 +14,7 @@
 # tests/<rel>.test.{js,mjs}, <dir>/<name>.test.{js,mjs}, or the colocated
 # <dir>/test-<name>.{mjs,js}.
 #
-# Usage: bin/test [args...]
+# Usage: bin/test [--all | args...]
 set -euo pipefail
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 if [ "$(basename "$here")" = "_root" ]; then
@@ -44,9 +45,11 @@ rm -rf "$covdir"
 mkdir -p "$covdir"
 
 rc=0
+all=0
 paths=()
 for arg in "$@"; do
   case "$arg" in
+    --all) all=1 ;;
     -*) ;;
     *) paths+=("$arg") ;;
   esac
@@ -179,7 +182,11 @@ if [ "${#paths[@]}" -gt 0 ]; then
     fi
   done
 else
-  listing="$("$here/changed" --files)"
+  if [ "$all" -eq 1 ]; then
+    listing="$(git -C "$root" ls-files --cached --others --exclude-standard -- .)"
+  else
+    listing="$("$here/changed" --files)"
+  fi
   while IFS= read -r path; do
     [ -z "$path" ] && continue
     case "$path" in

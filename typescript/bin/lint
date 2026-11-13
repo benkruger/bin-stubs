@@ -5,8 +5,7 @@
 # shfmt and shellcheck (tests/guards). Then ESLint with zero warnings on the
 # files it covers, and markdownlint on the *.md among them. A sibling
 # folder with its own bin/lint is left alone. Not a formatter (bin/format
-# owns writes). --all checks every file git sees instead — the one-time full
-# pass an install runs so latent violations can't hide.
+# owns writes). --all checks every file git sees instead; bin/ci passes it.
 #
 # Usage: bin/lint [--all | paths...]
 set -euo pipefail

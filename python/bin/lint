@@ -2,8 +2,7 @@
 # bin/lint — every ruff rule, on the given files, or with no paths the
 # files bin/changed --files lists. Read-only (no --fix). A sibling folder
 # with its own bin/lint is left alone. Not a formatter (bin/format owns
-# writes). --all checks every file git sees instead — the one-time full
-# pass an install runs so latent violations can't hide.
+# writes). --all checks every file git sees instead; bin/ci passes it.
 #
 # Usage: bin/lint [--all | paths...]
 set -euo pipefail

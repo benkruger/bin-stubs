@@ -1,9 +1,11 @@
 #!/usr/bin/env bash
 # bin/format — RuboCop autocorrect (-A) on the given Ruby files and
 # markdownlint --fix on the given Markdown, or with no paths on the files
-# bin/changed --files lists. Offenses neither can fix fail in bin/lint.
+# bin/changed --files lists. --all (bin/ci passes it) autocorrects the whole
+# app and fixes its tracked Markdown. Offenses neither can fix fail in
+# bin/lint.
 #
-# Usage: bin/format [paths...]
+# Usage: bin/format [--all | paths...]
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -14,8 +16,19 @@ else
 fi
 cd "$REPO_ROOT"
 
-if [ "$#" -gt 0 ]; then
-  listing="$(printf '%s\n' "$@")"
+all=0
+paths=()
+for arg in "$@"; do
+  case "$arg" in
+    --all) all=1 ;;
+    *) paths+=("$arg") ;;
+  esac
+done
+
+if [ "$all" -eq 1 ]; then
+  listing="$(git ls-files '*.md')"
+elif [ "${#paths[@]}" -gt 0 ]; then
+  listing="$(printf '%s\n' "${paths[@]}")"
 else
   listing="$("$HERE/changed" --files)"
 fi
@@ -32,7 +45,9 @@ done <<<"$listing"
 
 # Each tool exits non-zero while an offense it cannot fix remains; bin/lint
 # reports that offense.
-if [ "${#rb_files[@]}" -gt 0 ]; then
+if [ "$all" -eq 1 ]; then
+  bundle exec rubocop -A --format quiet --display-cop-names || true
+elif [ "${#rb_files[@]}" -gt 0 ]; then
   bundle exec rubocop -A --force-exclusion --format quiet --display-cop-names "${rb_files[@]}" || true
 fi
 if [ "${#md_files[@]}" -gt 0 ]; then

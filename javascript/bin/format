@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # bin/format — Biome writes its formatting and its safe lint fixes to the
-# given files, or with no paths the files bin/changed --files lists. What it
-# cannot fix fails in bin/lint. A sibling folder with its own bin/format is
-# left alone.
+# given files, with --all every file git sees, or with no paths the files
+# bin/changed --files lists. What it cannot fix fails in bin/lint. A sibling
+# folder with its own bin/format is left alone.
 #
-# Usage: bin/format [paths...]
+# Usage: bin/format [--all | paths...]
 set -euo pipefail
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 if [ "$(basename "$here")" = "_root" ]; then
@@ -25,8 +25,19 @@ has_own_format() {
   [ -x "$root/$top/bin/format" ]
 }
 
-if [ "$#" -gt 0 ]; then
-  listing="$(printf '%s\n' "$@")"
+all=0
+paths=()
+for arg in "$@"; do
+  case "$arg" in
+    --all) all=1 ;;
+    *) paths+=("$arg") ;;
+  esac
+done
+
+if [ "$all" -eq 1 ]; then
+  listing="$(git -C "$root" ls-files --cached --others --exclude-standard -- .)"
+elif [ "${#paths[@]}" -gt 0 ]; then
+  listing="$(printf '%s\n' "${paths[@]}")"
 else
   listing="$("$here/changed" --files)"
 fi

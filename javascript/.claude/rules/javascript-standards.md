@@ -11,9 +11,9 @@ strength.
 - Every source has a twin: the first that exists of
   `tests/<path>.test.js` (or `.mjs`), `<dir>/<name>.test.js` (or `.mjs`), or
   `<dir>/test-<name>.mjs` (or `.js`). `bin/changed` fails a changed source
-  with no twin.
-- Every changed source is at 100% functions, lines, branches and
-  statements under c8.
+  with no twin; `bin/ci` fails any source with none.
+- Every source is at 100% functions, lines, branches and statements under
+  c8. `bin/ci` checks every source; `bin/changed` checks the changed ones.
 - Biome formats and lints every file except Markdown (markdownlint) and
   bash scripts (shfmt and shellcheck). `bin/lint` fails any other file type
   unless `UNGATED_NAMES` or the exact paths in `UNGATED_PATHS` name it.

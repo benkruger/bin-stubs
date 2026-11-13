@@ -115,10 +115,11 @@ run_step() {
   fi
 }
 
-run_step format "$here/format"
-run_step lint "$here/lint"
+# --all: each step checks the whole app, not only the changed files.
+run_step format "$here/format" --all
+run_step lint "$here/lint" --all
 run_step build "$here/build"
-run_step test "$here/test"
+run_step test "$here/test" --all
 
 tally="$(grep -E '[0-9]+ passed' "$log" | tail -n1 || true)"
 

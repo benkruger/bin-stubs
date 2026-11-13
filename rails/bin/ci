@@ -118,8 +118,9 @@ run_step() {
   fi
 }
 
-run_step format "$here/format"
-run_step lint "$here/lint"
+# --all: format and lint check the whole app, not only the changed files.
+run_step format "$here/format" --all
+run_step lint "$here/lint" --all
 run_step build "$here/build"
 run_step test "$here/test"
 

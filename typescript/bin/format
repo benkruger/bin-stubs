@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
-# bin/format — format the given files with Prettier, or with no paths the
-# files bin/changed --files lists. Markdown is left to markdownlint; a file
-# Prettier has no parser for is skipped. A sibling folder with its own
-# bin/format is left alone. Not a linter (bin/lint owns lint).
+# bin/format — format the given files with Prettier, with --all every file
+# git sees, or with no paths the files bin/changed --files lists. Markdown is
+# left to markdownlint; a file Prettier has no parser for is skipped. A
+# sibling folder with its own bin/format is left alone. Not a linter
+# (bin/lint owns lint).
 #
-# Usage: bin/format [paths...]
+# Usage: bin/format [--all | paths...]
 set -euo pipefail
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 if [ "$(basename "$here")" = "_root" ]; then
@@ -25,8 +26,19 @@ has_own_format() {
   [ -x "$root/$top/bin/format" ]
 }
 
-if [ "$#" -gt 0 ]; then
-  listing="$(printf '%s\n' "$@")"
+all=0
+paths=()
+for arg in "$@"; do
+  case "$arg" in
+    --all) all=1 ;;
+    *) paths+=("$arg") ;;
+  esac
+done
+
+if [ "$all" -eq 1 ]; then
+  listing="$(git -C "$root" ls-files --cached --others --exclude-standard -- .)"
+elif [ "${#paths[@]}" -gt 0 ]; then
+  listing="$(printf '%s\n' "${paths[@]}")"
 else
   listing="$("$here/changed" --files)"
 fi

@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# Lint phase. Given paths (bin/changed passes its list): RuboCop and
-# markdownlint check those files, and Brakeman checks the app. With no
-# paths: RuboCop with autocorrect (-A) and Brakeman on the whole app, then
-# markdownlint on tracked Markdown under this app.
+# bin/lint — RuboCop and markdownlint check the given files, or with no
+# paths the files bin/changed --files lists; Brakeman checks the app.
+# --all (bin/ci passes it) has RuboCop check the whole app and markdownlint
+# the tracked Markdown. Read-only: bin/format owns the autocorrect.
 #
-# Usage: bin/lint [paths...]
+# Usage: bin/lint [--all | paths...]
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -18,24 +18,37 @@ cd "$REPO_ROOT"
 # shellcheck source=_run_quiet
 . "$HERE/_run_quiet"
 
+all=0
+paths=()
+for arg in "$@"; do
+  case "$arg" in
+    --all) all=1 ;;
+    *) paths+=("$arg") ;;
+  esac
+done
+
+if [ "$all" -eq 1 ]; then
+  listing="$(git ls-files '*.md')"
+elif [ "${#paths[@]}" -gt 0 ]; then
+  listing="$(printf '%s\n' "${paths[@]}")"
+else
+  listing="$("$HERE/changed" --files)"
+fi
+
 rb_files=()
 md_files=()
-if [ "$#" -gt 0 ]; then
-  for path in "$@"; do
-    [ -f "$path" ] || continue
-    case "$path" in
-      *.rb) rb_files+=("$path") ;;
-      *.md) md_files+=("$path") ;;
-    esac
-  done
-  if [ "${#rb_files[@]}" -gt 0 ]; then
-    run_quiet "rails (rubocop)" bundle exec rubocop --force-exclusion --format quiet --display-cop-names "${rb_files[@]}"
-  fi
-else
-  run_quiet "rails (rubocop -A)" bundle exec rubocop -A --format quiet --display-cop-names
-  while IFS= read -r file; do
-    md_files+=("$file")
-  done < <(git ls-files '*.md')
+while IFS= read -r path; do
+  [ -f "$path" ] || continue
+  case "$path" in
+    *.rb) rb_files+=("$path") ;;
+    *.md) md_files+=("$path") ;;
+  esac
+done <<<"$listing"
+
+if [ "$all" -eq 1 ]; then
+  run_quiet "rails (rubocop)" bundle exec rubocop --format quiet --display-cop-names
+elif [ "${#rb_files[@]}" -gt 0 ]; then
+  run_quiet "rails (rubocop)" bundle exec rubocop --force-exclusion --format quiet --display-cop-names "${rb_files[@]}"
 fi
 run_quiet "rails (brakeman)" bundle exec brakeman --quiet --no-pager --exit-on-warn --exit-on-error
 

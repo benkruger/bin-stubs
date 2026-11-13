@@ -1,12 +1,23 @@
 #!/usr/bin/env bash
 # bin/test — pytest with coverage, then 100/100 on every source file
-# bin/changed --files lists. A changed test still requires its mirrored source at
+# bin/changed --files lists, or with --all (bin/ci passes it) on every
+# source file in the app. A changed test still requires its mirrored source at
 # 100/100. Path args still require 100/100 on the mirrored source when
 # that twin exists; a path with no twin (a throwaway probe) is
 # assertion-only.
 #
-# Usage: bin/test [args...]
+# Usage: bin/test [--all | args...]
 set -euo pipefail
+
+all=0
+args=()
+for arg in "$@"; do
+  case "$arg" in
+    --all) all=1 ;;
+    *) args+=("$arg") ;;
+  esac
+done
+set -- ${args[@]+"${args[@]}"}
 export PATH="${HOME}/.local/bin:${PATH}"
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 if [ "$(basename "$here")" = "_root" ]; then
@@ -141,7 +152,11 @@ if [ "$#" -gt 0 ]; then
     fi
   done
 else
-  listing="$("$here/changed" --files)"
+  if [ "$all" -eq 1 ]; then
+    listing="$(git -C "$root" ls-files --cached --others --exclude-standard -- .)"
+  else
+    listing="$("$here/changed" --files)"
+  fi
   while IFS= read -r path; do
     [ -z "$path" ] && continue
     case "$path" in

@@ -6,11 +6,11 @@ strength.
 ## The Rule
 
 - Every source `src/<path>.ts` (or `.tsx`) has its twin
-  `tests/<path>.test.ts`. `bin/changed` and `bin/test` fail a changed source
-  with no twin.
-- Every changed source is at 100% functions, lines, branches and
-  statements under Vitest's v8 coverage; a changed test holds its source to
-  the same bar.
+  `tests/<path>.test.ts`. `bin/changed` fails a changed source with no twin;
+  `bin/ci` fails any source with none.
+- Every source is at 100% functions, lines, branches and statements under
+  Vitest's v8 coverage. `bin/ci` checks every source; `bin/changed` checks
+  the changed ones, and a changed test holds its source to the same bar.
 - Prettier formats every file it has a parser for except Markdown, which
   markdownlint owns.
 - Every file has a formatter and a linter: Prettier and ESLint rules,

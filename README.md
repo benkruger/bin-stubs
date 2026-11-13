@@ -133,8 +133,8 @@ At the repo root, that same case prints `bin/changed: nothing dirty` and exits
    uses the package manager named by its lockfile. Python runs `uv sync`.
    Rails runs `bundle install` when gems are missing. TypeScript and
    JavaScript then fail on any moderate or worse audit advisory.
-4. Format, lint, build, test. A terminal shows `bin/ci: [1/4] format /`
-   through `test ✓`.
+4. Format, lint, build, test, each over the whole app. A terminal shows
+   `bin/ci: [1/4] format /` through `test ✓`.
 5. A failed step prints its log. The old sentinel stays.
 6. When all four pass, a new sentinel is written.
 
@@ -204,18 +204,20 @@ TypeScript, JavaScript and Rails ship `bin/open`. TypeScript and JavaScript
 run the `dev` script with `--host 127.0.0.1 --open`; Rails starts
 `rails server` on `PORT` (default 3000) and opens the browser once it answers.
 
+In `bin/ci`, every step covers the whole app:
+
 - **TypeScript**: Prettier write, a formatter and a linter for every file,
   ESLint with zero warnings, the package build or `tsc`, then Vitest with
-  100% functions, lines, branches and statements on changed sources.
+  100% functions, lines, branches and statements on every source.
 - **JavaScript**: Biome write with its safe fixes, a formatter and a linter
   for every file, Biome check, the package build or `node --check`, then the
   package test under c8 with 100% functions, lines, branches and statements
-  on changed sources.
+  on every source.
 - **Python**: Ruff format and Ruff's safe fixes, Ruff check, `compileall`,
-  then pytest with 100/100 on changed sources.
-- **Rails**: RuboCop `-A` and markdownlint `--fix` on changed files; RuboCop,
-  Brakeman and markdownlint; Zeitwerk; then `db:test:prepare` when the app has
-  a database, and Minitest through `rails test`, where warnings fail.
+  then pytest with 100/100 on every source.
+- **Rails**: RuboCop `-A` and markdownlint `--fix`; RuboCop, Brakeman and
+  markdownlint; Zeitwerk; then `db:test:prepare` when the app has a database,
+  and Minitest through `rails test`, where warnings fail.
 - **Rust**: `cargo fmt`, Clippy, `cargo build`, `cargo test`.
 - **iOS**: `swift-format`, `swift-format` lint, `swift build` or
   `xcodebuild`, then `swift test` or `xcodebuild` with a 100% line bar.
