@@ -1,10 +1,41 @@
 #!/usr/bin/env bash
-# Format phase — called standalone and by `bin/ci`.
+# bin/format — RuboCop autocorrect (-A) on the given Ruby files and
+# markdownlint --fix on the given Markdown, or with no paths on the files
+# bin/changed --files lists. Offenses neither can fix fail in bin/lint.
 #
-# The autocorrecting linter runs in the lint phase, so the gate needs no
-# separate format step. This phase is an intentional, honest no-op — not an
-# unconfigured stub.
+# Usage: bin/format [paths...]
 set -euo pipefail
 
-echo "  → no separate format step (linting runs in the lint phase)"
-exit 0
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [ "$(basename "$HERE")" = "_root" ]; then
+  REPO_ROOT="$(cd "$HERE/../.." && pwd)"
+else
+  REPO_ROOT="$(cd "$HERE/.." && pwd)"
+fi
+cd "$REPO_ROOT"
+
+if [ "$#" -gt 0 ]; then
+  listing="$(printf '%s\n' "$@")"
+else
+  listing="$("$HERE/changed" --files)"
+fi
+
+rb_files=()
+md_files=()
+while IFS= read -r path; do
+  [ -f "$path" ] || continue
+  case "$path" in
+    *.rb) rb_files+=("$path") ;;
+    *.md) md_files+=("$path") ;;
+  esac
+done <<<"$listing"
+
+# Each tool exits non-zero while an offense it cannot fix remains; bin/lint
+# reports that offense.
+if [ "${#rb_files[@]}" -gt 0 ]; then
+  bundle exec rubocop -A --force-exclusion --format quiet --display-cop-names "${rb_files[@]}" || true
+fi
+if [ "${#md_files[@]}" -gt 0 ]; then
+  git_root="$(git rev-parse --show-toplevel)"
+  pnpm --dir "$git_root" exec markdownlint-cli2 --fix "${md_files[@]}" || true
+fi

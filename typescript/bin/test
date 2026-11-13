@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # bin/test — Vitest with v8 coverage, then 100% functions, lines, branches
-# and statements on every source file this folder changed. A changed test
+# and statements on every source file bin/changed --files lists. A changed test
 # still requires its mirrored source at 100%. Path args are Vitest file
 # filters: they switch off the app's own coverage thresholds for that run,
 # and still require 100% on the mirrored source when that twin exists; a
@@ -149,10 +149,11 @@ if [ "$#" -gt 0 ]; then
     fi
   done
 else
+  listing="$("$here/changed" --files)"
   while IFS= read -r path; do
     [ -z "$path" ] && continue
     case "$path" in
-      node_modules/* | .venv/* | .flow-states/* | flume/* | */node_modules/* | */.venv/* | */.flow-states/*)
+      node_modules/* | .venv/* | .flow-states/* | */node_modules/* | */.venv/* | */.flow-states/*)
         continue
         ;;
     esac
@@ -170,12 +171,7 @@ else
         already "$src" || required+=("$src")
       fi
     fi
-  done < <(
-    {
-      git -C "$root" diff --name-only --relative HEAD -- .
-      git -C "$root" ls-files --others --exclude-standard -- .
-    } | sort -u
-  )
+  done <<<"$listing"
 fi
 
 ratchet=0

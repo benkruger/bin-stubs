@@ -1,13 +1,14 @@
 #!/usr/bin/env bash
-# bin/lint — every rule, only files this folder changed. Each file needs a
-# formatter and a linter: Biome for JavaScript/JSON/CSS, markdownlint for
-# Markdown, or shfmt and shellcheck (tests/guards) for a bash script. Then
-# Biome read-only, and markdownlint on dirty *.md. A sibling folder with its
-# own bin/lint is left alone. Not a formatter (bin/format owns writes).
-# --all checks every file git sees instead of the dirty set — the one-time
-# full pass an install runs so latent violations can't hide.
+# bin/lint — every rule, on the given files, or with no paths the files
+# bin/changed --files lists. Each file needs a formatter and a linter: Biome
+# for JavaScript/JSON/CSS, markdownlint for Markdown, or shfmt and shellcheck
+# (tests/guards) for a bash script. Then Biome read-only, and markdownlint on
+# the *.md among them. A sibling folder with its own bin/lint is left alone.
+# Not a formatter (bin/format owns writes). --all checks every file git sees
+# instead — the one-time full pass an install runs so latent violations
+# can't hide.
 #
-# Usage: bin/lint [--all]
+# Usage: bin/lint [--all | paths...]
 set -euo pipefail
 
 # Files no formatter or linter can check: by name anywhere, or by exact path.
@@ -28,11 +29,21 @@ if [ -z "${CI:-}" ]; then
 fi
 
 all=0
+paths=()
 for arg in "$@"; do
   case "$arg" in
     --all) all=1 ;;
+    *) paths+=("$arg") ;;
   esac
 done
+
+if [ "$all" -eq 1 ]; then
+  listing="$(git -C "$root" ls-files --cached --others --exclude-standard -- .)"
+elif [ "${#paths[@]}" -gt 0 ]; then
+  listing="$(printf '%s\n' "${paths[@]}")"
+else
+  listing="$("$here/changed" --files)"
+fi
 
 has_own_lint() {
   local top="$1"
@@ -44,7 +55,7 @@ while IFS= read -r path; do
   [ -z "$path" ] && continue
   [ -f "$path" ] || continue
   case "$path" in
-    node_modules/* | dist/* | .flow-states/* | flume/* | */node_modules/* | */.flow-states/*)
+    node_modules/* | dist/* | .flow-states/* | */node_modules/* | */.flow-states/*)
       continue
       ;;
   esac
@@ -53,16 +64,7 @@ while IFS= read -r path; do
     continue
   fi
   files+=("$path")
-done < <(
-  if [ "$all" -eq 1 ]; then
-    git -C "$root" ls-files --cached --others --exclude-standard -- .
-  else
-    {
-      git -C "$root" diff --name-only --relative HEAD -- .
-      git -C "$root" ls-files --others --exclude-standard -- .
-    } | sort -u
-  fi
-)
+done <<<"$listing"
 
 if [ "${#files[@]}" -eq 0 ]; then
   exit 0

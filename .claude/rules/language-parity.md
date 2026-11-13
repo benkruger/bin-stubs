@@ -16,7 +16,13 @@ behaves the same whatever its stack.
 - Each `bin/ci` prints `[n/4]` step lines, writes the sentinel only after all
   four steps pass, leaves the old sentinel on a red run, and honors `--force`
   and `--clean`.
+- Each `bin/changed` works out the files changed since the last commit once,
+  prints them with `--files`, and runs the other scripts on that list rather
+  than calling a tool itself. A script that works file by file takes paths
+  and, given none, reads `bin/changed --files`; no other script works out the
+  list on its own.
 - A behavior added to one language lands in every language it applies to, in
   the same change, with its case in `tests/run`.
 - `tests/run` drives each language it can run on the machine through green,
-  skip, sibling edit, red, `--force` and `--clean` in a throwaway repo.
+  skip, sibling edit, red, `--force`, `--clean`, and `bin/changed` on an
+  edited tracked file, in a throwaway repo.

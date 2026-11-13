@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
-# bin/format — format files this folder changed (Biome write, linter off).
-# Git diff vs HEAD plus untracked, owned by this gate. A sibling folder
-# with its own bin/format is left alone. Not a linter (bin/lint owns lint).
+# bin/format — Biome writes its formatting and its safe lint fixes to the
+# given files, or with no paths the files bin/changed --files lists. What it
+# cannot fix fails in bin/lint. A sibling folder with its own bin/format is
+# left alone.
 #
-# Usage: bin/format
+# Usage: bin/format [paths...]
 set -euo pipefail
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 if [ "$(basename "$here")" = "_root" ]; then
@@ -24,12 +25,18 @@ has_own_format() {
   [ -x "$root/$top/bin/format" ]
 }
 
+if [ "$#" -gt 0 ]; then
+  listing="$(printf '%s\n' "$@")"
+else
+  listing="$("$here/changed" --files)"
+fi
+
 files=()
 while IFS= read -r path; do
   [ -z "$path" ] && continue
   [ -f "$path" ] || continue
   case "$path" in
-    node_modules/* | dist/* | .flow-states/* | flume/* | */node_modules/* | */.flow-states/*)
+    node_modules/* | dist/* | .flow-states/* | */node_modules/* | */.flow-states/*)
       continue
       ;;
     *.js | *.mjs | *.cjs | *.jsx | *.json | *.jsonc | *.css) ;;
@@ -40,15 +47,12 @@ while IFS= read -r path; do
     continue
   fi
   files+=("$path")
-done < <(
-  {
-    git diff --name-only HEAD -- .
-    git ls-files --others --exclude-standard -- .
-  } | sort -u
-)
+done <<<"$listing"
 
 if [ "${#files[@]}" -eq 0 ]; then
   exit 0
 fi
 
-exec "$root/node_modules/.bin/biome" check --write --linter-enabled=false "${files[@]}"
+# Biome exits non-zero while a finding it cannot fix remains; bin/lint
+# reports that finding.
+"$root/node_modules/.bin/biome" check --write "${files[@]}" || true

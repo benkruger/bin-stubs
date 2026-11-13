@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# bin/test — pytest with coverage, then 100/100 on every source file this
-# folder changed. A changed test still requires its mirrored source at
+# bin/test — pytest with coverage, then 100/100 on every source file
+# bin/changed --files lists. A changed test still requires its mirrored source at
 # 100/100. Path args still require 100/100 on the mirrored source when
 # that twin exists; a path with no twin (a throwaway probe) is
 # assertion-only.
@@ -141,10 +141,11 @@ if [ "$#" -gt 0 ]; then
     fi
   done
 else
+  listing="$("$here/changed" --files)"
   while IFS= read -r path; do
     [ -z "$path" ] && continue
     case "$path" in
-      node_modules/* | .venv/* | .flow-states/* | flume/* | */node_modules/* | */.venv/* | */.flow-states/*)
+      node_modules/* | .venv/* | .flow-states/* | */node_modules/* | */.venv/* | */.flow-states/*)
         continue
         ;;
     esac
@@ -162,12 +163,7 @@ else
         already "$src" || required+=("$src")
       fi
     fi
-  done < <(
-    {
-      git -C "$root" diff --name-only --relative HEAD -- .
-      git -C "$root" ls-files --others --exclude-standard -- .
-    } | sort -u
-  )
+  done <<<"$listing"
 fi
 
 file_cov() {

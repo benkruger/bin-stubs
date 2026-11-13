@@ -1,11 +1,13 @@
 #!/usr/bin/env bash
-# bin/changed — coding-time gate for files this folder changed. Biome
-# --write (format and safe lint fixes), then lint (leftover stays red),
-# tests for the dirty tree, 100% coverage on every dirty source. No twin test
-# → red. Empty diff → green. No build, no sentinel, not bin/ci. Source and
-# twin rules are bin/test's.
+# bin/changed — run after an edit. Lists the files this folder changed since
+# the last commit, plus untracked ones, once; hands that list to bin/format
+# (Biome formatting and safe fixes) and bin/lint (leftover stays red); then
+# runs the tests for it, 100% coverage on every dirty source. No twin test →
+# red. Empty diff → green. No build, no sentinel, not bin/ci. Source and
+# twin rules are bin/test's. --files prints the list and exits; the other
+# scripts here read it when given no paths.
 #
-# Usage: bin/changed
+# Usage: bin/changed [--files]
 set -euo pipefail
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 if [ "$(basename "$here")" = "_root" ]; then
@@ -14,12 +16,6 @@ else
   root="$(cd "$here/.." && pwd)"
 fi
 cd "$root"
-
-# shellcheck source=lib/toolchain.sh
-. "$here/lib/toolchain.sh"
-if [ -z "${CI:-}" ]; then
-  toolchain_check "$root"
-fi
 
 has_own() {
   local top="$1" leaf="$2"
@@ -35,6 +31,36 @@ owned_change() {
   fi
   return 0
 }
+
+changed_files() {
+  local path
+  while IFS= read -r path; do
+    [ -z "$path" ] && continue
+    case "$path" in
+      node_modules/* | dist/* | .flow-states/* | */node_modules/* | */.flow-states/*)
+        continue
+        ;;
+    esac
+    owned_change "$path" || continue
+    printf '%s\n' "$path"
+  done < <(
+    {
+      git -C "$root" diff --name-only --relative HEAD -- .
+      git -C "$root" ls-files --others --exclude-standard -- .
+    } | sort -u
+  )
+}
+
+if [ "${1:-}" = "--files" ]; then
+  changed_files
+  exit 0
+fi
+
+# shellcheck source=lib/toolchain.sh
+. "$here/lib/toolchain.sh"
+if [ -z "${CI:-}" ]; then
+  toolchain_check "$root"
+fi
 
 is_test() {
   case "$1" in
@@ -86,38 +112,15 @@ already() {
 
 files=()
 while IFS= read -r path; do
-  [ -z "$path" ] && continue
-  [ -f "$path" ] || continue
-  case "$path" in
-    node_modules/* | dist/* | .flow-states/* | flume/* | */node_modules/* | */.flow-states/*)
-      continue
-      ;;
-  esac
-  owned_change "$path" || continue
   files+=("$path")
-done < <(
-  {
-    git -C "$root" diff --name-only --relative HEAD -- .
-    git -C "$root" ls-files --others --exclude-standard -- .
-  } | sort -u
-)
+done < <(changed_files)
 
 if [ "${#files[@]}" -eq 0 ]; then
   exit 0
 fi
 
-biome_files=()
-for path in "${files[@]}"; do
-  case "$path" in
-    *.js | *.mjs | *.cjs | *.jsx | *.json | *.jsonc | *.css) biome_files+=("$path") ;;
-  esac
-done
-
-if [ "${#biome_files[@]}" -gt 0 ]; then
-  "$root/node_modules/.bin/biome" check --write "${biome_files[@]}" || true
-fi
-
-"$here/lint"
+"$here/format" "${files[@]}"
+"$here/lint" "${files[@]}"
 
 tests=()
 missing_mirror=()

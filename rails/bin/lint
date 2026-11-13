@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
-# Lint phase — RuboCop with autocorrect (`-A`), then markdownlint on tracked
-# Markdown under this app.
+# Lint phase. Given paths (bin/changed passes its list): RuboCop and
+# markdownlint check those files, and Brakeman checks the app. With no
+# paths: RuboCop with autocorrect (-A) and Brakeman on the whole app, then
+# markdownlint on tracked Markdown under this app.
+#
+# Usage: bin/lint [paths...]
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -14,15 +18,29 @@ cd "$REPO_ROOT"
 # shellcheck source=_run_quiet
 . "$HERE/_run_quiet"
 
-run_quiet "rails (rubocop -A)" bundle exec rubocop -A --format quiet --display-cop-names
+rb_files=()
+md_files=()
+if [ "$#" -gt 0 ]; then
+  for path in "$@"; do
+    [ -f "$path" ] || continue
+    case "$path" in
+      *.rb) rb_files+=("$path") ;;
+      *.md) md_files+=("$path") ;;
+    esac
+  done
+  if [ "${#rb_files[@]}" -gt 0 ]; then
+    run_quiet "rails (rubocop)" bundle exec rubocop --force-exclusion --format quiet --display-cop-names "${rb_files[@]}"
+  fi
+else
+  run_quiet "rails (rubocop -A)" bundle exec rubocop -A --format quiet --display-cop-names
+  while IFS= read -r file; do
+    md_files+=("$file")
+  done < <(git ls-files '*.md')
+fi
 run_quiet "rails (brakeman)" bundle exec brakeman --quiet --no-pager --exit-on-warn --exit-on-error
 
-md_files=()
-while IFS= read -r file; do
-  md_files+=("$file")
-done < <(git ls-files '*.md')
 if [ "${#md_files[@]}" -eq 0 ]; then
-  echo "  ✓ markdownlint (no tracked Markdown files)"
+  echo "  ✓ markdownlint (no Markdown files)"
 else
   git_root="$(git rev-parse --show-toplevel)"
   run_quiet "markdownlint" pnpm --dir "$git_root" exec markdownlint-cli2 "${md_files[@]}"

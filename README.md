@@ -109,13 +109,16 @@ A root app (`bin/_root/`) leaves the other apps, `CLAUDE.md`, `.claude/`,
 
 ### `bin/changed`
 
-1. No files changed since the last commit, and none waiting to be committed.
-   Exit 0. No output.
-2. Format the changed files, then lint them.
-3. TypeScript, JavaScript, Python, and Rails: each changed source file needs a
+1. List the files changed since the last commit and the ones not committed
+   yet, once. `bin/changed --files` prints that list. Every script that works
+   file by file reads it when given no paths.
+2. An empty list exits 0. No output.
+3. Pass the list to `format`, then to `lint`. Rust and iOS format and lint the
+   whole package.
+4. TypeScript, JavaScript, Python, and Rails: each changed source file needs a
    matching test. Those tests run. Each of those files must be 100% covered. Rust
-   and iOS format, lint, and test the changed files.
-4. No build. No sentinel.
+   and iOS run the whole suite.
+5. No build. No sentinel.
 
 At the repo root, that same case prints `bin/changed: nothing dirty` and exits
 0.
@@ -189,8 +192,8 @@ markdownlint, so a formatting finding from the guards is fixed by
 | Script             | What it does                                     |
 | ------------------ | ------------------------------------------------ |
 | `bin/ci`           | The whole app. Uses the sentinel                 |
-| `bin/changed`      | Files changed since the last commit. No sentinel |
-| `bin/format`       | Format                                           |
+| `bin/changed`      | Run the steps on what changed. No sentinel       |
+| `bin/format`       | Format and apply safe fixes                      |
 | `bin/lint`         | Lint                                             |
 | `bin/build`        | Build. Used by `bin/ci`                          |
 | `bin/test`         | Test                                             |
@@ -204,14 +207,15 @@ run the `dev` script with `--host 127.0.0.1 --open`; Rails starts
 - **TypeScript**: Prettier write, a formatter and a linter for every file,
   ESLint with zero warnings, the package build or `tsc`, then Vitest with
   100% functions, lines, branches and statements on changed sources.
-- **JavaScript**: Biome write, a formatter and a linter for every file, Biome
-  check, the package build or `node --check`, then the package test under c8
-  with 100% functions, lines, branches and statements on changed sources.
-- **Python**: Ruff format, Ruff check, `compileall`, then pytest with 100/100
+- **JavaScript**: Biome write with its safe fixes, a formatter and a linter
+  for every file, Biome check, the package build or `node --check`, then the
+  package test under c8 with 100% functions, lines, branches and statements
   on changed sources.
-- **Rails**: no formatter; RuboCop `-A`, Brakeman and markdownlint; Zeitwerk;
-  then `db:test:prepare` when the app has a database, and Minitest through
-  `rails test`, where warnings fail.
+- **Python**: Ruff format and Ruff's safe fixes, Ruff check, `compileall`,
+  then pytest with 100/100 on changed sources.
+- **Rails**: RuboCop `-A` and markdownlint `--fix` on changed files; RuboCop,
+  Brakeman and markdownlint; Zeitwerk; then `db:test:prepare` when the app has
+  a database, and Minitest through `rails test`, where warnings fail.
 - **Rust**: `cargo fmt`, Clippy, `cargo build`, `cargo test`.
 - **iOS**: `swift-format`, `swift-format` lint, `swift build` or
   `xcodebuild`, then `swift test` or `xcodebuild` with a 100% line bar.

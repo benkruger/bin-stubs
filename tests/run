@@ -600,6 +600,21 @@ source_of() {
   esac
 }
 
+# True when the language's formatter has spaced the seeded source's sum.
+formatted() {
+  local want="a + b"
+  [ "$2" = "rails" ] && want="left + right"
+  grep -q "$want" "$1/$(source_of "$2")"
+}
+
+# Undoes the formatter's spacing around + in the seeded source.
+unformat() {
+  local file
+  file="$1/$(source_of "$2")"
+  sed 's/ + /+/g' "$file" >"$file.raw"
+  mv "$file.raw" "$file"
+}
+
 seed_of() {
   case "$1" in
     typescript) seed_typescript "$2" ;;
@@ -686,11 +701,7 @@ test_language() {
   grep -q "bin/ci: \[1/4\] format" "${LAST_LOG}" || die "$lang did not print the format step"
   grep -q "bin/ci: \[4/4\] test" "${LAST_LOG}" || die "$lang did not print the test step"
   grep -q "sentinel written" "${LAST_LOG}" || die "$lang first run did not write a sentinel"
-  if [ "$lang" = "rails" ]; then
-    grep -q "left + right" "$app/$(source_of "$lang")" || die "$lang format did not rewrite the source"
-  else
-    grep -q "a + b" "$app/$(source_of "$lang")" || die "$lang format did not rewrite the source"
-  fi
+  formatted "$app" "$lang" || die "$lang format did not rewrite the source"
   sent="$(sentinel_file "$app")"
   [ -f "$sent" ] || die "$lang sentinel missing"
   hash="$(cat "$sent")"
@@ -710,6 +721,17 @@ test_language() {
   grep -q "sentinel written" "${LAST_LOG}" || die "$lang --force did not write"
   expect_ok "$app/bin/ci" --clean
   [ ! -f "$sent" ] || die "$lang --clean left the sentinel"
+
+  git -C "$repo" add -A
+  git -C "$repo" commit -q -m "$lang app"
+  unformat "$app" "$lang"
+  expect_ok "$app/bin/changed" --files
+  assert_eq "$(cat "${LAST_LOG}")" "$(source_of "$lang")" "$lang changed --files"
+  expect_ok "$app/bin/format"
+  formatted "$app" "$lang" || die "$lang format skipped an edited tracked file"
+  unformat "$app" "$lang"
+  expect_ok "$app/bin/changed"
+  formatted "$app" "$lang" || die "$lang changed did not format the edited file"
 
   pin="$app/$(pin_file_of "$lang")"
   cp "$pin" "$pin.keep"

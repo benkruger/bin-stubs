@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
-# Dirty-tree gate for this folder. An empty diff exits green. A dirty
-# tree runs format, lint, and test. No build and no sentinel.
-# Usage: bin/changed
+# Run after an edit. Lists the files this folder changed since the last
+# commit, plus untracked ones. An empty list exits green. Otherwise runs
+# format, lint, and test, which each work on the whole package. No build and
+# no sentinel. --files prints the list and exits.
+# Usage: bin/changed [--files]
 set -euo pipefail
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 if [ "$(basename "$here")" = "_root" ]; then
@@ -10,15 +12,28 @@ else
   root="$(cd "$here/.." && pwd)"
 fi
 cd "$root"
-dirty="$(
-  {
-    if git rev-parse --verify HEAD >/dev/null 2>&1; then
-      git diff --name-only --relative HEAD -- .
-    fi
-    git ls-files --others --exclude-standard -- .
-  } | { grep -v '^\.flow-states/' || true; } | sort -u
-)"
-if [ -z "$dirty" ]; then
+
+changed_files() {
+  local path
+  while IFS= read -r path; do
+    [ -f "$path" ] || continue
+    printf '%s\n' "$path"
+  done < <(
+    {
+      if git rev-parse --verify HEAD >/dev/null 2>&1; then
+        git diff --name-only --relative HEAD -- .
+      fi
+      git ls-files --others --exclude-standard -- .
+    } | { grep -v '^\.flow-states/' || true; } | sort -u
+  )
+}
+
+if [ "${1:-}" = "--files" ]; then
+  changed_files
+  exit 0
+fi
+
+if [ -z "$(changed_files)" ]; then
   exit 0
 fi
 if [ -x "$here/ensure-deps" ]; then

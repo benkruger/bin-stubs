@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # bin/build — the folder's own build script (`<pm> run build`) when
 # package.json declares one; otherwise a syntax check (node --check) of
-# every JavaScript file this folder changed. The package manager is read
+# every JavaScript file bin/changed --files lists. The package manager is read
 # from the lockfile (pnpm-lock.yaml → pnpm, yarn.lock → yarn, bun.lock →
 # bun, else npm).
 #
@@ -35,20 +35,16 @@ if node -e 'const p = require("./package.json"); process.exit(p.scripts && p.scr
   exec "$pm" run build
 fi
 
+listing="$("$here/changed" --files)"
 files=()
 while IFS= read -r path; do
   [ -z "$path" ] && continue
   [ -f "$path" ] || continue
   case "$path" in
-    node_modules/* | dist/* | .flow-states/* | flume/* | */node_modules/* | */.flow-states/*) continue ;;
+    node_modules/* | dist/* | .flow-states/* | */node_modules/* | */.flow-states/*) continue ;;
     *.js | *.mjs | *.cjs) files+=("$path") ;;
   esac
-done < <(
-  {
-    git -C "$root" diff --name-only --relative HEAD -- .
-    git -C "$root" ls-files --others --exclude-standard -- .
-  } | sort -u
-)
+done <<<"$listing"
 
 for f in "${files[@]+"${files[@]}"}"; do
   node --check "$f"
