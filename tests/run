@@ -324,11 +324,12 @@ EOF
   grep -q "does not pin MAX_AUTHORED_BYTES=65536" "${LAST_LOG}" || die "raised cap not caught"
 }
 
-# A stand-in claude for bin/commit's rule review. The auditor answers
-# FAKE_AUDIT (a findings array, or "none" for no answer), the verifier
-# FAKE_VERIFY, and the fixer returns FAKE_FIX for the audited files: "good"
-# turns BAD into GOOD, "grow" pushes them past the rule bounds, "outside"
-# rewrites notes.md instead.
+# A stand-in claude for bin/commit's rule review. The first review answers
+# FAKE_AUDIT (a findings array, or "none" for no answer), the review after a
+# fix FAKE_VERIFY, and the fixer returns FAKE_FIX for the audited files:
+# "good" turns BAD into GOOD, "grow" pushes them past the rule bounds,
+# "outside" rewrites notes.md instead. Each review's prompt is kept beside
+# the log.
 fake_claude() {
   mkdir -p "$1"
   cat >"$1/claude" <<'EOF'
@@ -354,11 +355,13 @@ case "$prompt" in
       on && /^- / { print substr($0, 3) }' <<<"$prompt")
     printf '{"type":"result","is_error":false,"structured_output":{"files":%s}}\n' "$files"
     ;;
-  *"verify-only pass"*)
-    echo "verify $*" >>"$FAKE_CLAUDE_LOG"
-    printf '{"type":"result","is_error":false,"structured_output":{"findings":%s}}\n' "${FAKE_VERIFY:-[]}"
-    ;;
   *)
+    if grep -q '^audit' "$FAKE_CLAUDE_LOG"; then
+      echo "verify $*" >>"$FAKE_CLAUDE_LOG"
+      printf '%s\n' "$prompt" >"$FAKE_CLAUDE_LOG.recheck"
+      printf '{"type":"result","is_error":false,"structured_output":{"findings":%s}}\n' "${FAKE_VERIFY:-[]}"
+      exit 0
+    fi
     echo "audit $*" >>"$FAKE_CLAUDE_LOG"
     printf '%s\n' "$prompt" >"$FAKE_CLAUDE_LOG.prompt"
     if [ "${FAKE_AUDIT:-}" = none ]; then
@@ -496,6 +499,10 @@ test_commit() {
   grep -q "A GOOD rule." "$rule" || die "the fixer's text was not written"
   tail -n 1 "$rule" | grep -qE '^<!-- audited: ' || die "a fixed rule was not stamped"
   assert_eq "$(sessions)" "audit fix verify " "a fixed finding's sessions"
+  grep -q "A GOOD rule." "$CLAUDE_LOG.recheck" ||
+    die "the review after a fix did not read the fixed text"
+  grep -q "Audit each file against EVERY requirement" "$CLAUDE_LOG.recheck" ||
+    die "the review after a fix was not a full review"
 
   commit_case
   printf '# Probe\n\nA BAD rule.\n' >"$rule"

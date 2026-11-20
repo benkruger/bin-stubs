@@ -9,12 +9,15 @@ silenced.
   splitting or restructuring the code it flags; `bin/ci` fails while
   any finding stands. Trigger: any lint finding. The one shellcheck
   comment allowed is the one `script-standards.md` names.
-- A lint configuration file holds only the settings on its tool's list in
-  `tests/guards`: the files the tool reads, its plugins and shared
-  rulesets, and the target version. `tests/guards` fails any other
-  setting. A tool whose list is empty, such as markdownlint, takes no
-  config file. Trigger: any edit to a lint configuration file.
-- A comment directs a tool only through the shellcheck directive
-  `script-standards.md` allows; `tests/guards` checks this by failing any
-  token in `BANNED_SUPPRESSIONS`. Trigger: any edit to a file it scans.
-<!-- audited: 06a4661c3b0a -->
+- A lint configuration file passes the check `tests/guards` runs for
+  its tool: an allowed key list for Biome (linter enabled true), RuboCop
+  (NewCops enable), Ruff (any `[format]` key) and `.shellcheckrc`; no
+  `rules` or `linterOptions` for ESLint; only warn, deny or forbid levels
+  for Cargo; every swift-format rule true. `tests/guards` fails the file
+  that does not. A markdownlint config file or `brakeman.ignore` fails
+  outright: those tools run on defaults. Trigger: any edit to a lint
+  configuration file.
+- Code reaches every linter unsilenced. Suppression comments are free
+  text, so `tests/guards` fails each one it names in `BANNED_SUPPRESSIONS`.
+  Trigger: any edit to a file it scans.
+<!-- audited: b8551adf456c -->

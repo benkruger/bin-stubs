@@ -153,10 +153,10 @@ The branch has no `/`.
 
 1. Work in `.worktrees/<branch>` when it exists, otherwise the repo root.
 2. When rule files changed, a separate Claude session reviews them against
-   `rule-authoring.md`. Claude gets one try at fixing what it finds; a
-   finding left after that refuses the commit. A clean review stamps each
-   file with `bin/stamp-rules`. Without `claude` the review is skipped, and
-   the guards fail the unstamped rule.
+   `rule-authoring.md`. Claude gets one try at fixing what it finds, then a
+   fresh review of the fixed text must pass, or the commit is refused. A
+   clean review stamps each file with `bin/stamp-rules`. Without `claude`
+   the review is skipped, and the guards fail the unstamped rule.
 3. Run `bin/ci` for at most `FLOW_CI_TIMEOUT_MS` milliseconds (default five
    minutes).
 4. Stage everything. Nothing staged refuses the commit.

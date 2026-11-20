@@ -4,8 +4,8 @@
 # .worktrees/<branch> when it exists, else the repo root. When rule files
 # changed, claude is installed and bin/stamp-rules is present, a separate
 # Claude session reviews them against .claude/rules/rule-authoring.md; Claude
-# gets one try at fixing what it finds, a finding left after that refuses the
-# commit, and a clean review stamps them. Then bin/ci, bounded by
+# gets one try at fixing what it finds, a fresh review of the fixed text must
+# come back clean or the commit is refused, and a clean review stamps them. Then bin/ci, bounded by
 # FLOW_CI_TIMEOUT_MS (milliseconds, default 300000); git add -A, refusing when
 # nothing is staged; git commit; git push origin HEAD:<branch>. Prints one JSON
 # line: {"status":"ok","sha":…} or {"status":"error","step":…,"detail":…}.
@@ -303,36 +303,6 @@ render_prior() {
   ' <<<"$1"
 }
 
-verify_prompt() {
-  local findings="$1"
-  shift
-  shared_block "$@"
-  cat <<'EOF'
-
-
-You are a cognitively isolated rule-authoring auditor for this repository,
-verifying a prior audit round's findings. Reason only from files you read
-this session; you have no conversation context.
-
-This is a verify-only pass, not a fresh audit. The rule-authoring authority
-you judge against is delivered as reference material above. Read the current
-state of each rule file below. For each prior finding, determine whether it
-is resolved or unresolved against the current file. Do not raise any defect
-the prior round did not flag.
-
-Rule files under audit:
-EOF
-  printf -- '- %s\n' "$@"
-  printf '\nPrior findings to verify:\n'
-  render_prior "$findings"
-  cat <<'EOF'
-
-Return the structured output exactly once, including only the
-still-unresolved findings verbatim — omit any finding now resolved, and
-report nothing beyond this list.
-EOF
-}
-
 fix_prompt() {
   local findings="$1"
   shift
@@ -430,7 +400,7 @@ render_findings() {
 # Reviews the changed rule files. Leaves the reason in $WORK/review and fails
 # when the commit must not go ahead.
 review_rules() {
-  local files=() list findings unresolved verified f
+  local files=() list findings unresolved rechecked f
   [ -x bin/stamp-rules ] || return 0
   if ! list="$(rule_edits)"; then
     printf '%s' "rule audit: could not read the working tree's rule edits" >"$WORK/review"
@@ -448,16 +418,19 @@ review_rules() {
   if [ "$(jq length <<<"$findings")" -gt 0 ]; then
     unresolved="$findings"
     if fix_files "$findings" "${files[@]}"; then
-      verify_prompt "$findings" "${files[@]}" >"$WORK/verify-prompt"
-      if verified="$(review_session "$WORK/verify-prompt")"; then
-        unresolved="$verified"
+      if list="$(rule_edits)"; then
+        files=()
+        while IFS= read -r f; do
+          [ -n "$f" ] && files+=("$f")
+        done <<<"$list"
       fi
-    fi
-    if list="$(rule_edits)"; then
-      files=()
-      while IFS= read -r f; do
-        [ -n "$f" ] && files+=("$f")
-      done <<<"$list"
+      # A fresh review of the whole fixed text, so a false claim the fixer
+      # writes is caught like any other.
+      [ "${#files[@]}" -gt 0 ] || return 0
+      audit_prompt "${files[@]}" >"$WORK/recheck-prompt"
+      if rechecked="$(review_session "$WORK/recheck-prompt")"; then
+        unresolved="$rechecked"
+      fi
     fi
     if [ "$(jq length <<<"$unresolved")" -gt 0 ]; then
       render_findings "$unresolved" >"$WORK/review"
