@@ -334,6 +334,7 @@ case "$prompt" in
     ;;
   *)
     echo "audit $*" >>"$FAKE_CLAUDE_LOG"
+    printf '%s\n' "$prompt" >"$FAKE_CLAUDE_LOG.prompt"
     if [ "${FAKE_AUDIT:-}" = none ]; then
       echo '{"type":"result","is_error":false}'
     else
@@ -453,6 +454,14 @@ test_commit() {
   tail -n 1 "$rule" | grep -qE '^<!-- audited: [0-9a-f]{12} -->$' || die "a clean review did not stamp the rule"
   assert_eq "$(sessions)" "audit " "a clean review's sessions"
   grep -q -- "--json-schema" "$CLAUDE_LOG" || die "the auditor ran without a findings schema"
+
+  commit_case
+  mkdir -p "$repo/app/.claude/rules"
+  printf '# Probe\n\nA probe rule.\n' >"$repo/app/.claude/rules/probe.md"
+  commit -- main "$msg"
+  assert_rc 0 "a nested rule review"
+  grep -qx "### .claude/rules/guard-tests.md" "$CLAUDE_LOG.prompt" ||
+    die "the review of a nested rule left out the root rules"
 
   commit_case
   printf '# Probe\n\nA BAD rule.\n' >"$rule"

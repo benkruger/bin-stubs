@@ -167,8 +167,11 @@ over_bounds() {
     }' "$1"
 }
 
+# The rules an edited rule is checked against for overlap: the repo-root
+# rules, which bind everywhere, and the rules beside each edited file, less
+# the authority and the edited files themselves.
 corpus_files() {
-  local roots=() f root seen r e
+  local roots=(.claude/rules) f root seen r e
   for f in "$@"; do
     root="${f%%.claude/rules/*}.claude/rules"
     seen=0

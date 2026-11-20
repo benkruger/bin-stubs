@@ -5,12 +5,14 @@ silenced.
 
 ## The Rule
 
-- The only comments a tool reads in code are those
-  `script-standards.md` allows; `tests/guards` fails any other suppression
-  token it knows (`BANNED_SUPPRESSIONS`).
+- Every finding a tool the gate drives reports is fixed in the code.
+  Trigger: any lint finding; rename, split or restructure the code until
+  the rule passes. A shellcheck `source=` directive is not a suppression
+  (`script-standards.md`).
 - Lint configuration holds only the files a tool reads, its plugins and
-  ruleset, and the target version; `tests/guards` fails a key outside
-  that set that turns a rule down.
-- Trigger: a lint finding on changed code. Rename, split or restructure the
-  code until the rule passes.
-<!-- audited: 2fc9af21cf60 -->
+  ruleset, and the target version; `tests/guards` accepts only those keys
+  and fails a setting outside that set. Trigger: any edit to a lint
+  configuration file.
+- Suppression comments are free-form, so `tests/guards` fails any token in
+  `BANNED_SUPPRESSIONS`. Trigger: any edit to a file it scans.
+<!-- audited: 51e9cc8015de -->
