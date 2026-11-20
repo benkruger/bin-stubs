@@ -65,8 +65,10 @@ fi
 is_test() {
   case "$1" in
     tests/*.js | tests/*.mjs | tests/*.cjs | tests/*.jsx) return 0 ;;
-    *.test.js | *.test.mjs | *.test.cjs | *.test.jsx | *.spec.js | *.spec.mjs) return 0 ;;
-    test-*.mjs | */test-*.mjs | test-*.js | */test-*.js) return 0 ;;
+    *.test.js | *.test.mjs | *.test.cjs | *.test.jsx) return 0 ;;
+    *.spec.js | *.spec.mjs | *.spec.cjs | *.spec.jsx) return 0 ;;
+    test-*.js | test-*.mjs | test-*.cjs | test-*.jsx) return 0 ;;
+    */test-*.js | */test-*.mjs | */test-*.cjs | */test-*.jsx) return 0 ;;
     *) return 1 ;;
   esac
 }
@@ -86,20 +88,31 @@ is_source() {
   esac
 }
 
-test_for_source() {
-  local rel="$1" dir base stem strip c
+# Every name a source's twin test may have, in lookup order. bin/test holds
+# the same list and finds a test's source by it, so both directions agree.
+twin_names() {
+  local rel="$1" dir stem strip ext
   dir="$(dirname "$rel")"
-  base="$(basename "$rel")"
-  stem="${base%.*}"
+  stem="$(basename "$rel")"
+  stem="${stem%.*}"
   strip="${rel#src/}"
   strip="${strip%.*}"
-  for c in "tests/${strip}.test.js" "tests/${strip}.test.mjs" "$dir/${stem}.test.js" "$dir/${stem}.test.mjs" "$dir/test-${stem}.mjs" "$dir/test-${stem}.js"; do
+  for ext in js mjs cjs jsx; do
+    printf '%s\n' "tests/$strip.test.$ext" "tests/$strip.spec.$ext" \
+      "$dir/$stem.test.$ext" "$dir/$stem.spec.$ext" "$dir/test-$stem.$ext"
+  done
+}
+
+test_for_source() {
+  local c strip
+  while IFS= read -r c; do
     if [ -f "$c" ]; then
       echo "$c"
       return
     fi
-  done
-  echo "tests/${strip}.test.js"
+  done < <(twin_names "$1")
+  strip="${1#src/}"
+  echo "tests/${strip%.*}.test.js"
 }
 
 already() {

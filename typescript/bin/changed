@@ -66,6 +66,7 @@ is_source() {
   [ "$rest" != "$1" ] || return 1
   case "$1" in
     *.test.ts | *.test.tsx | *.test.mts | *.test.cts) return 1 ;;
+    *.d.ts | *.d.mts | *.d.cts) return 1 ;;
     *.ts | *.tsx | *.mts | *.cts) return 0 ;;
     *) return 1 ;;
   esac
@@ -80,10 +81,18 @@ is_test() {
   esac
 }
 
+# The first twin that exists, any TypeScript extension; else the one named
+# after the source's own extension.
 test_for_source() {
-  local rel="${1#src/}"
+  local rel="${1#src/}" ext
   rel="${rel%.*}"
-  echo "tests/${rel}.test.ts"
+  for ext in ts tsx mts cts; do
+    if [ -f "tests/${rel}.test.${ext}" ]; then
+      echo "tests/${rel}.test.${ext}"
+      return
+    fi
+  done
+  echo "tests/${rel}.test.${1##*.}"
 }
 
 already() {

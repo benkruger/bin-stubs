@@ -85,6 +85,8 @@ The starter ships these rules:
   is pinned.
 - `script-standards`: every bash script strict, executable, formatted and
   shellcheck-clean.
+- `dependency-pins`: a dependency held back, overridden or patched lands
+  with a dated check in `checks/`, revisited within 30 days.
 
 Each language folder adds `<language>-standards.md`, which states what its
 scripts enforce. Add one rule for each invariant of the app that the code
@@ -180,7 +182,10 @@ At the repo root, that same case prints `bin/changed: nothing dirty` and exits
 | `bin/_root-format`  | Repo-level format for `format`       |
 | `bin/scan`          | Search the repo                      |
 
-Both repo-level checks run `tests/run`. `bin/_root-format` rewrites every
+Both repo-level checks run every executable in `checks/`, on every call even
+when the saved pass matches, then `tests/run`; `bin/_root-tests checks/<name>`
+runs one check. A check is a bash script for something the repo must revisit,
+such as a dated dependency pin. `bin/_root-format` rewrites every
 bash script with `shfmt -i 2 -ci` and fixes every Markdown file with
 markdownlint, so a formatting finding from the guards is fixed by
 `bin/format`. `bin/scan` takes `refs <string>`
@@ -254,7 +259,8 @@ guards, so a broken standard fails the gate like a failing test.
   with `set -euo pipefail`.
 - A Markdown file breaks a markdownlint rule.
 - `.claude/settings.json` is missing or invalid, does not allow `Bash(bin/*)`,
-  does not deny destructive git, or does not wire both hooks.
+  allows a pattern that starts with a wildcard, does not deny destructive
+  git, or does not wire both hooks.
 
 When you add a check:
 
@@ -273,12 +279,15 @@ When you add a check:
 
 The starter's `.claude/settings.json` sets what the agent may run:
 
-- **Allows** `Bash(bin/*)`, `Bash(*/bin/*)` and `Bash(tests/run)`, so the gate
-  runs without approval prompts. These match the relative form, so scripts
-  are always run as `bin/ci`.
+- **Allows** `Bash(bin/*)` and `Bash(tests/run)`, so the gate runs without
+  approval prompts. Both match only the relative form, so scripts are always
+  run as `bin/ci`, and one app's scripts as `bin/ci --<app>`. A pattern that
+  starts with a wildcard would also match `/usr/bin/git`, so the guards
+  reject one.
 - **Denies** destructive git: `commit` (commits go through `flow-pro commit`),
-  `rebase`, `checkout`, `reset`, `stash`, `clean`, and force-push, with or
-  without `git -C`.
+  `rebase`, `checkout`, `reset`, `restore`, `stash`, `clean`, and a force-push
+  (`--force`, `--force-with-lease`, `-f` or a `+` refspec, wherever it sits
+  in the command), with or without `git -C`.
 - **`require-bin`** (`PreToolUse`) blocks a command that calls the toolchain
   directly (bun, Biome, Ruff, RuboCop, cargo, swift, `rails test` and the
   rest), anywhere in a compound command and through runners like `npx`,

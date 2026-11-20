@@ -2,7 +2,7 @@
 # bin/lint — RuboCop and markdownlint check the given files, or with no
 # paths the files bin/changed --files lists; Brakeman checks the app.
 # --all (bin/ci passes it) has RuboCop check the whole app and markdownlint
-# the tracked Markdown. Read-only: bin/format owns the autocorrect.
+# every Markdown file git sees. Read-only: bin/format owns the autocorrect.
 #
 # Usage: bin/lint [--all | paths...]
 set -euo pipefail
@@ -28,7 +28,7 @@ for arg in "$@"; do
 done
 
 if [ "$all" -eq 1 ]; then
-  listing="$(git ls-files '*.md')"
+  listing="$(git ls-files --cached --others --exclude-standard -- '*.md')"
 elif [ "${#paths[@]}" -gt 0 ]; then
   listing="$(printf '%s\n' "${paths[@]}")"
 else
@@ -55,6 +55,5 @@ run_quiet "rails (brakeman)" bundle exec brakeman --quiet --no-pager --exit-on-w
 if [ "${#md_files[@]}" -eq 0 ]; then
   echo "  ✓ markdownlint (no Markdown files)"
 else
-  git_root="$(git rev-parse --show-toplevel)"
-  run_quiet "markdownlint" pnpm --dir "$git_root" exec markdownlint-cli2 "${md_files[@]}"
+  run_quiet "markdownlint" markdownlint-cli2 "${md_files[@]}"
 fi

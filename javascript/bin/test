@@ -10,9 +10,9 @@
 #
 # A source is any .js/.mjs/.cjs/.jsx below a directory (root-level files
 # are config, never sources) outside tests/, dist/, public/, and
-# node_modules/. Its twin is the first that exists of
-# tests/<rel>.test.{js,mjs}, <dir>/<name>.test.{js,mjs}, or the colocated
-# <dir>/test-<name>.{mjs,js}.
+# node_modules/. Its twin is the first that exists of tests/<rel>.test.<ext>,
+# tests/<rel>.spec.<ext>, <dir>/<name>.test.<ext>, <dir>/<name>.spec.<ext> or
+# <dir>/test-<name>.<ext>, for <ext> js, mjs, cjs, then jsx (twin_names).
 #
 # Usage: bin/test [--all | args...]
 set -euo pipefail
@@ -79,8 +79,10 @@ owned_change() {
 is_test() {
   case "$1" in
     tests/*.js | tests/*.mjs | tests/*.cjs | tests/*.jsx) return 0 ;;
-    *.test.js | *.test.mjs | *.test.cjs | *.test.jsx | *.spec.js | *.spec.mjs) return 0 ;;
-    test-*.mjs | */test-*.mjs | test-*.js | */test-*.js) return 0 ;;
+    *.test.js | *.test.mjs | *.test.cjs | *.test.jsx) return 0 ;;
+    *.spec.js | *.spec.mjs | *.spec.cjs | *.spec.jsx) return 0 ;;
+    test-*.js | test-*.mjs | test-*.cjs | test-*.jsx) return 0 ;;
+    */test-*.js | */test-*.mjs | */test-*.cjs | */test-*.jsx) return 0 ;;
     *) return 1 ;;
   esac
 }
@@ -100,61 +102,74 @@ is_source() {
   esac
 }
 
-test_for_source() {
-  local rel="$1" dir base stem strip c
+# Every name a source's twin test may have, in lookup order. bin/changed
+# holds the same list; source_for_test inverts it, so both directions agree.
+twin_names() {
+  local rel="$1" dir stem strip ext
   dir="$(dirname "$rel")"
-  base="$(basename "$rel")"
-  stem="${base%.*}"
+  stem="$(basename "$rel")"
+  stem="${stem%.*}"
   strip="${rel#src/}"
   strip="${strip%.*}"
-  for c in "tests/${strip}.test.js" "tests/${strip}.test.mjs" "$dir/${stem}.test.js" "$dir/${stem}.test.mjs" "$dir/test-${stem}.mjs" "$dir/test-${stem}.js"; do
+  for ext in js mjs cjs jsx; do
+    printf '%s\n' "tests/$strip.test.$ext" "tests/$strip.spec.$ext" \
+      "$dir/$stem.test.$ext" "$dir/$stem.spec.$ext" "$dir/test-$stem.$ext"
+  done
+}
+
+test_for_source() {
+  local c strip
+  while IFS= read -r c; do
     if [ -f "$c" ]; then
       echo "$c"
       return
     fi
-  done
-  echo "tests/${strip}.test.js"
+  done < <(twin_names "$1")
+  strip="${1#src/}"
+  echo "tests/${strip%.*}.test.js"
 }
 
-# The source a test mirrors, or empty when none exists (assertion-only).
-source_for_test() {
-  local t="$1" dir base stem rel c
+# Paths that might be this test's source: beside it, and for a test under
+# tests/ the same path under src/ and under the app root.
+source_candidates() {
+  local t="$1" dir base stem rel ext
   dir="$(dirname "$t")"
   base="$(basename "$t")"
   case "$base" in
     test-*)
       stem="${base#test-}"
       stem="${stem%.*}"
-      for c in "$dir/$stem.js" "$dir/$stem.mjs" "$dir/$stem.cjs" "$dir/$stem.jsx"; do
-        if [ -f "$c" ]; then
-          echo "$c"
-          return
-        fi
-      done
       ;;
     *)
       stem="${base%.*}"
       stem="${stem%.test}"
       stem="${stem%.spec}"
-      if [[ "$t" == tests/* ]]; then
-        rel="$(dirname "${t#tests/}")"
-        [ "$rel" = "." ] && rel=""
-        for c in "src/${rel:+$rel/}$stem.js" "src/${rel:+$rel/}$stem.mjs" "${rel:+$rel/}$stem.js" "${rel:+$rel/}$stem.mjs"; do
-          if [ -f "$c" ]; then
-            echo "$c"
-            return
-          fi
-        done
-      else
-        for c in "$dir/$stem.js" "$dir/$stem.mjs" "$dir/$stem.cjs" "$dir/$stem.jsx"; do
-          if [ -f "$c" ]; then
-            echo "$c"
-            return
-          fi
-        done
-      fi
       ;;
   esac
+  rel="${dir#tests}"
+  rel="${rel#/}"
+  for ext in js mjs cjs jsx; do
+    printf '%s\n' "$dir/$stem.$ext"
+    if [ "$dir" = tests ] || [ "${dir#tests/}" != "$dir" ]; then
+      printf '%s\n' "src/${rel:+$rel/}$stem.$ext" "${rel:+$rel/}$stem.$ext"
+    fi
+  done
+}
+
+# The source whose twin_names include this test, or empty when none does
+# (assertion-only).
+source_for_test() {
+  local s n
+  while IFS= read -r s; do
+    if [ -f "$s" ] && is_source "$s"; then
+      while IFS= read -r n; do
+        if [ "$n" = "$1" ]; then
+          echo "$s"
+          return
+        fi
+      done < <(twin_names "$s")
+    fi
+  done < <(source_candidates "$1")
   echo ""
 }
 

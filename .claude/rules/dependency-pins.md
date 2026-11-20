@@ -1,0 +1,16 @@
+# Dependency Pins
+
+A dependency held back, overridden or patched in the kit or its test apps
+is a dated exception, so it lasts only as long as its reason.
+
+## The Rule
+
+- A pin is a dependency held below its latest release, overridden to
+  another version, patched, or installed from outside its registry,
+  including in the test apps `tests/run` builds.
+- Every pin lands with its check in `checks/`: an executable script that
+  names the pin and its reason and fails from a revisit date at most 30
+  days out. `bin/_root-tests` runs every check on every `bin/ci`, so the
+  date fires on an unchanged tree.
+- On the revisit date the pin goes if its reason is gone; otherwise the
+  check gets a new date and states the reason as it stands then.

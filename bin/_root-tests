@@ -1,28 +1,37 @@
 #!/usr/bin/env bash
-# Corpus suite. The fingerprint is the whole repo. A match exits green.
-# A green run stores the hash taken after the suite, which does not
-# rewrite source. --force re-runs. --clean removes the sentinel.
+# Corpus suite. Every executable in checks/ runs first, on every call, so a
+# dated check fails on its date even when nothing changed. Then the suite:
+# its fingerprint is the whole repo, and a match exits green. A green run
+# stores the hash taken after the suite, which does not rewrite source.
+# --force re-runs the suite. --clean removes the sentinel. A checks/ path
+# runs just that check.
 #
 # The suite command is tests/run when that file is executable, otherwise
 # bun test inside tests/ when TypeScript tests are present.
 #
-# Usage: bin/_root-tests [--force] [--clean]
+# Usage: bin/_root-tests [--force] [--clean] [checks/<name>]
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
 force=0
 clean=0
+single=""
 for arg in "$@"; do
   case "$arg" in
     --force) force=1 ;;
     --clean) clean=1 ;;
+    checks/*) single="$arg" ;;
     *)
       echo "root-suite: unknown argument: $arg" >&2
       exit 2
       ;;
   esac
 done
+
+if [ -n "$single" ]; then
+  exec "$ROOT/$single"
+fi
 
 branch="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")"
 case "$branch" in
@@ -37,6 +46,20 @@ if [ "$clean" -eq 1 ]; then
   rm -f "$sentinel"
   echo "root-suite: cleaned sentinel for $branch"
   exit 0
+fi
+
+failed=0
+for check in "$ROOT"/checks/*; do
+  if [ ! -f "$check" ] || [ ! -x "$check" ]; then
+    continue
+  fi
+  if ! "$check"; then
+    echo "root-suite: checks/$(basename "$check") failed" >&2
+    failed=1
+  fi
+done
+if [ "$failed" -ne 0 ]; then
+  exit 1
 fi
 
 # shellcheck source=lib/tree-sentinel.sh

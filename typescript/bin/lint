@@ -123,5 +123,5 @@ fi
 if [ "${#md_files[@]}" -eq 0 ]; then
   echo "  ✓ markdownlint (no dirty Markdown files)"
 else
-  "$root/node_modules/.bin/markdownlint-cli2" "${md_files[@]}"
+  markdownlint-cli2 "${md_files[@]}"
 fi

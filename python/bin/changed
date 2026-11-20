@@ -56,13 +56,20 @@ if [ "${1:-}" = "--files" ]; then
   exit 0
 fi
 
+# A source is a .py outside tests/ that is neither a test nor a conftest.py;
+# when src/ exists, only the files under it.
 is_source() {
   case "$1" in
-    tests/* | .venv/*) return 1 ;;
-    test_*.py | */test_*.py) return 1 ;;
-    *.py) return 0 ;;
+    tests/* | .venv/* | test_*.py | */test_*.py | conftest.py | */conftest.py) return 1 ;;
+    *.py) ;;
     *) return 1 ;;
   esac
+  [ ! -d src ] || [ "${1#src/}" != "$1" ]
+}
+
+# Every source has its twin test except a package's __init__.py.
+needs_twin() {
+  [ "$(basename "$1")" != "__init__.py" ]
 }
 
 is_test() {
@@ -111,10 +118,10 @@ missing_mirror=()
 for path in "${files[@]}"; do
   if is_source "$path"; then
     mirror="$(test_for_source "$path")"
-    if [ ! -f "$mirror" ]; then
+    if [ -f "$mirror" ]; then
+      already "$mirror" || tests+=("$mirror")
+    elif needs_twin "$path"; then
       missing_mirror+=("$path → $mirror")
-    elif ! already "$mirror"; then
-      tests+=("$mirror")
     fi
   elif is_test "$path"; then
     if ! already "$path"; then

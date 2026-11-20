@@ -1,23 +1,31 @@
 {
   "permissions": {
-    "allow": ["Bash(bin/*)", "Bash(*/bin/*)", "Bash(tests/run)"],
+    "allow": ["Bash(bin/*)", "Bash(tests/run)"],
     "deny": [
       "Bash(git commit *)",
       "Bash(git rebase *)",
       "Bash(git checkout *)",
       "Bash(git reset *)",
+      "Bash(git restore *)",
       "Bash(git stash *)",
       "Bash(git clean *)",
-      "Bash(git push --force *)",
+      "Bash(git push *--force*)",
       "Bash(git push -f *)",
+      "Bash(git push * -f)",
+      "Bash(git push * -f *)",
+      "Bash(git push * +*)",
       "Bash(git -C * commit *)",
       "Bash(git -C * rebase *)",
       "Bash(git -C * checkout *)",
       "Bash(git -C * reset *)",
+      "Bash(git -C * restore *)",
       "Bash(git -C * stash *)",
       "Bash(git -C * clean *)",
-      "Bash(git -C * push --force *)",
-      "Bash(git -C * push -f *)"
+      "Bash(git -C * push *--force*)",
+      "Bash(git -C * push -f *)",
+      "Bash(git -C * push * -f)",
+      "Bash(git -C * push * -f *)",
+      "Bash(git -C * push * +*)"
     ]
   },
   "hooks": {

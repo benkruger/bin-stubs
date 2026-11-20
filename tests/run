@@ -9,6 +9,10 @@ REPO="$(cd "$HERE/.." && pwd)"
 
 WORK="$(mktemp -d "${TMPDIR:-/tmp}/bin-stubs-tests.XXXXXX")"
 trap 'stop_spin; rm -rf "$WORK"' EXIT
+# A command that fails outside die (set -e) names itself instead of ending
+# the suite silently.
+set -o errtrace
+trap 'echo "FAIL: ${SAY:-suite}: line $LINENO exited $?: $BASH_COMMAND" >&2' ERR
 
 new_repo() {
   local d
@@ -187,6 +191,25 @@ test_starter() {
   expect_ok "$repo/bin/ci"
   assert_eq "$(row_of suite "$(summary)")" "PASS" "starter suite through bin/ci"
 
+  # A check in checks/ runs on every bin/ci, even when the saved pass
+  # matches, so a dated check fails on its date with no change to the tree.
+  local check_probe="$WORK/check-probe"
+  mkdir -p "$repo/checks"
+  cat >"$repo/checks/probe" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+[ ! -e "${PROBE_FILE:?}" ]
+EOF
+  chmod +x "$repo/checks/probe"
+  export PROBE_FILE="$check_probe"
+  expect_ok "$repo/bin/ci"
+  touch "$check_probe"
+  expect_fail "$repo/bin/ci"
+  grep -q "checks/probe failed" "${LAST_LOG}" || die "a failing check did not fail bin/ci"
+  unset PROBE_FILE
+  rm -f "$check_probe"
+  rm -r "$repo/checks"
+
   {
     printf '# Notes\n\n'
     head -c 70000 /dev/zero | tr '\0' 'a'
@@ -240,10 +263,13 @@ test_starter() {
   rm "$repo/notes.md"
 
   cp "$repo/.claude/settings.json" "$repo/settings.json.keep"
-  jq '.permissions.deny -= ["Bash(git reset *)"] | del(.hooks.SessionStart)' \
+  jq '.permissions.deny -= ["Bash(git reset *)", "Bash(git push * -f)"]
+    | .permissions.allow += ["Bash(*/bin/*)"] | del(.hooks.SessionStart)' \
     "$repo/settings.json.keep" >"$repo/.claude/settings.json"
   expect_fail "$repo/tests/run"
   grep -q "does not deny Bash(git reset \*)" "${LAST_LOG}" || die "missing deny not caught"
+  grep -q "does not deny Bash(git push \* -f)" "${LAST_LOG}" || die "missing force-push deny not caught"
+  grep -q "allows a command pattern that starts with a wildcard" "${LAST_LOG}" || die "wildcard allow not caught"
   grep -q "no SessionStart hook runs" "${LAST_LOG}" || die "missing hook not caught"
   mv "$repo/settings.json.keep" "$repo/.claude/settings.json"
 
@@ -275,6 +301,20 @@ test_changed_empty() {
   grep -q "nothing dirty" "${LAST_LOG}" || die "missing nothing-dirty line"
 }
 
+# picomatch 4.0.7 with tests/picomatch-ghsa-fc5q-39xc-vjpf.patch applied,
+# built once per run. vitest and typescript-eslint need picomatch, and no
+# release fixes that advisory yet; checks/picomatch-fix dates this pin.
+fixed_picomatch() {
+  local dir="$WORK/picomatch"
+  if [ ! -d "$dir" ]; then
+    mkdir -p "$dir"
+    (cd "$WORK" && npm pack picomatch@4.0.7 --silent >/dev/null)
+    tar -xzf "$WORK/picomatch-4.0.7.tgz" -C "$dir" --strip-components=1
+    patch -s -p1 -d "$dir" -i "$HERE/picomatch-ghsa-fc5q-39xc-vjpf.patch"
+  fi
+  printf '%s\n' "$dir"
+}
+
 seed_typescript() {
   local app="$1"
   mkdir -p "$app"
@@ -301,6 +341,7 @@ seed_typescript() {
 }
 EOF
   (cd "$app" && npm pkg set "packageManager=npm@$(npm --version)")
+  (cd "$app" && npm pkg set "overrides.picomatch=file:$(fixed_picomatch)")
   cat >"$app/eslint.config.js" <<'EOF'
 import js from "@eslint/js";
 import json from "@eslint/json";
@@ -309,7 +350,7 @@ import tseslint from "typescript-eslint";
 
 export default defineConfig([
   {
-    files: ["**/*.ts"],
+    files: ["**/*.ts", "**/*.tsx"],
     extends: [js.configs.recommended, tseslint.configs.recommended],
   },
   {
@@ -338,6 +379,7 @@ EOF
   "include": ["src"]
 }
 EOF
+  printf '# App\n' >"$app/README.md"
   cat >"$app/src/add.ts" <<'EOF'
 export function add(a: number, b: number): number {
 return a+b
@@ -377,6 +419,7 @@ seed_javascript() {
 }
 EOF
   (cd "$app" && npm pkg set "packageManager=npm@$(npm --version)")
+  printf '# App\n' >"$app/README.md"
   cat >"$app/src/index.js" <<'EOF'
 export function add(a, b) {
 return a+b
@@ -432,6 +475,7 @@ seed_rails() {
   mkdir -p "$app"
   (cd "$app" && ruby -e 'print RUBY_VERSION') >"$app/.ruby-version"
   mkdir -p "$app/app/models" "$app/config" "$app/test/models"
+  printf '# App\n' >"$app/README.md"
   cat >"$app/.gitignore" <<'EOF'
 /coverage/
 /log/
@@ -738,6 +782,7 @@ test_language() {
   formatted "$app" "$lang" || die "$lang ci left a committed file unformatted"
   git -C "$repo" commit -q -a -m "$lang formatted"
   whole_app "$app" "$lang"
+  source_rules "$app" "$lang"
 
   pin="$app/$(pin_file_of "$lang")"
   cp "$pin" "$pin.keep"
@@ -844,6 +889,56 @@ whole_app() {
   grep -qF "no mirrored test for $source_plant" "${LAST_LOG}" || die "$lang ci did not test a committed source"
   git -C "$app" rm -qf -- "$source_plant"
   git -C "$app" commit -q -m "source plant gone"
+}
+
+# Plants files the source and twin rules must get right, runs the gates,
+# then removes them: a TypeScript declaration and a .tsx twin, a JavaScript
+# .spec.js twin and a .cjs source held through a test-only edit, and a
+# Python package __init__.py and a script outside src/.
+source_rules() {
+  local app="$1" lang="$2"
+  case "$lang" in
+    typescript)
+      printf 'export type Version = string;\n' >"$app/src/version.d.ts"
+      printf '%s\n' 'export function button(): string {' '  return "b";' '}' >"$app/src/Button.tsx"
+      printf '%s\n' 'import { expect, test } from "vitest";' 'import { button } from "../src/Button";' '' \
+        'test("button", () => {' '  expect(button()).toBe("b");' '});' >"$app/tests/Button.test.tsx"
+      expect_ok "$app/bin/changed"
+      expect_ok "$app/bin/ci" --force
+      rm "$app/src/version.d.ts" "$app/src/Button.tsx" "$app/tests/Button.test.tsx"
+      ;;
+    javascript)
+      printf '%s\n' 'export function mul(a, b) {' '  return a * b;' '}' >"$app/src/mul.js"
+      printf '%s\n' 'import assert from "node:assert/strict";' 'import test from "node:test";' \
+        'import { mul } from "./mul.js";' '' 'test("mul", () => {' '  assert.equal(mul(2, 3), 6);' '});' \
+        >"$app/src/mul.spec.js"
+      expect_ok "$app/bin/changed"
+      rm "$app/src/mul.js" "$app/src/mul.spec.js"
+      printf '%s\n' 'module.exports = {' '  one() {' '    return 1;' '  },' '  two() {' '    return 2;' '  },' '};' \
+        >"$app/src/legacy.cjs"
+      printf '%s\n' 'import assert from "node:assert/strict";' 'import test from "node:test";' \
+        'import legacy from "../src/legacy.cjs";' '' 'test("one", () => {' '  assert.equal(legacy.one(), 1);' '});' \
+        >"$app/tests/legacy.test.js"
+      git -C "$app" add -- src/legacy.cjs tests/legacy.test.js
+      git -C "$app" commit -q -m "legacy"
+      printf '// edited\n' >>"$app/tests/legacy.test.js"
+      expect_fail "$app/bin/changed"
+      grep -qF "src/legacy.cjs" "${LAST_LOG}" || die "$lang test-only edit did not hold its .cjs source"
+      git -C "$app" rm -qf -- src/legacy.cjs tests/legacy.test.js
+      git -C "$app" commit -q -m "legacy gone"
+      ;;
+    python)
+      mkdir -p "$app/src/pkg" "$app/tests/pkg" "$app/scripts"
+      : >"$app/src/pkg/__init__.py"
+      printf '%s\n' 'def mul(a: int, b: int) -> int:' '    return a * b' >"$app/src/pkg/mul.py"
+      printf '%s\n' 'from pkg.mul import mul' '' '' 'def test_mul() -> None:' '    assert mul(2, 3) == 6' \
+        >"$app/tests/pkg/test_mul.py"
+      printf 'print("seed")\n' >"$app/scripts/seed.py"
+      expect_ok "$app/bin/changed"
+      expect_ok "$app/bin/ci" --force
+      rm -r "$app/src/pkg" "$app/tests/pkg" "$app/scripts"
+      ;;
+  esac
 }
 
 # Rewrites the source so its test runs every function and line but only one

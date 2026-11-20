@@ -75,13 +75,21 @@ owned_change() {
   return 0
 }
 
+# A source is a .py outside tests/ that is neither a test nor a conftest.py;
+# when src/ exists, only the files under it, the tree --cov measures.
 is_source() {
   case "$1" in
-    tests/* | .venv/*) return 1 ;;
-    test_*.py | */test_*.py) return 1 ;;
-    *.py) return 0 ;;
+    tests/* | .venv/* | test_*.py | */test_*.py | conftest.py | */conftest.py) return 1 ;;
+    *.py) ;;
     *) return 1 ;;
   esac
+  [ ! -d src ] || [ "${1#src/}" != "$1" ]
+}
+
+# Every source has its twin test except a package's __init__.py, which is
+# still held to 100% coverage.
+needs_twin() {
+  [ "$(basename "$1")" != "__init__.py" ]
 }
 
 is_test() {
@@ -168,7 +176,7 @@ else
     if is_source "$path"; then
       already "$path" || required+=("$path")
       mirror="$(test_for_source "$path")"
-      if [ ! -f "$mirror" ]; then
+      if [ ! -f "$mirror" ] && needs_twin "$path"; then
         missing_mirror+=("$path → $mirror")
       fi
     elif is_test "$path"; then
@@ -191,7 +199,7 @@ files = data.get("files", {})
 info = files.get(want)
 if info is None:
     for key, val in files.items():
-        if key.endswith("/" + want) or key.endswith(want):
+        if key.endswith("/" + want):
             info = val
             break
 if info is None:

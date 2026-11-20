@@ -195,8 +195,9 @@ SETTINGS=.claude/settings.json
 REQUIRED_ALLOW=("Bash(bin/*)")
 REQUIRED_DENY=(
   "Bash(git commit *)" "Bash(git rebase *)" "Bash(git checkout *)"
-  "Bash(git reset *)" "Bash(git stash *)" "Bash(git clean *)"
-  "Bash(git push --force *)" "Bash(git push -f *)"
+  "Bash(git reset *)" "Bash(git restore *)" "Bash(git stash *)"
+  "Bash(git clean *)" "Bash(git push *--force*)" "Bash(git push -f *)"
+  "Bash(git push * -f)" "Bash(git push * -f *)" "Bash(git push * +*)"
 )
 REQUIRED_HOOKS=(PreToolUse:require-bin SessionStart:session-start)
 
@@ -211,6 +212,9 @@ else
     jq -e --arg e "$entry" ".permissions.allow // [] | index(\$e) != null" "$SETTINGS" >/dev/null ||
       fail "$SETTINGS: does not allow $entry"
   done
+  # A leading wildcard also matches absolute paths such as /usr/bin/git.
+  jq -e '[.permissions.allow // [] | .[] | select(startswith("Bash(*"))] | length == 0' "$SETTINGS" >/dev/null ||
+    fail "$SETTINGS: allows a command pattern that starts with a wildcard"
   for entry in "${REQUIRED_DENY[@]}"; do
     jq -e --arg e "$entry" ".permissions.deny // [] | index(\$e) != null" "$SETTINGS" >/dev/null ||
       fail "$SETTINGS: does not deny $entry"

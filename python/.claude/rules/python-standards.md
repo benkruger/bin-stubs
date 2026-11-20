@@ -4,9 +4,13 @@ The Python app is held by Ruff and pytest at full strength.
 
 ## The Rule
 
-- Every source `<dir>/<name>.py` (or `src/<dir>/<name>.py`) has its twin
-  `tests/<dir>/test_<name>.py`. `bin/changed` fails a changed source with no
-  twin; `bin/ci` fails any source with none.
+- A source is a `.py` file outside `tests/` that is neither a `test_*.py`
+  nor a `conftest.py`; when `src/` exists, only the files under it, the tree
+  coverage measures.
+- Every source `<dir>/<name>.py` (or `src/<dir>/<name>.py`) other than a
+  package's `__init__.py` has its twin `tests/<dir>/test_<name>.py`.
+  `bin/changed` fails a changed source with no twin; `bin/ci` fails any
+  source with none.
 - Every source is at 100% coverage. `bin/ci` checks every source;
   `bin/changed` checks the changed ones, and a changed test holds its source
   to the same bar.
