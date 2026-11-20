@@ -278,9 +278,11 @@ guards, so a broken standard fails the gate like a failing test.
   matches its body.
 - `CLAUDE.md` is over 400 lines or 12,000 characters, lacks one leading H1,
   or points at the rules.
-- Any file silences a linter, `biome.json` turns rules off, an ESLint config
-  sets a rule to `off` or `warn`, `.rubocop.yml` disables a cop, or
-  `Cargo.toml` allows a lint.
+- Any file silences a linter, or a lint configuration file holds a setting
+  outside its tool's list. Biome, RuboCop, Ruff, Cargo's lint levels,
+  swift-format's rules and `.shellcheckrc` each have a list of allowed
+  settings; an ESLint config may not set rules itself; markdownlint and
+  Brakeman take no config file at all.
 - A bash script has a shellcheck finding or is not formatted by
   `shfmt -i 2 -ci`, or an entry point is not executable or does not start
   with `set -euo pipefail`.

@@ -64,27 +64,128 @@ for path in "${files[@]}"; do
   done < <(grep -nIE "$BANNED_SUPPRESSIONS" "$path" | cut -d: -f1 || true)
 done
 
+# Lint configuration: each file holds only the settings on its tool's list
+# below, so no setting can turn a rule off or down, known or not.
+BIOME_KEYS="[\"\$schema\", \"vcs\", \"files\", \"formatter\", \"assist\", \"linter\"]"
+# A TOML key line: a bare or quoted key, possibly dotted, then =.
+TOML_KEY='^[[:space:]]*("[^"]*"|[A-Za-z0-9_-])[^=]*='
+RUBOCOP_KEYS='plugins require AllCops'
+RUBOCOP_ALLCOPS_KEYS='NewCops SuggestExtensions TargetRubyVersion'
+RUFF_KEYS=' target-version line-length indent-width src '
+RUFF_LINT_KEYS=' extend-select '
+LINT_LEVELS=' warn deny forbid '
+SHELLCHECKRC_KEYS='source-path|external-sources|enable'
+
+biome_ok() {
+  jq -e --argjson keys "$BIOME_KEYS" '
+    (keys - $keys | length == 0)
+    and ((.linter // {}) | (keys - ["enabled"] | length == 0)
+      and ((has("enabled") | not) or .enabled == true))' "$1" >/dev/null 2>&1
+}
+
+eslint_ok() {
+  ! grep -qE "(^|[^A-Za-z0-9_\$])[\"']?(rules|linterOptions)[\"']?[[:space:]]*:" "$1"
+}
+
+rubocop_ok() {
+  ruby -ryaml -e '
+    config = YAML.safe_load(File.read(ARGV[0])) || {}
+    exit 1 unless config.is_a?(Hash) && (config.keys - ARGV[1].split).empty?
+    all = config.fetch("AllCops", {}) || {}
+    exit 1 unless all.is_a?(Hash) && (all.keys - ARGV[2].split).empty?
+    exit 1 if all.key?("NewCops") && all["NewCops"] != "enable"
+  ' "$1" "$RUBOCOP_KEYS" "$RUBOCOP_ALLCOPS_KEYS" 2>/dev/null
+}
+
+# Cargo.toml: every lint level under [lints] or [workspace.lints] is warn,
+# deny or forbid; clippy runs with warnings as errors.
+cargo_ok() {
+  awk -v levels="$LINT_LEVELS" -v keyline="$TOML_KEY" '
+    /^[[:space:]]*\[/ { section = $0; gsub(/[][[:space:]]/, "", section); next }
+    $0 ~ keyline {
+      key = $0; sub(/[[:space:]]*=.*/, "", key); gsub(/[[:space:]"]/, "", key)
+      value = $0; sub(/^[^=]*=/, "", value)
+      full = section == "" ? key : section "." key
+      if (full !~ /^(workspace\.)?lints(\.|$)/) next
+      if (full ~ /^lints\.workspace$/ && value ~ /true/) next
+      if (!match(value, /"[a-z]+"/)) { bad = 1; next }
+      level = substr(value, RSTART + 1, RLENGTH - 2)
+      if (index(levels, " " level " ") == 0) bad = 1
+    }
+    END { exit bad }' "$1"
+}
+
+# Ruff, in pyproject.toml under [tool.ruff] or in ruff.toml: the top level
+# holds only RUFF_KEYS, [lint] only RUFF_LINT_KEYS, and [format] anything.
+ruff_ok() {
+  awk -v prefix="$2" -v top="$RUFF_KEYS" -v lint="$RUFF_LINT_KEYS" -v keyline="$TOML_KEY" '
+    /^[[:space:]]*\[/ { section = $0; gsub(/[][[:space:]]/, "", section); next }
+    $0 ~ keyline {
+      key = $0; sub(/[[:space:]]*=.*/, "", key); gsub(/[[:space:]"]/, "", key)
+      full = section == "" ? key : section "." key
+      if (prefix != "") {
+        if (index(full, prefix ".") != 1) next
+        full = substr(full, length(prefix) + 2)
+      }
+      if (full ~ /^format(\.|$)/) next
+      if (full ~ /^lint\./) {
+        rest = substr(full, 6)
+        if (index(lint, " " rest " ") == 0) bad = 1
+        next
+      }
+      if (index(top, " " full " ") == 0) bad = 1
+    }
+    END { exit bad }' "$1"
+}
+
+swift_format_ok() {
+  jq -e '(.rules // {}) | to_entries | all(.value == true)' "$1" >/dev/null 2>&1
+}
+
+shellcheckrc_ok() {
+  ! grep -vE "^[[:space:]]*(#|$)|^[[:space:]]*($SHELLCHECKRC_KEYS)=" "$1" | grep -q .
+}
+
 for path in "${files[@]}"; do
   case "$(basename "$path")" in
     biome.json | biome.jsonc)
-      if grep -qE '"(rules|overrides)"[[:space:]]*:|"enabled"[[:space:]]*:[[:space:]]*false' "$path"; then
-        fail "$path: turns Biome rules off or overrides them"
-      fi
+      biome_ok "$path" ||
+        fail "$path: Biome settings outside its list (\$schema, vcs, files, formatter, assist, linter.enabled true)"
       ;;
     eslint.config.js | eslint.config.mjs | eslint.config.cjs | eslint.config.ts | eslint.config.mts | eslint.config.cts)
-      if grep -qE "[\"'](off|warn)[\"']|linterOptions" "$path"; then
-        fail "$path: turns ESLint rules off or down to warnings"
-      fi
+      eslint_ok "$path" ||
+        fail "$path: sets ESLint rules or linterOptions; rules come only from the shared configs it extends"
       ;;
     .rubocop.yml)
-      if grep -qE '^[[:space:]]*Enabled:[[:space:]]*false' "$path"; then
-        fail "$path: disables a RuboCop cop"
+      if ! command -v ruby >/dev/null 2>&1; then
+        fail "$path: ruby is not installed to read it"
+      elif ! rubocop_ok "$path"; then
+        fail "$path: RuboCop settings outside its list ($RUBOCOP_KEYS; AllCops: $RUBOCOP_ALLCOPS_KEYS, NewCops enable)"
       fi
       ;;
     Cargo.toml)
-      if grep -qE '=[[:space:]]*"allow"|level[[:space:]]*=[[:space:]]*"allow"' "$path"; then
-        fail "$path: allows a lint"
-      fi
+      cargo_ok "$path" || fail "$path: a lint level other than warn, deny or forbid"
+      ;;
+    pyproject.toml)
+      ruff_ok "$path" tool.ruff ||
+        fail "$path: Ruff settings outside its list (top:$RUFF_KEYS; lint:$RUFF_LINT_KEYS; format)"
+      ;;
+    ruff.toml | .ruff.toml)
+      ruff_ok "$path" "" ||
+        fail "$path: Ruff settings outside its list (top:$RUFF_KEYS; lint:$RUFF_LINT_KEYS; format)"
+      ;;
+    .swift-format)
+      swift_format_ok "$path" || fail "$path: turns a swift-format rule off"
+      ;;
+    .shellcheckrc)
+      shellcheckrc_ok "$path" ||
+        fail "$path: holds a directive other than source-path, external-sources or enable"
+      ;;
+    .markdownlint.json | .markdownlint.jsonc | .markdownlint.yaml | .markdownlint.yml | .markdownlint.cjs | .markdownlint.mjs | .markdownlintrc | .markdownlint-cli2.jsonc | .markdownlint-cli2.yaml | .markdownlint-cli2.cjs | .markdownlint-cli2.mjs)
+      fail "$path: markdownlint runs with its default rules, so it has no config file"
+      ;;
+    brakeman.ignore)
+      fail "$path: Brakeman ignores no warning"
       ;;
   esac
 done

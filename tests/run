@@ -235,15 +235,41 @@ EOF
   grep -q "probe.py:1: suppression comment" "${LAST_LOG}" || die "suppression ban not enforced"
   rm "$probe"
 
-  printf '{\n  "linter": { "%s": {} }\n}\n' "rules" >"$repo/biome.json"
-  expect_fail "$repo/tests/run"
-  grep -q "biome.json: turns Biome rules off" "${LAST_LOG}" || die "Biome config not checked"
-  rm "$repo/biome.json"
+  # Lint configuration on its tool's list passes; any other setting fails.
+  local cfg="$repo/cfg" msg
+  mkdir -p "$cfg/ok" "$cfg/bad"
+  printf '{ "%sschema": "x", "formatter": { "indentStyle": "space" }, "linter": { "enabled": true } }\n' "\$" >"$cfg/ok/biome.json"
+  printf 'export default [{ files: ["**/*.ts"], extends: [base] }];\n' >"$cfg/ok/eslint.config.js"
+  printf 'AllCops:\n  NewCops: enable\n  SuggestExtensions: false\n' >"$cfg/ok/.rubocop.yml"
+  printf '[package]\nname = "app"\n\n[lints.clippy]\npedantic = { level = "deny", priority = -1 }\n' >"$cfg/ok/Cargo.toml"
+  printf '[project]\nname = "app"\n\n[tool.ruff]\nline-length = 100\n\n[tool.ruff.lint]\nextend-select = ["ALL"]\n' >"$cfg/ok/pyproject.toml"
+  printf '{ "lineLength": 100, "rules": { "AlwaysUseLowerCamelCase": true } }\n' >"$cfg/ok/.swift-format"
+  printf 'source-path=SCRIPTDIR\n' >"$cfg/ok/.shellcheckrc"
+  expect_ok "$repo/tests/run"
+  rm -r "$cfg/ok"
 
-  printf 'export default [{ rules: { "no-unused-vars": "%s" } }];\n' "off" >"$repo/eslint.config.js"
+  printf '{ "linter": { "enabled": true, "%s": {} } }\n' rules >"$cfg/bad/biome.json"
+  printf 'export default [{ %s: { "no-console": 0 } }];\n' rules >"$cfg/bad/eslint.config.js"
+  printf 'Style/StringLiterals:\n  EnforcedStyle: double_quotes\n' >"$cfg/bad/.rubocop.yml"
+  printf '[lints.clippy]\nall = "%s"\n' allow >"$cfg/bad/Cargo.toml"
+  printf '[tool.ruff.lint.per-file-ignores]\n"tests/*" = ["S101"]\n' >"$cfg/bad/pyproject.toml"
+  printf '{ "rules": { "AlwaysUseLowerCamelCase": false } }\n' >"$cfg/bad/.swift-format"
+  printf 'disable=SC2034\n' >"$cfg/bad/.shellcheckrc"
+  printf '{ "default": true }\n' >"$cfg/bad/.markdownlint.json"
+  printf '{}\n' >"$cfg/bad/brakeman.ignore"
   expect_fail "$repo/tests/run"
-  grep -q "eslint.config.js: turns ESLint rules off" "${LAST_LOG}" || die "ESLint config not checked"
-  rm "$repo/eslint.config.js"
+  for msg in "biome.json: Biome settings outside its list" \
+    "eslint.config.js: sets ESLint rules or linterOptions" \
+    ".rubocop.yml: RuboCop settings outside its list" \
+    "Cargo.toml: a lint level other than warn, deny or forbid" \
+    "pyproject.toml: Ruff settings outside its list" \
+    ".swift-format: turns a swift-format rule off" \
+    ".shellcheckrc: holds a directive other than" \
+    ".markdownlint.json: markdownlint runs with its default rules" \
+    "brakeman.ignore: Brakeman ignores no warning"; do
+    grep -qF "cfg/bad/$msg" "${LAST_LOG}" || die "lint configuration not checked: $msg"
+  done
+  rm -r "$cfg"
 
   {
     printf '# Long\n\n'
