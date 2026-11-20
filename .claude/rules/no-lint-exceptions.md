@@ -1,12 +1,12 @@
 # No Lint Exceptions
 
-The kit installs gates that ban silenced lint, so the kit itself carries no
-silenced lint anywhere.
+This repo holds itself to `starter/.claude/rules/no-lint-exceptions.md`,
+which `starter/tests/guards` enforces here too.
 
 ## The Rule
 
-- No file in the repo contains a suppression comment or attribute for any
-  tool the kit drives. `starter/tests/guards` holds the banned list.
-- A lint finding is fixed in the code it flags.
-- Rules and docs describe the banned tokens without spelling them out, so
-  the guard never trips on its own description.
+- A rule or doc names a banned suppression token by what it does, never by
+  spelling it out, so `starter/tests/guards` never fails on its own
+  description; a check builds the token at run time (`guard-tests.md`).
+  Trigger: any rule, doc or check that refers to a suppression.
+<!-- audited: d38b4ba5988a -->

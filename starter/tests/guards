@@ -143,10 +143,22 @@ for path in "${scripts[@]+"${scripts[@]}"}"; do
     fail "$path: first command is not set -euo pipefail"
 done
 
+# A file's text without its trailing audit stamp line.
+unstamped() {
+  perl -0777 -pe 's/\n<!-- audited: [0-9a-f]{12} -->\s*\z/\n/' "$1"
+}
+
+# The stamp bin/stamp-rules writes: the first 12 hex chars of sha256 over the
+# body above the stamp, trailing whitespace normalized to one final newline.
+stamp_of() {
+  perl -0777 -pe 's/\n<!-- audited: [0-9a-f]{12} -->\s*\z/\n/; s/\s*\z/\n/' "$1" |
+    shasum -a 256 | cut -c1-12
+}
+
 check_markdown() {
   local path="$1" max_lines="$2" max_chars="$3" lines chars h1s
-  lines="$(wc -l <"$path" | tr -d ' ')"
-  chars="$(wc -c <"$path" | tr -d ' ')"
+  lines="$(unstamped "$path" | wc -l | tr -d ' ')"
+  chars="$(unstamped "$path" | wc -c | tr -d ' ')"
   [ "$lines" -le "$max_lines" ] || fail "$path: $lines lines (cap $max_lines)"
   [ "$chars" -le "$max_chars" ] || fail "$path: $chars characters (cap $max_chars)"
   [ "$(grep -vE '^[[:space:]]*$' "$path" | head -n 1 | cut -c1-2)" = "# " ] ||
@@ -170,6 +182,13 @@ for path in "${rules[@]+"${rules[@]}"}"; do
   [ "$(head -n 1 "$path")" != "---" ] || fail "$path: frontmatter"
   if grep -qiE "$NARRATIVE_HEADING" "$path"; then
     fail "$path: narrative heading"
+  fi
+  stamp="$(grep -vE '^[[:space:]]*$' "$path" | tail -n 1 |
+    sed -nE 's/^[[:space:]]*<!-- audited: ([0-9a-f]{12}) -->[[:space:]]*$/\1/p')"
+  if [ -z "$stamp" ]; then
+    fail "$path: no audit stamp (commit it through bin/commit)"
+  elif [ "$stamp" != "$(stamp_of "$path")" ]; then
+    fail "$path: audit stamp does not match its body (commit it through bin/commit)"
   fi
   while IFS= read -r ref; do
     [ -f ".claude/rules/$ref" ] || [ "$ref" = "CLAUDE.md" ] || [ "$ref" = "README.md" ] ||

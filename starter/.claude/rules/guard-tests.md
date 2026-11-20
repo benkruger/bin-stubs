@@ -6,15 +6,15 @@ standard breaks, and `bin/ci` runs it.
 ## The Rule
 
 - `tests/run` is the repo-level suite `bin/ci` runs. It runs `tests/guards`,
-  which checks the file-size cap, suppression comments, lint configuration,
-  every bash script (shellcheck, shfmt, strict mode), every Markdown file
-  (markdownlint with its default rules), the size and shape of `CLAUDE.md`
-  and every rule, and `.claude/settings.json`: it allows `Bash(bin/*)`,
-  denies destructive git, and wires both hooks in `.claude/hooks/`.
-- `tests/run` pins every cap in `tests/guards`: rules at 40 lines and 8,000
-  characters, `CLAUDE.md` at 400 lines and 12,000 characters, authored files
-  at 65,536 bytes. Changing a cap edits both files in the same change.
-- Every rule leads with one H1, has no frontmatter and no "Why" or
-  "History" heading, reads in the present tense, and cites only rules that
-  exist. `CLAUDE.md` never points at the rules.
+  which checks the file-size cap (`authored-file-size.md`), suppression
+  comments and lint configuration (`no-lint-exceptions.md`), every bash
+  script (`script-standards.md`), every Markdown file (markdownlint with its
+  default rules), `CLAUDE.md` (`claude-md.md`), every rule's shape and audit
+  stamp (`rule-authoring.md`), and `.claude/settings.json`: it allows
+  `Bash(bin/*)`, denies destructive git, and wires both hooks in
+  `.claude/hooks/`.
+- `tests/run` pins every cap in `tests/guards` (`authored-file-size.md`,
+  `claude-md.md`, `rule-authoring.md`). Changing a cap edits both files in
+  the same change.
 - A new standard lands with its check in the same change.
+<!-- audited: 994a7d1a2dc5 -->

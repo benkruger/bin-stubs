@@ -8,7 +8,9 @@
   run `bin/ci` before every commit.
 - Run scripts by their relative path (`bin/ci`, `tests/run`), never an
   absolute one.
-- Branch names have no `/`; flow-pro rejects them.
+- Commits here go through `bin/commit <branch> <msgfile>`, not
+  `flow-pro commit`.
+- Branch names have no `/`; `bin/commit` rejects them.
 - A branch with one commit lands on `main` by fast-forward
-  (`git merge --ff-only <branch>`, then `git push`); flow-pro already gated
-  that commit.
+  (`git merge --ff-only <branch>`, then `git push`); `bin/commit` already
+  gated that commit.

@@ -15,7 +15,10 @@ strength.
   counts only those files; `bin/changed` sets it.
 - Ruby runs the suite with warnings on; a warning from the app's own code
   fails it.
-- RuboCop autocorrects, then any offense left fails. Brakeman fails on any
-  warning. Neither is configured off (`no-lint-exceptions.md`).
+- RuboCop autocorrects, then any offense left fails `bin/lint`, and no cop
+  is turned off (`no-lint-exceptions.md`). Brakeman fails `bin/lint` on any
+  warning.
 - `bin/build` eager-loads the app with Zeitwerk.
 - `.ruby-version` pins Ruby; `bin/ci` fails unless that version is active.
+- Trigger: any change to a Rails `bin/` script or `test/test_helper.rb`.
+<!-- audited: aa601a4c2d85 -->

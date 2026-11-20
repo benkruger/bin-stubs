@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+# bin/stamp-rules — mint or refresh the audited-hash stamp on rule files.
+# Usage: bin/stamp-rules [file ...]  (no args: every .claude/rules/**/*.md)
+# The stamp is the file's last line, `<!-- audited: <hex12> -->`, hex12 being
+# the first 12 hex chars of sha256 over the canonical body — everything above
+# the stamp with trailing whitespace normalized to one final newline — the
+# exact contract tests/guards verifies. bin/commit runs this once its rule
+# review passes; the script computes a stamp, it does not review.
+set -euo pipefail
+root="$(cd "$(dirname "$0")/.." && pwd)"
+
+stamp_one() {
+  f="$1"
+  tmp="$(mktemp)"
+  perl -0777 -pe 's/\n<!-- audited: [0-9a-f]{12} -->\s*\z/\n/; s/\s*\z/\n/' \
+    "$f" >"$tmp"
+  h="$(shasum -a 256 "$tmp" | cut -c1-12)"
+  printf '<!-- audited: %s -->\n' "$h" >>"$tmp"
+  cat "$tmp" >"$f"
+  rm -f "$tmp"
+}
+
+if [ "$#" -gt 0 ]; then
+  for f in "$@"; do
+    stamp_one "$f"
+  done
+else
+  while IFS= read -r -d '' f; do
+    stamp_one "$f"
+  done < <(find "$root/.claude/rules" -name '*.md' -print0)
+fi

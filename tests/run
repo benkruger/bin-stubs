@@ -167,8 +167,16 @@ test_hooks() {
     assert_rc 2 "require-bin should block: $cmd"
     grep -q "Blocked: call the bin/ script" "${LAST_LOG}" || die "no block message for: $cmd"
   done
+  for cmd in "git commit -m x" "cd app && git commit -am x" \
+    "git -C app commit -m x" "git -c user.name=x commit" "'git' commit -m x" \
+    "sh -c \"git commit -m x\"" "GIT_DIR=. /usr/bin/git commit"; do
+    hook_on "$cmd"
+    assert_rc 2 "require-bin should block: $cmd"
+    grep -q "Blocked: commit with bin/commit" "${LAST_LOG}" || die "no commit block message for: $cmd"
+  done
   for cmd in "bin/test src/add.ts" "typescript/bin/ci" "git status" \
-    "bundle exec rails runner 1" "npm test" "ls -la"; do
+    "bundle exec rails runner 1" "npm test" "ls -la" "git log --grep commit" \
+    "bin/commit main /tmp/flow-commit-msg.abc123"; do
     hook_on "$cmd"
     assert_rc 0 "require-bin should allow: $cmd"
   done
@@ -245,6 +253,16 @@ EOF
   grep -q "long.md: 47 lines (cap 40)" "${LAST_LOG}" || die "rule cap not enforced"
   rm "$repo/.claude/rules/long.md"
 
+  printf '# Probe\n\nA probe rule.\n' >"$repo/.claude/rules/probe.md"
+  expect_fail "$repo/tests/run"
+  grep -q "probe.md: no audit stamp" "${LAST_LOG}" || die "missing stamp not caught"
+  expect_ok "$repo/bin/stamp-rules" "$repo/.claude/rules/probe.md"
+  expect_ok "$repo/tests/run"
+  perl -pi -e 's/A probe rule/A changed rule/' "$repo/.claude/rules/probe.md"
+  expect_fail "$repo/tests/run"
+  grep -q "probe.md: audit stamp does not match its body" "${LAST_LOG}" || die "stale stamp not caught"
+  rm "$repo/.claude/rules/probe.md"
+
   printf '%s\n' '#!/usr/bin/env bash' 'echo "loose"' >"$repo/bin/loose"
   chmod +x "$repo/bin/loose"
   expect_fail "$repo/tests/run"
@@ -278,6 +296,230 @@ EOF
   chmod +x "$repo/tests/guards"
   expect_fail "$repo/tests/run"
   grep -q "does not pin MAX_AUTHORED_BYTES=65536" "${LAST_LOG}" || die "raised cap not caught"
+}
+
+# A stand-in claude for bin/commit's rule review. The auditor answers
+# FAKE_AUDIT (a findings array, or "none" for no answer), the verifier
+# FAKE_VERIFY, and the fixer returns FAKE_FIX for the audited files: "good"
+# turns BAD into GOOD, "grow" pushes them past the rule bounds, "outside"
+# rewrites notes.md instead.
+fake_claude() {
+  mkdir -p "$1"
+  cat >"$1/claude" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+prompt="$(cat)"
+case "$prompt" in
+  *"You are the rule-fixer."*)
+    echo "fix $*" >>"$FAKE_CLAUDE_LOG"
+    files='[]'
+    while IFS= read -r f; do
+      case "${FAKE_FIX:-}" in
+        good) text="$(perl -pe 's/BAD/GOOD/' "$f")" ;;
+        grow) text="$(cat "$f" && for _ in $(seq 1 50); do echo "- more"; done)" ;;
+        outside)
+          f=notes.md
+          text="replaced"
+          ;;
+        *) continue ;;
+      esac
+      files="$(jq -c --arg p "$f" --arg c "$text"$'\n' '. + [{path: $p, content: $c}]' <<<"$files")"
+    done < <(awk '/^## Audited files$/ { on = 1; next } /^## / { on = 0 }
+      on && /^- / { print substr($0, 3) }' <<<"$prompt")
+    printf '{"type":"result","is_error":false,"structured_output":{"files":%s}}\n' "$files"
+    ;;
+  *"verify-only pass"*)
+    echo "verify $*" >>"$FAKE_CLAUDE_LOG"
+    printf '{"type":"result","is_error":false,"structured_output":{"findings":%s}}\n' "${FAKE_VERIFY:-[]}"
+    ;;
+  *)
+    echo "audit $*" >>"$FAKE_CLAUDE_LOG"
+    if [ "${FAKE_AUDIT:-}" = none ]; then
+      echo '{"type":"result","is_error":false}'
+    else
+      printf '{"type":"result","is_error":false,"structured_output":{"findings":%s}}\n' "${FAKE_AUDIT:-[]}"
+    fi
+    ;;
+esac
+EOF
+  chmod +x "$1/claude"
+}
+
+commit_json() { jq -r "$1" "${LAST_LOG}"; }
+
+# The committed repo every bin/commit case copies: the starter, bin/ and a
+# notes.md, pushed to its own bare origin.
+commit_base() {
+  local base="$WORK/commit-base" repo
+  repo="$(new_repo)"
+  copy_dir "$REPO/starter" "$repo"
+  copy_dir "$REPO/bin" "$repo/bin"
+  printf '# Notes\n' >"$repo/notes.md"
+  git -C "$repo" add -A
+  git -C "$repo" commit -q -m starter
+  mkdir -p "$base"
+  mv "$repo" "$base/repo"
+  git init -q --bare "$base/origin.git"
+  git -C "$base/repo" push -q "$base/origin.git" main
+}
+
+# Starts a case on a fresh copy of the base repo and its origin, so no case
+# sees what another one left behind.
+commit_case() {
+  local dir
+  dir="$(mktemp -d "$WORK/commit-case.XXXXXX")"
+  cp -R "$WORK/commit-base/repo" "$dir/repo"
+  cp -R "$WORK/commit-base/origin.git" "$dir/origin.git"
+  repo="$dir/repo"
+  origin="$dir/origin.git"
+  rule="$repo/.claude/rules/probe.md"
+  KEEP="$repo"
+  git -C "$repo" remote add origin "$origin"
+}
+
+# Runs the case's bin/commit with the stand-in claude first on PATH:
+# commit [VAR=value ...] -- [branch msgfile]
+commit() {
+  local vars=()
+  while [ "$#" -gt 0 ] && [ "$1" != "--" ]; do
+    vars+=("$1")
+    shift
+  done
+  [ "$#" -eq 0 ] || shift
+  : >"$CLAUDE_LOG"
+  run_log env PATH="$FAKE_CLAUDE:$PATH" FAKE_CLAUDE_LOG="$CLAUDE_LOG" \
+    ${vars[@]+"${vars[@]}"} "$repo/bin/commit" "$@"
+}
+
+# The claude sessions the last bin/commit ran, in order.
+sessions() { cut -d' ' -f1 "$CLAUDE_LOG" | tr '\n' ' '; }
+
+test_commit() {
+  say "commit"
+  local repo origin rule msg empty finding sha before marker
+  FAKE_CLAUDE="$WORK/fake-claude"
+  CLAUDE_LOG="$WORK/claude.log"
+  fake_claude "$FAKE_CLAUDE"
+  commit_base
+  msg="$(mktemp /tmp/flow-commit-msg.XXXXXX)"
+  empty="$(mktemp /tmp/flow-commit-msg.XXXXXX)"
+  printf '  Add notes  \n\n' >"$msg"
+  printf '  \n' >"$empty"
+  finding='[{"file":".claude/rules/probe.md","requirement":"r","offending":"BAD","fix":"say GOOD"}]'
+
+  commit_case
+  commit --
+  assert_rc 1 "bin/commit with no arguments"
+  grep -qx "usage: bin/commit <branch> <msgfile>" "${LAST_LOG}" || die "no usage line"
+  commit -- a/b "$msg"
+  assert_rc 1 "a branch with a slash"
+  grep -qx "unsafe branch: a/b" "${LAST_LOG}" || die "a slashed branch was not refused"
+  printf 'x\n' >"$WORK/invented-msg"
+  commit -- main "$WORK/invented-msg"
+  assert_rc 1 "an invented message file"
+  assert_eq "$(commit_json .step)" "message_path" "an invented message file"
+  commit -- main /tmp/flow-commit-msg.XXXXXX
+  assert_eq "$(commit_json .step)" "message_path" "the mktemp template"
+  commit -- main "$empty"
+  assert_eq "$(commit_json .step)" "message_missing" "an empty message"
+
+  commit_case
+  commit -- main "$msg"
+  assert_rc 1 "a clean tree"
+  assert_eq "$(commit_json .step)" "empty" "a clean tree"
+
+  commit_case
+  before="$(git -C "$repo" rev-parse HEAD)"
+  printf '%s\n' '# Notes' '' '#Heading without a space' >"$repo/notes.md"
+  commit -- main "$msg"
+  assert_eq "$(commit_json .step)" "ci" "a red bin/ci"
+  commit_json .detail | grep -q "MD018" || die "the red bin/ci output is missing from the detail"
+  assert_eq "$(git -C "$repo" rev-parse HEAD)" "$before" "a red bin/ci committed"
+
+  commit_case
+  printf '\nMore.\n' >>"$repo/notes.md"
+  commit -- main "$msg"
+  assert_rc 0 "a green commit"
+  sha="$(commit_json .sha)"
+  assert_eq "$sha" "$(git -C "$repo" rev-parse HEAD)" "the printed sha"
+  assert_eq "$(git -C "$origin" rev-parse main)" "$sha" "the push to origin"
+  assert_eq "$(git -C "$repo" log -1 --format=%B)" "Add notes" "the trimmed message"
+  [ ! -s "$CLAUDE_LOG" ] || die "claude ran with no rule edited"
+
+  commit_case
+  printf '# Probe\n\nA probe rule.\n' >"$rule"
+  commit -- main "$msg"
+  assert_rc 0 "a clean rule review"
+  tail -n 1 "$rule" | grep -qE '^<!-- audited: [0-9a-f]{12} -->$' || die "a clean review did not stamp the rule"
+  assert_eq "$(sessions)" "audit " "a clean review's sessions"
+  grep -q -- "--json-schema" "$CLAUDE_LOG" || die "the auditor ran without a findings schema"
+
+  commit_case
+  printf '# Probe\n\nA BAD rule.\n' >"$rule"
+  commit FAKE_AUDIT="$finding" FAKE_FIX=good -- main "$msg"
+  assert_rc 0 "a fixed finding"
+  grep -q "A GOOD rule." "$rule" || die "the fixer's text was not written"
+  tail -n 1 "$rule" | grep -qE '^<!-- audited: ' || die "a fixed rule was not stamped"
+  assert_eq "$(sessions)" "audit fix verify " "a fixed finding's sessions"
+
+  commit_case
+  printf '# Probe\n\nA BAD rule.\n' >"$rule"
+  commit FAKE_AUDIT="$finding" FAKE_FIX=outside -- main "$msg"
+  assert_rc 0 "a fix outside the rules"
+  grep -qx "# Notes" "$repo/notes.md" || die "the fixer wrote outside the rules"
+
+  commit_case
+  before="$(git -C "$repo" rev-parse HEAD)"
+  printf '# Probe\n\nA BAD rule.\n' >"$rule"
+  commit FAKE_AUDIT="$finding" FAKE_VERIFY="$finding" -- main "$msg"
+  assert_rc 1 "an unresolved finding"
+  assert_eq "$(commit_json .step)" "ci" "an unresolved finding"
+  assert_eq "$(commit_json .detail)" "$(printf 'rule audit: 1 violation(s)\n- .claude/rules/probe.md: r — BAD → say GOOD')" "the finding detail"
+  assert_eq "$(sessions)" "audit fix verify " "an unresolved finding's sessions"
+  assert_eq "$(git -C "$repo" rev-parse HEAD)" "$before" "an unresolved finding committed"
+  if tail -n 1 "$rule" | grep -q "audited"; then
+    die "an unresolved finding stamped the rule"
+  fi
+
+  commit_case
+  printf '# Probe\n\nA BAD rule.\n' >"$rule"
+  commit FAKE_AUDIT=none -- main "$msg"
+  assert_eq "$(commit_json .detail)" "rule audit: the auditor session never submitted a verdict" "no verdict"
+
+  commit_case
+  printf '# Probe\n\nA BAD rule.\n' >"$rule"
+  commit FAKE_AUDIT="$finding" FAKE_FIX=grow -- main "$msg"
+  assert_rc 0 "an over-bound fix"
+  [ "$(grep -c -- "- more" "$rule" || true)" -eq 0 ] || die "an over-bound fix was kept"
+
+  commit_case
+  marker="$WORK/slow-finished"
+  mkdir -p "$repo/checks"
+  printf '%s\n' '#!/usr/bin/env bash' 'set -euo pipefail' "sleep 3" "touch \"$marker\"" >"$repo/checks/slow"
+  chmod +x "$repo/checks/slow"
+  commit FLOW_CI_TIMEOUT_MS=1000 -- main "$msg"
+  assert_eq "$(commit_json .detail)" "gate timed out after 1s" "a slow bin/ci"
+  sleep 3
+  [ ! -e "$marker" ] || die "the timed-out bin/ci kept running"
+
+  commit_case
+  printf '\nMore.\n' >>"$repo/notes.md"
+  git -C "$repo" remote set-url origin "$WORK/missing.git"
+  before="$(git -C "$repo" rev-parse HEAD)"
+  commit -- main "$msg"
+  assert_eq "$(commit_json .step)" "push" "a failed push"
+  commit_json .detail | grep -q "^push failed: " || die "no push detail"
+  [ "$(git -C "$repo" rev-parse HEAD)" != "$before" ] || die "a failed push undid the commit"
+
+  commit_case
+  git -C "$repo" worktree add -q "$repo/.worktrees/feat" -b feat
+  printf 'feat\n' >"$repo/.worktrees/feat/feat.txt"
+  before="$(git -C "$repo" rev-parse HEAD)"
+  commit -- feat "$msg"
+  assert_rc 0 "a worktree commit"
+  assert_eq "$(git -C "$origin" rev-parse feat)" "$(commit_json .sha)" "the worktree push"
+  assert_eq "$(git -C "$repo" rev-parse HEAD)" "$before" "the worktree commit landed in the root"
+  rm -f "$msg" "$empty"
 }
 
 test_copies_match() {
@@ -1087,6 +1329,7 @@ test_root_format
 test_open
 test_hooks
 test_starter
+test_commit
 test_copies_match
 test_changed_empty
 test_language typescript

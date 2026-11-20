@@ -5,9 +5,9 @@ strength.
 
 ## The Rule
 
-- A source is any `.js`, `.mjs`, `.cjs` or `.jsx` file below a directory,
-  outside `tests/`, `dist/`, `public/` and `node_modules/`. Root-level files
-  are configuration.
+- A source is a `.js`, `.mjs`, `.cjs` or `.jsx` file below a directory;
+  `is_source` in `bin/test` and `bin/changed` names the directories it
+  leaves out. Root-level files are configuration.
 - Every source has a twin test named `tests/<path>.test.<ext>`,
   `tests/<path>.spec.<ext>`, `<dir>/<name>.test.<ext>`,
   `<dir>/<name>.spec.<ext>` or `<dir>/test-<name>.<ext>`, where `<ext>` is
@@ -28,3 +28,5 @@ strength.
 - The lockfile's package manager audits with no moderate or worse advisory;
   `bin/ci` fails after install otherwise. A vulnerable transitive package is
   lifted through the package manager's overrides.
+- Trigger: any change to a JavaScript `bin/` script.
+<!-- audited: 51ec75382f12 -->

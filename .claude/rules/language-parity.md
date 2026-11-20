@@ -28,3 +28,4 @@ behaves the same whatever its stack.
   skip, sibling edit, red, `--force`, `--clean`, `bin/changed` on an edited
   tracked file, and `bin/ci` on committed files nothing changed, in a
   throwaway repo.
+<!-- audited: 49c9ee9397cb -->

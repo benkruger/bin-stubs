@@ -42,17 +42,19 @@ time. A pass shows the step lines. A failure shows the step that broke.
 4. Ignore `.flow-states/`, `.claude/cost/`, and the dependency folders
    (`node_modules/`, `.venv/`, `vendor/`, `target/`, `.build/`).
 5. Install shellcheck, shfmt, markdownlint-cli2 and jq; the guards and the
-   hooks need them.
+   hooks need them. Install Claude Code; `bin/commit` runs `claude` to
+   review changed rules.
 6. Pin each app's toolchain (see "Pinned toolchain").
-7. Run `bin/ci` until it passes. From then on every commit goes through it.
+7. Run `bin/ci` until it passes. From then on every commit goes through
+   `bin/commit`, which runs it.
 
 ## How
 
 After an edit, the agent runs `changed`, or one step. It runs again until that
 command passes. Before the commit, it runs `ci`. A matching sentinel finishes
-at once. Otherwise the four steps run and a new sentinel is written. The commit
-happens when `ci` exits 0. Version changes go through `dependencies`, then
-`ci`.
+at once. Otherwise the four steps run and a new sentinel is written.
+`bin/commit` commits only when `ci` exits 0. Version changes go through
+`dependencies`, then `ci`.
 
 ## `CLAUDE.md` and rules
 
@@ -87,6 +89,9 @@ The starter ships these rules:
   shellcheck-clean.
 - `dependency-pins`: a dependency held back, overridden or patched lands
   with a dated check in `checks/`, revisited within 30 days.
+- `rule-authoring`: how a rule is written, and every rule edit reviewed and
+  stamped through `bin/commit`.
+- `claude-md`: `CLAUDE.md` stays short and never points at the rules.
 
 Each language folder adds `<language>-standards.md`, which states what its
 scripts enforce. Add one rule for each invariant of the app that the code
@@ -140,6 +145,25 @@ At the repo root, that same case prints `bin/changed: nothing dirty` and exits
 5. A failed step prints its log. The old sentinel stays.
 6. When all four pass, a new sentinel is written.
 
+### `bin/commit`
+
+`bin/commit <branch> <msgfile>` is how every commit lands. The message file
+comes from `mktemp /tmp/flow-commit-msg.XXXXXX`; any other file is refused.
+The branch has no `/`.
+
+1. Work in `.worktrees/<branch>` when it exists, otherwise the repo root.
+2. When rule files changed, a separate Claude session reviews them against
+   `rule-authoring.md`. Claude gets one try at fixing what it finds; a
+   finding left after that refuses the commit. A clean review stamps each
+   file with `bin/stamp-rules`. Without `claude` the review is skipped, and
+   the guards fail the unstamped rule.
+3. Run `bin/ci` for at most `FLOW_CI_TIMEOUT_MS` milliseconds (default five
+   minutes).
+4. Stage everything. Nothing staged refuses the commit.
+5. Commit, then `git push origin HEAD:<branch>`.
+6. Print one JSON line: `{"status":"ok","sha":…}`, or the step that refused
+   and its detail.
+
 ### Which apps run
 
 1. A flag named after a summary row runs only what it names, whatever is
@@ -176,6 +200,8 @@ At the repo root, that same case prints `bin/changed: nothing dirty` and exits
 | `bin/build`         | Run `build` for the selected apps    |
 | `bin/test`          | Run `test` for the selected apps     |
 | `bin/dependencies`  | Refresh dependencies in every app    |
+| `bin/commit`        | Review rules, run `ci`, commit, push |
+| `bin/stamp-rules`   | Stamp reviewed rule files            |
 | `bin/_dispatch`     | Pick the apps and run the phase      |
 | `bin/_root-tests`   | Repo-level check for `ci` and `test` |
 | `bin/_root-changed` | Repo-level check for `changed`       |
@@ -246,9 +272,10 @@ guards, so a broken standard fails the gate like a failing test.
 
 - A text file is over 65,536 bytes. Generated lockfiles are exempt by name;
   any other exemption is an exact path.
-- A rule is over 40 lines or 8,000 characters, lacks one leading H1, has
-  frontmatter or a "Why" or "History" heading, uses past-tense wording, or
-  cites a missing rule.
+- A rule is over 40 lines or 8,000 characters (its stamp excluded), lacks
+  one leading H1, has frontmatter or a "Why" or "History" heading, uses
+  past-tense wording, cites a missing rule, or lacks an audit stamp that
+  matches its body.
 - `CLAUDE.md` is over 400 lines or 12,000 characters, lacks one leading H1,
   or points at the rules.
 - Any file silences a linter, `biome.json` turns rules off, an ESLint config
@@ -284,14 +311,16 @@ The starter's `.claude/settings.json` sets what the agent may run:
   run as `bin/ci`, and one app's scripts as `bin/ci --<app>`. A pattern that
   starts with a wildcard would also match `/usr/bin/git`, so the guards
   reject one.
-- **Denies** destructive git: `commit` (commits go through `flow-pro commit`),
+- **Denies** destructive git: `commit` (commits go through `bin/commit`),
   `rebase`, `checkout`, `reset`, `restore`, `stash`, `clean`, and a force-push
   (`--force`, `--force-with-lease`, `-f` or a `+` refspec, wherever it sits
   in the command), with or without `git -C`.
 - **`require-bin`** (`PreToolUse`) blocks a command that calls the toolchain
   directly (bun, Biome, Ruff, RuboCop, cargo, swift, `rails test` and the
-  rest), anywhere in a compound command and through runners like `npx`,
-  `bundle exec` and `uv run`. The agent is told to use the `bin/` script.
+  rest), and a raw `git commit`, anywhere in a compound command, in quotes,
+  inside `sh -c`, after git options like `-C`, and through runners like
+  `npx`, `bundle exec` and `uv run`. The agent is told to use the `bin/`
+  script.
 - **`session-start`** (`SessionStart`) runs `bin/ci` once in a cloud session,
   so the session starts from a known state. A local session is left alone.
 
@@ -321,8 +350,6 @@ The kit does not ship these. A repo ready for an agent has them too.
 
 - **Lockfile**: versions move only through `bin/dependencies`. A vulnerable
   transitive dependency is lifted to the latest version, never pinned down.
-- **Commit tool**: `flow-pro commit` runs `bin/ci` and commits only on a
-  pass. Branch names have no `/`.
 - **End-to-end QA**: a `bin/qa` that drives a fresh production build through
   the UI. The browser reaches only `127.0.0.1`. Timeouts and workers are
   pinned, nothing retries, and a console error fails the test.

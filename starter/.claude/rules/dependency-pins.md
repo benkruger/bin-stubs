@@ -13,3 +13,4 @@ lasts only as long as its reason.
   date fires on an unchanged tree.
 - On the revisit date the pin goes if its reason is gone; otherwise the
   check gets a new date and states the reason as it stands then.
+<!-- audited: c86b6ec8e02d -->

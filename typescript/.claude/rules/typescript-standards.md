@@ -12,11 +12,9 @@ strength.
 - Every source is at 100% functions, lines, branches and statements under
   Vitest's v8 coverage. `bin/ci` checks every source; `bin/changed` checks
   the changed ones, and a changed test holds its source to the same bar.
-- Prettier formats every file it has a parser for except Markdown, which
-  markdownlint owns.
-- Every file has a formatter and a linter: Prettier and ESLint rules,
-  markdownlint (the one on PATH) for Markdown, or shfmt and shellcheck for a
-  bash script.
+- Every file has one formatter and linter pair: markdownlint (the one on
+  PATH) for Markdown, shfmt and shellcheck for a bash script, and Prettier
+  and ESLint rules for every other file Prettier has a parser for.
   `bin/lint` fails any other file unless `UNGATED_NAMES` or the exact paths
   in `UNGATED_PATHS` name it; a new file type gets its `eslint.config.js`
   block in the same change.
@@ -31,3 +29,5 @@ strength.
 - `npm audit` reports no moderate or worse advisory; `bin/ci` fails after
   install otherwise. A vulnerable transitive package is lifted through
   `overrides` in `package.json`.
+- Trigger: any change to a TypeScript `bin/` script or `eslint.config.js`.
+<!-- audited: 7b226fd52ba9 -->

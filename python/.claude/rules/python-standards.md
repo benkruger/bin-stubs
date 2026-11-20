@@ -4,9 +4,9 @@ The Python app is held by Ruff and pytest at full strength.
 
 ## The Rule
 
-- A source is a `.py` file outside `tests/` that is neither a `test_*.py`
-  nor a `conftest.py`; when `src/` exists, only the files under it, the tree
-  coverage measures.
+- A source is a `.py` file under `src/` when it exists, else anywhere in
+  the app, the tree coverage measures; `is_source` in `bin/test` holds the
+  one list of test files and `conftest.py` it leaves out.
 - Every source `<dir>/<name>.py` (or `src/<dir>/<name>.py`) other than a
   package's `__init__.py` has its twin `tests/<dir>/test_<name>.py`.
   `bin/changed` fails a changed source with no twin; `bin/ci` fails any
@@ -16,6 +16,9 @@ The Python app is held by Ruff and pytest at full strength.
   to the same bar.
 - Ruff formats every file and lints it with every rule
   (`no-lint-exceptions.md`).
-- `bin/build` compiles every module.
+- `bin/build` compiles every module and fails on any that does not
+  compile.
 - `.python-version` pins Python; `bin/ci` fails unless uv finds an installed
   Python that matches it.
+- Trigger: any change to a Python `bin/` script.
+<!-- audited: b3b28c54b3e8 -->

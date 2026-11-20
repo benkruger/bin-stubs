@@ -1,14 +1,17 @@
 #!/usr/bin/env bash
 # PreToolUse hook for Bash. Blocks a command that calls the toolchain
 # directly (bun, Biome, Ruff, RuboCop, cargo, swift, ...) so the agent goes
-# through the bin/ script that wraps it. Exit 2 blocks the call and hands the
-# message to the agent. Every segment of a compound command is checked, after
-# leading VAR=value assignments and through runners such as npx, bundle exec
-# and uv run.
+# through the bin/ script that wraps it, and a raw git commit so every commit
+# goes through bin/commit. Exit 2 blocks the call and hands the message to the
+# agent. Every segment of a compound command is checked, with quotes removed,
+# after leading VAR=value assignments, through one level of sh -c, and
+# through runners such as npx, bundle exec and uv run.
 set -euo pipefail
 
 TOOLS=" bun bunx biome tsc eslint prettier vitest jest c8 ruff pytest rubocop brakeman rspec cargo swift swift-format xcodebuild shellcheck shfmt markdownlint-cli2 "
 RUNNERS=" npx pnpm yarn npm bundle uv xcrun "
+SHELLS=" sh bash zsh dash "
+GIT_OPTS_WITH_ARG=" -C -c --git-dir --work-tree --namespace "
 
 if ! command -v jq >/dev/null 2>&1; then
   echo "require-bin hook: jq is not installed (brew install jq)" >&2
@@ -18,15 +21,56 @@ fi
 command="$(jq -r '.tool_input.command // empty')"
 [ -n "$command" ] || exit 0
 
-blocked=""
-while IFS= read -r segment; do
-  read -r -a words <<<"$segment"
-  i=0
+skip_assignments() {
   while [ "$i" -lt "${#words[@]}" ] && [[ "${words[$i]}" == [A-Za-z_]*=* ]]; do
     i=$((i + 1))
   done
+}
+
+# True when the git arguments from index $1 on name commit as the subcommand.
+git_commits() {
+  local j="$1" w
+  while [ "$j" -lt "${#words[@]}" ]; do
+    w="${words[$j]}"
+    if [ "$w" = "--" ]; then
+      return 1
+    elif [[ "$GIT_OPTS_WITH_ARG" == *" $w "* ]]; then
+      j=$((j + 2))
+    elif [[ "$w" == -* ]]; then
+      j=$((j + 1))
+    else
+      [ "$w" = "commit" ]
+      return
+    fi
+  done
+  return 1
+}
+
+blocked=""
+while IFS= read -r segment; do
+  read -r -a words <<<"$segment"
+  [ "${#words[@]}" -gt 0 ] || continue
+  for k in "${!words[@]}"; do
+    words[k]="${words[k]//\"/}"
+    words[k]="${words[k]//\'/}"
+  done
+  i=0
+  skip_assignments
   [ "$i" -lt "${#words[@]}" ] || continue
+  if [[ "$SHELLS" == *" ${words[$i]##*/} "* ]]; then
+    case "${words[$((i + 1))]:-}" in
+      -c | -lc)
+        i=$((i + 2))
+        skip_assignments
+        [ "$i" -lt "${#words[@]}" ] || continue
+        ;;
+    esac
+  fi
   word="${words[$i]##*/}"
+  if [ "$word" = "git" ] && git_commits $((i + 1)); then
+    blocked="commit"
+    break
+  fi
   if [[ "$RUNNERS" == *" $word "* ]]; then
     i=$((i + 1))
     case "${words[$i]:-}" in
@@ -44,6 +88,10 @@ while IFS= read -r segment; do
   fi
 done < <(printf '%s\n' "$command" | awk '{ gsub(/&&|\|\||;|\|/, "\n"); print }')
 
+if [ "$blocked" = "commit" ]; then
+  echo "Blocked: commit with bin/commit <branch> <msgfile>, which runs bin/ci first, not git commit directly." >&2
+  exit 2
+fi
 if [ -n "$blocked" ]; then
   echo "Blocked: call the bin/ script that wraps $blocked (bin/changed, bin/test <file>, bin/ci, bin/format, bin/lint, bin/build, bin/dependencies), not $blocked directly." >&2
   exit 2

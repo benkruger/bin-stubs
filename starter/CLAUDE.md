@@ -8,6 +8,9 @@
 - A formatting finding from the guards is fixed with `bin/format`.
 - Before every commit: `bin/ci`. Judge it by its PASS / FAIL / SKIP lines;
   one FAIL fails the gate.
+- Commit only with `bin/commit <branch> <msgfile>`, the message written to a
+  file from `mktemp /tmp/flow-commit-msg.XXXXXX`. It reviews changed rules,
+  runs `bin/ci`, then commits and pushes; read the JSON line it prints.
 - Run scripts by relative path (`bin/ci`), never an absolute one. Never call
   the toolchain (bun, Biome, Ruff, RuboCop, cargo, swift) directly; call the
   `bin/` script that wraps it.

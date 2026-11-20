@@ -1,20 +1,12 @@
 # Script Standards
 
-Every script in the kit is strict, formatted, shellcheck-clean bash, because
+Every script here meets `starter/.claude/rules/script-standards.md`, because
 it runs unattended in other people's repos.
 
 ## The Rule
 
-- Every script starts with `#!/usr/bin/env bash`; `tests/run` checks it.
-- An entry point is executable and its first command is
-  `set -euo pipefail`. A sourced helper (`lib/*.sh`, `_run_quiet`,
-  `tests/lib.sh`) is never run directly.
-- `shellcheck -x -P SCRIPTDIR` reports nothing for any script. A finding is
-  fixed in the code; a `# shellcheck source=` directive is the only
-  shellcheck comment allowed.
-- Every script is formatted exactly as `shfmt -i 2 -ci` writes it;
-  `bin/format` writes it that way.
-- A sourced helper uses only what it defines or receives as arguments,
-  never a variable its caller happens to set.
-- A script nothing calls is deleted, not shipped.
-- `starter/tests/guards` enforces the rest.
+- Every script starts with `#!/usr/bin/env bash`; `tests/run` fails any
+  other shebang.
+- A script nothing calls is deleted, not shipped. Trigger: a change that
+  removes a script's last caller deletes the script in the same change.
+<!-- audited: a151f7b5215c -->
