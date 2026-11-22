@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+set -euo pipefail
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+root="$(cd "${APP_DIR:-$here/../..}" && pwd)"
+cd "$root"
+
+# shellcheck source=lib/toolchain.sh
+. "$here/lib/toolchain.sh"
+packages_check "$root" || exit 1
+
+log="$(mktemp)"
+trap 'rm -f "$log"' EXIT
+rc=0
+bundle exec rails test:system "$@" 2>&1 | tee "$log" || rc=$?
+if [ "$rc" -ne 0 ]; then
+  echo "bin/qa: a system test failed (above)" >&2
+  exit "$rc"
+fi
+if grep -qiE 'warn|deprecat' "$log"; then
+  echo "bin/qa: the run printed a warning (above)" >&2
+  exit 1
+fi

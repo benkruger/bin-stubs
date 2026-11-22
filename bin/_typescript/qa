@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+set -euo pipefail
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+root="$(cd "${APP_DIR:-$here/../..}" && pwd)"
+cd "$root"
+
+# shellcheck source=lib/toolchain.sh
+. "$here/lib/toolchain.sh"
+if [ -z "${CI:-}" ]; then
+  toolchain_check "$root"
+fi
+
+packages_check "$root" || exit 1
+playwright="$root/node_modules/.bin/playwright"
+if [ ! -x "$playwright" ]; then
+  echo "bin/qa: this app has no Playwright; add @playwright/test as a dev dependency" >&2
+  exit 1
+fi
+"$playwright" install chromium
+
+log="$(mktemp)"
+trap 'rm -f "$log"' EXIT
+rc=0
+"$playwright" test "$@" 2>&1 | tee "$log" || rc=$?
+if [ "$rc" -ne 0 ]; then
+  echo "bin/qa: an end-to-end test failed; the report is at playwright-report/index.html" >&2
+  exit "$rc"
+fi
+if grep -qiE 'npm warn|DeprecationWarning|^Warning: ' "$log"; then
+  echo "bin/qa: the run printed a warning (above)" >&2
+  exit 1
+fi

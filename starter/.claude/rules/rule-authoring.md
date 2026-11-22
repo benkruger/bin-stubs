@@ -12,9 +12,9 @@ it governs; every new or edited rule is reviewed and stamped.
   by filename, stating only what that rule says. Trigger: any new or
   edited rule; the review refuses the rest.
 - One constraint has one owner: its full statement lives in one file, and
-  every other mention cites that file. A constraint spanning two concerns
-  splits into two files that cite each other. Trigger: any new or edited
-  rule; the review refuses a restatement.
+  every other mention cites that file. A rule covers only the topic its H1
+  names; a statement on another topic is cut. Trigger: any new or edited
+  rule; the review refuses a restatement or an off-topic statement.
 - A rule lives in the folder it governs: the root of `.claude/rules/` binds
   the whole repo and a folder named for a repo directory binds that
   subtree; a misplaced rule binds files it never governs. A rule opens with
@@ -31,9 +31,10 @@ it governs; every new or edited rule is reviewed and stamped.
   markdownlint fails a long line, and the review refuses the rest.
   Trigger: any new or edited rule.
 - Every rule edit lands through `bin/commit`: a separate Claude session
-  reviews the edited rules against this file, Claude gets one try at fixing
-  what it finds, a fresh review of the fixed text must pass or the commit
-  is refused, and a passing review stamps each file with `bin/stamp-rules`;
-  `tests/guards` fails a rule whose stamp does not match its body. Trigger:
-  any change to a file under `.claude/rules/`.
-<!-- audited: 6b3cd77c4455 -->
+  reviews the edited rules against this file, and a file that passed
+  before only on its changed lines; Claude fixes only flagged files for at
+  most `MAX_FIX_ROUNDS` rounds, and the commit is refused while a finding
+  stands; a passing review stamps each file with `bin/stamp-rules`, and
+  `tests/guards` fails a rule whose stamp does not match its body.
+  Trigger: any change to a file under `.claude/rules/`.
+<!-- audited: cc879ce6d192 -->

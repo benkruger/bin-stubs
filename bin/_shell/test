@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+set -euo pipefail
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+root="$(cd "${APP_DIR:-$here/../..}" && pwd)"
+cd "$root"
+
+args=()
+for arg in "$@"; do
+  [ "$arg" = --all ] || args+=("$arg")
+done
+if [ ! -x test/run ]; then
+  echo "bin/test: no executable test/run" >&2
+  exit 1
+fi
+exec test/run ${args[@]+"${args[@]}"}

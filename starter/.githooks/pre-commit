@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+set -euo pipefail
+marker="$(git rev-parse --git-path flow-commit-marker)"
+expected=""
+if [ -f "$marker" ]; then
+  expected="$(cat "$marker")"
+fi
+rm -f "$marker"
+if [ -n "$expected" ] && [ "$expected" = "${FLOW_COMMIT_NONCE:-}" ]; then
+  exit 0
+fi
+echo "pre-commit: commit with bin/commit <branch> <msgfile>; this commit has no code from bin/commit." >&2
+exit 1

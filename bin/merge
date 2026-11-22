@@ -1,0 +1,42 @@
+#!/usr/bin/env bash
+set -euo pipefail
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$ROOT"
+
+refuse() {
+  echo "bin/merge: $*" >&2
+  exit 1
+}
+
+if [ "$#" -ne 2 ]; then
+  echo "usage: bin/merge <branch> <msgfile>" >&2
+  exit 2
+fi
+branch="$1"
+msgfile="$2"
+case "$branch" in
+  "" | . | .. | main | */* | -*) refuse "unsafe branch name: '$branch'" ;;
+esac
+git rev-parse -q --verify "refs/heads/$branch" >/dev/null || refuse "no branch $branch"
+[ -z "$(git status --porcelain)" ] || refuse "the repo root has uncommitted changes"
+if [ "$(git branch --show-current)" = "$branch" ]; then
+  git switch -q main
+fi
+[ "$(git branch --show-current)" = main ] || refuse "the repo root is not on main"
+
+if git rev-parse -q --verify '@{upstream}' >/dev/null 2>&1; then
+  git pull -q --ff-only
+fi
+git merge-base --is-ancestor main "$branch" ||
+  refuse "main has moved on since $branch started; merge main into $branch, commit it with bin/commit, then run bin/merge again"
+if git diff --quiet main "$branch"; then
+  refuse "$branch has nothing to merge into main"
+fi
+
+git merge -q --squash "$branch" >/dev/null
+if "$ROOT/bin/commit" main "$msgfile"; then
+  exit 0
+fi
+git reset -q --hard HEAD
+echo "bin/merge: $branch did not land; main is back where it was" >&2
+exit 1

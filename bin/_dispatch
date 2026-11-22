@@ -1,33 +1,4 @@
 #!/usr/bin/env bash
-# bin/_dispatch — root dispatcher. Invoked by
-# bin/{ci,format,lint,build,test,changed,dependencies} with the phase
-# name as $1.
-#
-# Discovers first-level folders that have an executable bin/<phase>.
-# bin/_root/<phase> is the app that lives at the repo root. The corpus
-# suite is bin/_root-tests (ci, test), bin/_root-changed (changed) or
-# bin/_root-format (format, which always runs it).
-#
-# A flag named after a summary row runs only the targets it names,
-# whatever is dirty: --suite, --root, or --<folder> with _ written as -.
-# Several combine. With no such flag:
-#
-# A path inside a folder selects that folder. A corpus path
-# (CLAUDE.md, README.md, .claude, tests, checks) selects the suite.
-# A path in no folder selects the root app when one exists, and every
-# folder otherwise. Any folder selection on ci or test also selects the
-# suite. A clean tree selects every target. changed on an empty diff
-# exits green. dependencies with no narrower path list refreshes every
-# folder. --force selects every target.
-#
-# --force is forwarded to every ci leaf. The suite runs first; then the
-# root app and the folders run at the same time, and their output is
-# replayed in roster order. SKIP means the target did not run: it was
-# not selected, or a ci leaf exited 0 without rewriting its sentinel.
-# PASS means a green ci leaf rewrote its sentinel, or a non-ci leaf
-# exited 0. FAIL is a non-zero exit. The exit code is the verdict.
-#
-# Usage: bin/_dispatch <phase> [args...]
 set -euo pipefail
 
 PHASE="${1:?phase required (ci|format|lint|build|test|changed|dependencies)}"
@@ -45,29 +16,40 @@ case "$PHASE" in
 esac
 
 force=0
+jobs=""
 rest=()
-for arg in "$@"; do
-  case "$arg" in
+while [ "$#" -gt 0 ]; do
+  case "$1" in
     --force) force=1 ;;
-    *) rest+=("$arg") ;;
+    --jobs)
+      if [ "$#" -lt 2 ] || ! [[ "$2" =~ ^[1-9][0-9]*$ ]]; then
+        echo "bin/$PHASE: --jobs takes a whole number of at least 1" >&2
+        exit 2
+      fi
+      jobs="$2"
+      shift
+      ;;
+    *) rest+=("$1") ;;
   esac
+  shift
 done
+if [ -z "$jobs" ]; then
+  jobs=$(($(getconf _NPROCESSORS_ONLN) / 2))
+  [ "$jobs" -ge 1 ] || jobs=1
+  [ "$jobs" -le 4 ] || jobs=4
+fi
 
-has_project() {
-  local d="$1" x
-  [ -f "$d/package.json" ] && return 0
-  [ -f "$d/Gemfile" ] && return 0
-  [ -f "$d/pyproject.toml" ] && return 0
-  [ -f "$d/Cargo.toml" ] && return 0
-  [ -f "$d/Package.swift" ] && return 0
-  for x in "$d"/*.xcodeproj "$d"/*.xcworkspace; do
-    [ -e "$x" ] && return 0
-  done
-  return 1
+# shellcheck source=lib/apps.sh
+. "$REPO_ROOT/bin/lib/apps.sh"
+
+leaf_of() {
+  local lang
+  lang="$(app_language "$1")" || return 1
+  [ -x "$REPO_ROOT/bin/_$lang/$PHASE" ] || return 1
+  printf '%s\n' "$REPO_ROOT/bin/_$lang/$PHASE"
 }
 
 targets=()
-catalog=()
 for d in "$REPO_ROOT"/*/; do
   [ -d "$d" ] || continue
   name="$(basename "$d")"
@@ -75,12 +57,8 @@ for d in "$REPO_ROOT"/*/; do
     bin | tests | checks | node_modules | vendor | target) continue ;;
   esac
   [[ "$name" == .* ]] && continue
-  if [ -x "${d}bin/${PHASE}" ]; then
-    if has_project "$d"; then
-      targets+=("$name")
-    else
-      catalog+=("$name")
-    fi
+  if leaf_of "${d%/}" >/dev/null; then
+    targets+=("$name")
   fi
 done
 
@@ -93,7 +71,7 @@ if [ "${#targets[@]}" -gt 0 ]; then
 fi
 
 has_root_app=0
-if [ -x "$REPO_ROOT/bin/_root/${PHASE}" ] && has_project "$REPO_ROOT"; then
+if leaf_of "$REPO_ROOT" >/dev/null; then
   has_root_app=1
 fi
 
@@ -105,7 +83,7 @@ case "$PHASE" in
 esac
 
 if [ "${#targets[@]}" -eq 0 ] && [ "$has_root_app" -eq 0 ] && [ -z "$suite_leaf" ]; then
-  echo "bin/$PHASE: no folder has bin/$PHASE" >&2
+  echo "bin/$PHASE: no app or suite to run" >&2
   exit 1
 fi
 
@@ -193,7 +171,7 @@ elif [ "$force" -eq 1 ] || [ "$PHASE" = "dependencies" ]; then
   select_all=1
 else
   changed="$(
-    collect_changed | { grep -v '^\.flow-commit-msg$' || true; } | sort -u
+    collect_changed | { grep -Ev '^\.flow-commit-msg$|(^|/)\.ci-timeout$' || true; } | sort -u
   )"
   if [ -z "$changed" ]; then
     if [ "$PHASE" = "changed" ]; then
@@ -207,6 +185,10 @@ else
       if is_corpus "$path"; then
         run_suite=1
         continue
+      fi
+      if [[ "$path" == bin/* ]]; then
+        select_all=1
+        break
       fi
       owner="$(owner_of "$path" || true)"
       if [ -n "$owner" ]; then
@@ -239,13 +221,13 @@ if [ "${#picks[@]}" -eq 0 ]; then
       fi
     fi
   fi
-  if [ "$PHASE" = "format" ] && [ -n "$suite_leaf" ]; then
+  if { [ "$PHASE" = "format" ] || [ "$PHASE" = "changed" ]; } && [ -n "$suite_leaf" ]; then
     run_suite=1
   fi
 fi
 
 if [ "${#selected[@]}" -eq 0 ] && [ "$run_root_app" -eq 0 ] && [ "$run_suite" -eq 0 ]; then
-  echo "bin/$PHASE: no folder has bin/$PHASE" >&2
+  echo "bin/$PHASE: no app or suite to run" >&2
   exit 1
 fi
 
@@ -265,6 +247,8 @@ mtime_of() {
 EXIT=0
 NAMES=()
 RESULTS=()
+TIMES=()
+STARTED="$(date +%s)"
 
 consider_paths() {
   local name="$1"
@@ -306,7 +290,7 @@ consider_paths() {
 
 run_one() {
   local display="$1" folder="$2" leaf="$3" sname="${4:-ci-sentinel}"
-  local sentinel="" mt_before="" rc=0 result args=()
+  local sentinel="" mt_before="" rc=0 result args=() began
   FILTERED=()
   if [ "$display" = "suite" ]; then
     :
@@ -314,11 +298,13 @@ run_one() {
     if ! consider_paths "__root__"; then
       NAMES+=("$display")
       RESULTS+=(SKIP)
+      TIMES+=("")
       return
     fi
   elif ! consider_paths "$display"; then
     NAMES+=("$display")
     RESULTS+=(SKIP)
+    TIMES+=("")
     return
   fi
   if [ "$force" -eq 1 ] && [ "$PHASE" = "ci" ]; then
@@ -334,6 +320,7 @@ run_one() {
       mt_before="$(mtime_of "$sentinel")"
     fi
   fi
+  began="$(date +%s)"
   (cd "$folder" && "$leaf" ${args[@]+"${args[@]}"}) || rc=$?
   if [ "$rc" -ne 0 ]; then
     result=FAIL
@@ -345,18 +332,41 @@ run_one() {
   fi
   NAMES+=("$display")
   RESULTS+=("$result")
+  TIMES+=("$(($(date +%s) - began))")
 }
 
-if [ "$run_suite" -eq 1 ]; then
-  run_one "suite" "$REPO_ROOT" "$REPO_ROOT/$suite_leaf" "root-suite-sentinel"
-fi
-# The suite has finished. The remaining apps touch disjoint trees, so
-# they run at the same time. Their output is replayed in roster order.
 BG_DISPLAY=()
+BG_FOLDER=()
 BG_PID=()
 BG_LOG=()
 BG_SENT=()
 BG_MT=()
+BG_STEPS=()
+BG_GROUP=()
+trap 'kill -TERM -- ${BG_GROUP[@]+"${BG_GROUP[@]}"} 2>/dev/null || true; exit 130' INT TERM
+
+if [ "$run_suite" -eq 1 ]; then
+  run_one "suite" "$REPO_ROOT" "$REPO_ROOT/$suite_leaf" "root-suite-sentinel"
+fi
+
+steps_snapshot() {
+  local dir="$1/.flow-states/$BRANCH" step
+  for step in format lint build test; do
+    if [ -f "$dir/ci-$step-sentinel" ]; then
+      mtime_of "$dir/ci-$step-sentinel"
+    else
+      echo missing
+    fi
+  done
+}
+
+ran_every_step() {
+  local before="$1" after="$2" was now
+  [ "$PHASE" = ci ] && [ -n "$BRANCH" ] || return 1
+  while IFS= read -r now && IFS= read -r was <&3; do
+    [ "$now" != missing ] && [ "$now" != "$was" ] || return 1
+  done < <(printf '%s\n' "$after") 3< <(printf '%s\n' "$before")
+}
 
 queue_one() {
   local display="$1" folder="$2" leaf="$3" sname="${4:-ci-sentinel}"
@@ -366,11 +376,13 @@ queue_one() {
     if ! consider_paths "__root__"; then
       NAMES+=("$display")
       RESULTS+=(SKIP)
+      TIMES+=("")
       return
     fi
   elif ! consider_paths "$display"; then
     NAMES+=("$display")
     RESULTS+=(SKIP)
+    TIMES+=("")
     return
   fi
   if [ "$force" -eq 1 ] && [ "$PHASE" = "ci" ]; then
@@ -384,32 +396,47 @@ queue_one() {
     fi
   fi
   log="$(mktemp)"
+  BG_STEPS+=("$(steps_snapshot "$folder")")
+  set -m
   (
+    read -r -n 1 -u 3 _
     rc=0
-    (cd "$folder" && "$leaf" ${args[@]+"${args[@]}"}) >"$log" 2>&1 || rc=$?
-    printf '%s\n' "$rc" >"$log.rc"
-  ) &
+    began="$(date +%s)"
+    (cd "$folder" && APP_DIR="$folder" "$leaf" ${args[@]+"${args[@]}"}) >"$log" 2>&1 3>&- || rc=$?
+    printf '%s %s\n' "$rc" "$(($(date +%s) - began))" >"$log.rc"
+    printf . >&3
+  ) </dev/null &
+  set +m
   BG_DISPLAY+=("$display")
+  BG_FOLDER+=("$folder")
   BG_PID+=("$!")
+  BG_GROUP+=("-$!")
   BG_LOG+=("$log")
   BG_SENT+=("$sentinel")
   BG_MT+=("$mt_before")
 }
 
+slots="$(mktemp -d)"
+mkfifo "$slots/fifo"
+exec 3<>"$slots/fifo"
+rm -rf "$slots"
+for ((slot = 0; slot < jobs; slot++)); do
+  printf . >&3
+done
+
 if [ "$run_root_app" -eq 1 ]; then
-  queue_one "root" "$REPO_ROOT" "$REPO_ROOT/bin/_root/$PHASE"
+  queue_one "root" "$REPO_ROOT" "$(leaf_of "$REPO_ROOT")"
 fi
 for name in "${selected[@]+"${selected[@]}"}"; do
-  queue_one "$name" "$REPO_ROOT/$name" "$REPO_ROOT/$name/bin/$PHASE"
+  queue_one "$name" "$REPO_ROOT/$name" "$(leaf_of "$REPO_ROOT/$name")"
 done
 i=0
 while [ "$i" -lt "${#BG_PID[@]}" ]; do
   wait "${BG_PID[$i]}" || true
-  rc=0
+  rc=1
+  secs=""
   if [ -f "${BG_LOG[$i]}.rc" ]; then
-    rc="$(cat "${BG_LOG[$i]}.rc")"
-  else
-    rc=1
+    read -r rc secs <"${BG_LOG[$i]}.rc"
   fi
   cat "${BG_LOG[$i]}"
   rm -f "${BG_LOG[$i]}" "${BG_LOG[$i]}.rc"
@@ -421,10 +448,38 @@ while [ "$i" -lt "${#BG_PID[@]}" ]; do
   else
     result=PASS
   fi
+  folder="${BG_FOLDER[$i]}"
+  if [ "$result" = PASS ] && ran_every_step "${BG_STEPS[$i]}" "$(steps_snapshot "$folder")" &&
+    ! "$REPO_ROOT/bin/_ci-timeout" "${BG_DISPLAY[$i]}" "$folder/.ci-timeout" "$secs"; then
+    result=FAIL
+    EXIT=1
+    rm -f "$folder/.flow-states/$BRANCH/ci-sentinel" "$folder/.flow-states/$BRANCH"/ci-*-sentinel
+  fi
   NAMES+=("${BG_DISPLAY[$i]}")
   RESULTS+=("$result")
+  TIMES+=("$secs")
   i=$((i + 1))
 done
+
+duration() {
+  local secs="$1"
+  if [ "$secs" -ge 60 ]; then
+    printf '%dm%02ds\n' $((secs / 60)) $((secs % 60))
+  else
+    printf '%ds\n' "$secs"
+  fi
+}
+
+time_of() {
+  local n="$1" i=0 have
+  for have in "${NAMES[@]+"${NAMES[@]}"}"; do
+    if [ "$have" = "$n" ] && [ -n "${TIMES[$i]}" ]; then
+      printf ' (%s)\n' "$(duration "${TIMES[$i]}")"
+      return
+    fi
+    i=$((i + 1))
+  done
+}
 
 result_of() {
   local n="$1" i=0 have
@@ -448,9 +503,6 @@ fi
 for name in "${targets[@]+"${targets[@]}"}"; do
   ORDER+=("$name")
 done
-for name in "${catalog[@]+"${catalog[@]}"}"; do
-  ORDER+=("$name")
-done
 
 ran=0
 failed=0
@@ -465,7 +517,7 @@ echo "════════════════════════�
 echo "  $PHASE summary"
 echo "───────────────────────────────────────────────"
 for name in "${ORDER[@]}"; do
-  printf "  %-12s : %s\n" "$name" "$(result_of "$name")"
+  printf "  %-12s : %s%s\n" "$name" "$(result_of "$name")" "$(time_of "$name")"
 done
 echo "───────────────────────────────────────────────"
 if [ "$EXIT" -eq 0 ]; then
@@ -473,6 +525,7 @@ if [ "$EXIT" -eq 0 ]; then
 else
   echo "  result   : FAILED ($failed of $ran)"
 fi
+echo "  elapsed  : $(duration "$(($(date +%s) - STARTED))")"
 echo "═══════════════════════════════════════════════"
 
 exit "$EXIT"

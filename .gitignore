@@ -4,4 +4,8 @@ node_modules/
 vendor/
 target/
 .build/
+dist/
+build/
+coverage/
 .claude/cost/
+.worktrees/

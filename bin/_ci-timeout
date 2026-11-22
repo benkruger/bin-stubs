@@ -1,0 +1,50 @@
+#!/usr/bin/env bash
+set -euo pipefail
+app="${1:?app name required}"
+file="${2:?time file required}"
+took="${3:?seconds required}"
+case "$took" in
+  "" | *[!0-9]*)
+    echo "bin/_ci-timeout: seconds must be a whole number, got '$took'" >&2
+    exit 2
+    ;;
+esac
+
+host="$(hostname -s 2>/dev/null || hostname)"
+host="$(printf '%s\n' "$host" | sed -E 's/-[0-9]+$//')"
+if [ -z "$host" ]; then
+  echo "bin/_ci-timeout: no hostname" >&2
+  exit 2
+fi
+
+limit=""
+if [ -f "$file" ]; then
+  limit="$(awk -v h="$host" '$1 == h { print $2; exit }' "$file")"
+fi
+case "$limit" in
+  *[!0-9]*)
+    echo "bin/_ci-timeout: $file line for $host is not a whole number of seconds: '$limit'" >&2
+    exit 2
+    ;;
+esac
+
+if [ -n "$limit" ] && [ $((took * 5)) -gt $((limit * 6)) ] && [ $((took - limit)) -ge 5 ]; then
+  echo "bin/ci: $app took ${took}s, more than 20% and at least 5s over its ${limit}s for $host in $file" >&2
+  exit 1
+fi
+
+branch="$(git -C "$(dirname "$file")" branch --show-current 2>/dev/null || true)"
+if [ "$branch" = main ]; then
+  echo "bin/ci: $app took ${took}s (limit ${limit:-none} for $host, kept on main)"
+  exit 0
+fi
+
+next="$(mktemp)"
+if [ -f "$file" ]; then
+  awk -v h="$host" -v s="$took" '$1 == h { print h " " s; done = 1; next } { print } END { if (!done) print h " " s }' "$file" >"$next"
+else
+  printf '%s %s\n' "$host" "$took" >"$next"
+fi
+cat "$next" >"$file"
+rm -f "$next"
+echo "bin/ci: $app took ${took}s (limit ${limit:-none} for $host)"

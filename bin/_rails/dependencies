@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+cd "${APP_DIR:-$(dirname "$0")/../..}"
+
+echo "  → updating gems (bundle update --all)"
+bundle update --all
+
+echo "  → rails (bundle check)"
+bundle check
+
+echo "  → rails (bundler-audit)"
+bundle exec bundler-audit check --update
+
+echo "  → rails (brakeman)"
+exec bundle exec brakeman --quiet --no-pager --exit-on-warn --exit-on-error

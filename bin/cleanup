@@ -1,0 +1,59 @@
+#!/usr/bin/env bash
+set -euo pipefail
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
+cd "$ROOT"
+
+if [ "$#" -ne 0 ]; then
+  echo "usage: bin/cleanup" >&2
+  exit 2
+fi
+
+worktree_of() {
+  local want="branch refs/heads/$1" path="" line
+  while IFS= read -r line; do
+    case "$line" in
+      "worktree "*) path="${line#worktree }" ;;
+      "$want")
+        printf '%s\n' "$path"
+        return 0
+        ;;
+    esac
+  done < <(git worktree list --porcelain)
+  return 1
+}
+
+git worktree prune
+main_tree="$(git rev-parse 'main^{tree}')"
+current="$(git branch --show-current)"
+
+while IFS= read -r branch; do
+  [ "$branch" = main ] && continue
+  if [ "$branch" = "$current" ]; then
+    echo "bin/cleanup: kept $branch: checked out at the repo root"
+    continue
+  fi
+  worktree=""
+  if worktree="$(worktree_of "$branch")"; then
+    case "$worktree" in
+      "$ROOT/.worktrees/"*) ;;
+      *)
+        echo "bin/cleanup: kept $branch: checked out at $worktree"
+        continue
+        ;;
+    esac
+  fi
+  merged="$(git merge-tree --write-tree main "$branch" 2>/dev/null | head -n 1 || true)"
+  if [ "$merged" != "$main_tree" ]; then
+    echo "bin/cleanup: kept $branch: its work is not in main"
+    continue
+  fi
+  if [ -n "$worktree" ] && [ -n "$(git -C "$worktree" status --porcelain)" ]; then
+    echo "bin/cleanup: kept $branch: uncommitted changes in $worktree"
+    continue
+  fi
+  if [ -n "$worktree" ]; then
+    git worktree remove "$worktree"
+  fi
+  git branch -q -D "$branch"
+  echo "bin/cleanup: removed $branch"
+done < <(git for-each-ref --format='%(refname:short)' refs/heads/)

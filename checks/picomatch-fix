@@ -1,15 +1,12 @@
 #!/usr/bin/env bash
-# Pin: the TypeScript test app in tests/run installs picomatch 4.0.7 with
-# tests/picomatch-ghsa-fc5q-39xc-vjpf.patch applied, because vitest and
-# typescript-eslint need picomatch and no release fixes advisory
-# GHSA-fc5q-39xc-vjpf yet. Fails from the revisit date on.
 set -euo pipefail
+pin="the TypeScript test app in tests/run installs picomatch 4.0.7 with tests/picomatch-ghsa-fc5q-39xc-vjpf.patch applied, because vitest and typescript-eslint need picomatch and no release fixes advisory GHSA-fc5q-39xc-vjpf yet"
 revisit=2026-12-20
 if [[ "$(date +%F)" < "$revisit" ]]; then
   exit 0
 fi
-echo "checks/picomatch-fix: revisit date $revisit reached." >&2
+echo "checks/picomatch-fix: revisit date $revisit reached. Pin: $pin." >&2
 echo "  If a picomatch release fixes GHSA-fc5q-39xc-vjpf, delete" >&2
 echo "  tests/picomatch-ghsa-fc5q-39xc-vjpf.patch, fixed_picomatch and its" >&2
-echo "  override in tests/run, and this check. Otherwise set a new date." >&2
+echo "  override in tests/lib/seeds.sh, and this check. Otherwise set a new date." >&2
 exit 1

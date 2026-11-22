@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+set -euo pipefail
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+root="$(cd "${APP_DIR:-$here/../..}" && pwd)"
+cd "$root"
+
+port="${PORT:-3000}"
+url="http://127.0.0.1:$port"
+opener=open
+command -v open >/dev/null 2>&1 || opener=xdg-open
+
+# shellcheck source=lib/toolchain.sh
+. "$here/lib/toolchain.sh"
+packages_check "$root" || exit 1
+
+(
+  for _ in $(seq 1 120); do
+    if curl -s -o /dev/null "$url"; then
+      "$opener" "$url"
+      exit 0
+    fi
+    sleep 0.5
+  done
+) &
+
+exec bundle exec rails server -b 127.0.0.1 -p "$port" "$@"

@@ -1,20 +1,18 @@
 # Guard Tests
 
 Every standard the repo holds itself to has a check that fails when the
-standard breaks, and `bin/ci` runs it.
+standard breaks: a `tests/guards` check `bin/ci` runs, or the review.
 
 ## The Rule
 
-- `tests/run` is the repo-level suite `bin/ci` runs. It runs `tests/guards`,
-  which checks the file-size cap (`authored-file-size.md`), suppression
-  comments and lint configuration (`no-lint-exceptions.md`), every bash
-  script (`script-standards.md`), every Markdown file (markdownlint with its
-  default rules), `CLAUDE.md` (`claude-md.md`), every rule's shape and audit
-  stamp (`rule-authoring.md`), and `.claude/settings.json`: it allows
-  `Bash(bin/*)`, denies destructive git, and wires both hooks in
-  `.claude/hooks/`.
-- `tests/run` pins every cap in `tests/guards` (`authored-file-size.md`,
-  `claude-md.md`, `rule-authoring.md`). Changing a cap edits both files in
-  the same change.
-- A new standard lands with its check in the same change.
-<!-- audited: 994a7d1a2dc5 -->
+- `tests/run` is the repo-level suite `bin/ci` runs, and it runs
+  `tests/guards`; a failing suite fails `bin/ci` as
+  `every-test-runs.md` states. Trigger: any change to `tests/run` or
+  `tests/guards`.
+- `tests/run` fails when a cap in `tests/guards` differs from the value it
+  pins. A change to a cap edits both files together. Trigger: any change
+  to a cap.
+- A new standard lands in the same change as its `tests/guards` check,
+  or names the review as its check; the review refuses a rule that does
+  neither. Trigger: a new rule under `.claude/rules/`.
+<!-- audited: 50cb6df2e5a9 -->

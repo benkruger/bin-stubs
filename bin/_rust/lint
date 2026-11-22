@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+set -euo pipefail
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+root="$(cd "${APP_DIR:-$here/../..}" && pwd)"
+cd "$root"
+export CARGO_NET_OFFLINE=true
+# shellcheck source=lib/toolchain.sh
+. "$here/lib/toolchain.sh"
+packages_check "$PWD" || exit 1
+for arg in "$@"; do
+  case "$arg" in
+    --all) ;;
+    *)
+      echo "bin/lint: unknown argument: $arg" >&2
+      exit 2
+      ;;
+  esac
+done
+cargo clippy --all-targets -- -D warnings

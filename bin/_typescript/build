@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+set -euo pipefail
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+root="$(cd "${APP_DIR:-$here/../..}" && pwd)"
+cd "$root"
+
+# shellcheck source=lib/toolchain.sh
+. "$here/lib/toolchain.sh"
+if [ -z "${CI:-}" ]; then
+  toolchain_check "$root"
+fi
+packages_check "$PWD" || exit 1
+
+if node -e 'const p = require("./package.json"); process.exit(p.scripts && p.scripts.build ? 0 : 1)'; then
+  exec npm run build
+fi
+exec "$root/node_modules/.bin/tsc" --noEmit

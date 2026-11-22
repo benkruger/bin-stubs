@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+set -euo pipefail
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+root="$(cd "${APP_DIR:-$here/../..}" && pwd)"
+cd "$root"
+# shellcheck source=lib/toolchain.sh
+. "$here/lib/toolchain.sh"
+packages_check "$PWD" || exit 1
+for arg in "$@"; do
+  case "$arg" in
+    --all) ;;
+    *)
+      echo "bin/lint: unknown argument: $arg" >&2
+      exit 2
+      ;;
+  esac
+done
+args=()
+[ -d Sources ] && args+=(Sources)
+[ -d Tests ] && args+=(Tests)
+if [ "${#args[@]}" -eq 0 ]; then
+  exit 0
+fi
+xcrun swift-format lint --recursive "${args[@]}"

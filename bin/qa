@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+set -euo pipefail
+# shellcheck source=lib/one-app.sh
+. "$(dirname "${BASH_SOURCE[0]}")/lib/one-app.sh"
+run_app_script qa "$@"

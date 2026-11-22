@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "${APP_DIR:-$HERE/../..}"
+# shellcheck source=lib/toolchain.sh
+. "$HERE/lib/toolchain.sh"
+packages_check "$PWD" || exit 1
+
+# shellcheck source=_run_quiet
+. "$HERE/_run_quiet"
+
+run_quiet "rails (zeitwerk:check)" env RAILS_LOG_LEVEL=error bundle exec rails zeitwerk:check

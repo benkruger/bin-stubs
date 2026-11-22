@@ -1,0 +1,266 @@
+#!/usr/bin/env bash
+set -euo pipefail
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+root="$(cd "${APP_DIR:-$here/../..}" && pwd)"
+cd "$root"
+
+pm=npm
+if [ -f pnpm-lock.yaml ]; then
+  pm=pnpm
+elif [ -f yarn.lock ]; then
+  pm=yarn
+elif [ -f bun.lock ] || [ -f bun.lockb ]; then
+  pm=bun
+  export PATH="${HOME}/.bun/bin:${PATH}"
+fi
+
+# shellcheck source=lib/toolchain.sh
+. "$here/lib/toolchain.sh"
+if [ -z "${CI:-}" ]; then
+  toolchain_check "$root"
+fi
+packages_check "$PWD" || exit 1
+
+covdir="$(mktemp -d)"
+trap 'rm -rf "$covdir"' EXIT
+
+rc=0
+all=0
+paths=()
+for arg in "$@"; do
+  case "$arg" in
+    --all) all=1 ;;
+    -*) ;;
+    *) paths+=("$arg") ;;
+  esac
+done
+run=("$pm" run test)
+if [ "${#paths[@]}" -gt 0 ]; then
+  run+=(-- "${paths[@]}")
+fi
+"$root/node_modules/.bin/c8" --reporter=json-summary --reports-dir="$covdir" "${run[@]}" || rc=$?
+covjson="$covdir/coverage-summary.json"
+
+# shellcheck source=../lib/apps.sh
+. "$here/../lib/apps.sh"
+root_app=0
+if [ "$(pwd -P)" = "$(git rev-parse --show-toplevel)" ]; then
+  root_app=1
+fi
+
+has_own_test() {
+  local top="$1"
+  [ "$root_app" -eq 1 ] && is_app_dir "$root/$top"
+}
+
+owned_change() {
+  local path="$1" top
+  [ -f "$path" ] || return 1
+  top="${path%%/*}"
+  if [ "$top" != "$path" ] && has_own_test "$top"; then
+    return 1
+  fi
+  return 0
+}
+
+is_test() {
+  case "$1" in
+    tests/*.js | tests/*.mjs | tests/*.cjs | tests/*.jsx) return 0 ;;
+    *.test.js | *.test.mjs | *.test.cjs | *.test.jsx) return 0 ;;
+    *.spec.js | *.spec.mjs | *.spec.cjs | *.spec.jsx) return 0 ;;
+    test-*.js | test-*.mjs | test-*.cjs | test-*.jsx) return 0 ;;
+    */test-*.js | */test-*.mjs | */test-*.cjs | */test-*.jsx) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+is_source() {
+  case "$1" in
+    */*) ;;
+    *) return 1 ;;
+  esac
+  case "$1" in
+    tests/* | node_modules/* | dist/* | public/* | coverage/* | */node_modules/*) return 1 ;;
+  esac
+  is_test "$1" && return 1
+  case "$1" in
+    *.js | *.mjs | *.cjs | *.jsx) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+twin_names() {
+  local rel="$1" dir stem strip ext
+  dir="$(dirname "$rel")"
+  stem="$(basename "$rel")"
+  stem="${stem%.*}"
+  strip="${rel#src/}"
+  strip="${strip%.*}"
+  for ext in js mjs cjs jsx; do
+    printf '%s\n' "tests/$strip.test.$ext" "tests/$strip.spec.$ext" \
+      "$dir/$stem.test.$ext" "$dir/$stem.spec.$ext" "$dir/test-$stem.$ext"
+  done
+}
+
+test_for_source() {
+  local c strip
+  while IFS= read -r c; do
+    if [ -f "$c" ]; then
+      echo "$c"
+      return
+    fi
+  done < <(twin_names "$1")
+  strip="${1#src/}"
+  echo "tests/${strip%.*}.test.js"
+}
+
+source_candidates() {
+  local t="$1" dir base stem rel ext
+  dir="$(dirname "$t")"
+  base="$(basename "$t")"
+  case "$base" in
+    test-*)
+      stem="${base#test-}"
+      stem="${stem%.*}"
+      ;;
+    *)
+      stem="${base%.*}"
+      stem="${stem%.test}"
+      stem="${stem%.spec}"
+      ;;
+  esac
+  rel="${dir#tests}"
+  rel="${rel#/}"
+  for ext in js mjs cjs jsx; do
+    printf '%s\n' "$dir/$stem.$ext"
+    if [ "$dir" = tests ] || [ "${dir#tests/}" != "$dir" ]; then
+      printf '%s\n' "src/${rel:+$rel/}$stem.$ext" "${rel:+$rel/}$stem.$ext"
+    fi
+  done
+}
+
+source_for_test() {
+  local s n
+  while IFS= read -r s; do
+    if [ -f "$s" ] && is_source "$s"; then
+      while IFS= read -r n; do
+        if [ "$n" = "$1" ]; then
+          echo "$s"
+          return
+        fi
+      done < <(twin_names "$s")
+    fi
+  done < <(source_candidates "$1")
+  echo ""
+}
+
+already() {
+  local n="$1" t
+  for t in "${required[@]+"${required[@]}"}"; do
+    [ "$t" = "$n" ] && return 0
+  done
+  return 1
+}
+
+required=()
+missing_mirror=()
+orphans=()
+
+if [ "${#paths[@]}" -gt 0 ]; then
+  for arg in "${paths[@]}"; do
+    arg="${arg#./}"
+    if is_source "$arg"; then
+      already "$arg" || required+=("$arg")
+    elif is_test "$arg"; then
+      src="$(source_for_test "$arg")"
+      if [ -n "$src" ]; then
+        already "$src" || required+=("$src")
+      else
+        orphans+=("$arg")
+      fi
+    fi
+  done
+else
+  if [ "$all" -eq 1 ]; then
+    listing="$(git -C "$root" ls-files --cached --others --exclude-standard -- .)"
+  else
+    listing="$("$here/changed" --files)"
+  fi
+  while IFS= read -r path; do
+    [ -z "$path" ] && continue
+    case "$path" in
+      node_modules/* | dist/* | .flow-states/* | */node_modules/* | */.flow-states/*)
+        continue
+        ;;
+    esac
+    owned_change "$path" || continue
+    if is_source "$path"; then
+      already "$path" || required+=("$path")
+      mirror="$(test_for_source "$path")"
+      if [ ! -f "$mirror" ]; then
+        missing_mirror+=("$path → $mirror")
+      fi
+    elif is_test "$path"; then
+      src="$(source_for_test "$path")"
+      if [ -n "$src" ]; then
+        already "$src" || required+=("$src")
+      else
+        orphans+=("$path")
+      fi
+    fi
+  done <<<"$listing"
+fi
+
+ratchet=0
+for msg in "${missing_mirror[@]+"${missing_mirror[@]}"}"; do
+  echo "bin/test: no mirrored test for $msg" >&2
+  ratchet=1
+done
+for msg in "${orphans[@]+"${orphans[@]}"}"; do
+  echo "bin/test: no source for test $msg" >&2
+  ratchet=1
+done
+
+if [ "${#required[@]}" -gt 0 ] && [ ! -f "$covjson" ]; then
+  echo "bin/test: missing coverage-summary.json" >&2
+  exit 1
+fi
+
+file_cov() {
+  node -e '
+    const summary = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"));
+    const want = process.argv[2];
+    const key = Object.keys(summary).find((k) => k === want || k.endsWith("/" + want));
+    if (key === undefined) {
+      console.log("missing");
+    } else {
+      const row = summary[key];
+      const metrics = [row.functions, row.lines, row.branches, row.statements];
+      console.log(metrics.map((m) => m.pct.toFixed(2)).join(" "));
+    }
+  ' "$covjson" "$1"
+}
+
+for src in "${required[@]+"${required[@]}"}"; do
+  if [ ! -f "$src" ]; then
+    echo "bin/test: $src is required at 100% but is missing" >&2
+    ratchet=1
+    continue
+  fi
+  cov="$(file_cov "$src")"
+  if [ "$cov" = "missing" ]; then
+    echo "bin/test: $src has no coverage row (need 100%)" >&2
+    ratchet=1
+    continue
+  fi
+  read -r funcs lines branches stmts <<<"$cov"
+  if [ "$cov" != "100.00 100.00 100.00 100.00" ]; then
+    echo "bin/test: $src at $funcs functions, $lines lines, $branches branches, $stmts statements (need 100% each)" >&2
+    ratchet=1
+  fi
+done
+
+if [ "$ratchet" -ne 0 ]; then
+  exit 1
+fi
+exit "$rc"

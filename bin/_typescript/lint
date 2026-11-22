@@ -1,0 +1,121 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+UNGATED_NAMES=(.gitignore .prettierignore .nvmrc package-lock.json .ci-timeout)
+UNGATED_PATHS=()
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+root="$(cd "${APP_DIR:-$here/../..}" && pwd)"
+cd "$root"
+
+# shellcheck source=lib/toolchain.sh
+. "$here/lib/toolchain.sh"
+if [ -z "${CI:-}" ]; then
+  toolchain_check "$root"
+fi
+packages_check "$PWD" || exit 1
+
+all=0
+paths=()
+for arg in "$@"; do
+  case "$arg" in
+    --all) all=1 ;;
+    *) paths+=("$arg") ;;
+  esac
+done
+
+if [ "$all" -eq 1 ]; then
+  listing="$(git -C "$root" ls-files --cached --others --exclude-standard -- .)"
+elif [ "${#paths[@]}" -gt 0 ]; then
+  listing="$(printf '%s\n' "${paths[@]}")"
+else
+  listing="$("$here/changed" --files)"
+fi
+
+# shellcheck source=../lib/apps.sh
+. "$here/../lib/apps.sh"
+root_app=0
+if [ "$(pwd -P)" = "$(git rev-parse --show-toplevel)" ]; then
+  root_app=1
+fi
+
+has_own_lint() {
+  local top="$1"
+  [ "$root_app" -eq 1 ] && is_app_dir "$root/$top"
+}
+
+files=()
+while IFS= read -r path; do
+  [ -z "$path" ] && continue
+  [ -f "$path" ] || continue
+  case "$path" in
+    node_modules/* | .venv/* | .flow-states/* | */node_modules/* | */.venv/* | */.flow-states/*)
+      continue
+      ;;
+  esac
+  top="${path%%/*}"
+  if [ "$top" != "$path" ] && has_own_lint "$top"; then
+    continue
+  fi
+  files+=("$path")
+done <<<"$listing"
+
+if [ "${#files[@]}" -eq 0 ]; then
+  exit 0
+fi
+
+is_ungated() {
+  local path="$1" name entry
+  name="$(basename "$path")"
+  for entry in "${UNGATED_NAMES[@]}"; do
+    [ "$name" = "$entry" ] && return 0
+  done
+  for entry in "${UNGATED_PATHS[@]+"${UNGATED_PATHS[@]}"}"; do
+    [ "$path" = "$entry" ] && return 0
+  done
+  return 1
+}
+
+gated=()
+md_files=()
+for path in "${files[@]}"; do
+  case "$path" in
+    *.md)
+      md_files+=("$path")
+      continue
+      ;;
+  esac
+  if [ -L "$path" ] || is_ungated "$path" || head -n 1 "$path" | grep -qE '^#!.*\bbash\b'; then
+    continue
+  fi
+  gated+=("$path")
+done
+
+if [ "${#gated[@]}" -gt 0 ]; then
+  node --input-type=module -e '
+    import { ESLint } from "eslint";
+    import * as prettier from "prettier";
+    const eslint = new ESLint();
+    let failed = false;
+    for (const file of process.argv.slice(1)) {
+      const info = await prettier.getFileInfo(file, { resolveConfig: true });
+      if (info.ignored || info.inferredParser === null) {
+        console.error(file + ": no formatter (Prettier)");
+        failed = true;
+      }
+      const ignored = await eslint.isPathIgnored(file);
+      const config = ignored ? undefined : await eslint.calculateConfigForFile(file);
+      if (Object.keys(config?.rules ?? {}).length === 0) {
+        console.error(file + ": no linter (no ESLint rules apply)");
+        failed = true;
+      }
+    }
+    process.exit(failed ? 1 : 0);
+  ' "${gated[@]}"
+  "$root/node_modules/.bin/eslint" --max-warnings=0 "${gated[@]}"
+fi
+
+if [ "${#md_files[@]}" -eq 0 ]; then
+  echo "  ✓ markdownlint (no dirty Markdown files)"
+else
+  markdownlint-cli2 "${md_files[@]}"
+fi

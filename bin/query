@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+set -euo pipefail
+if [ "$#" -ne 1 ]; then
+  echo 'usage: bin/query "<sql>"' >&2
+  exit 2
+fi
+PGOPTIONS="${PGOPTIONS:+$PGOPTIONS }-c default_transaction_read_only=on"
+export PGOPTIONS
+exec psql --no-psqlrc --set=ON_ERROR_STOP=1 --command "$1"

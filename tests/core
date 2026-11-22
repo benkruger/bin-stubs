@@ -1,0 +1,1375 @@
+#!/usr/bin/env bash
+set -euo pipefail
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO="$(cd "$HERE/.." && pwd)"
+# shellcheck source=lib.sh
+. "$HERE/lib.sh"
+# shellcheck source=lib/seeds.sh
+. "$HERE/lib/seeds.sh"
+start_work
+
+test_settings() {
+  say "settings"
+  local gate='["Edit(/bin/**)","Edit(/tests/guards)","Edit(/tests/run)","Edit(/.claude/settings.json)","Edit(/.claude/hooks/**)","Edit(/.githooks/**)"]'
+  jq -e --argjson gate "$gate" '$gate - .permissions.deny == []' "$REPO/starter/.claude/settings.json" >/dev/null ||
+    die "the starter's settings do not deny editing the gate"
+  jq -e --argjson gate "$gate" --slurpfile mine "$REPO/.claude/settings.json" \
+    '(.permissions.deny -= $gate) == $mine[0]' "$REPO/starter/.claude/settings.json" >/dev/null ||
+    die "this repo's settings are not the starter's less the gate-edit denies"
+}
+
+test_scan() {
+  say "scan"
+  local repo
+  repo="$(new_repo)"
+  KEEP="$repo"
+  copy_dir "$REPO/bin" "$repo/bin"
+  printf 'needle here\n' >"$repo/notes.txt"
+  git -C "$repo" add -A
+  git -C "$repo" commit -q -m "add the needle"
+  expect_ok "$repo/bin/scan" refs needle
+  grep -q "notes.txt:1:needle here" "${LAST_LOG}" || die "scan refs missed the match"
+  grep -q "add the needle" "${LAST_LOG}" || die "scan refs missed the commit"
+  expect_ok "$repo/bin/scan" log --oneline
+  grep -q "add the needle" "${LAST_LOG}" || die "scan log missed the commit"
+  expect_ok "$repo/bin/scan" grep needle
+  grep -q "needle here" "${LAST_LOG}" || die "scan grep missed the match"
+  expect_ok "$repo/bin/scan" files
+  grep -qx "notes.txt" "${LAST_LOG}" || die "scan files missed the file"
+  expect_fail "$repo/bin/scan" sideways
+  grep -q "usage: bin/scan" "${LAST_LOG}" || die "scan printed no usage"
+}
+
+test_root_format() {
+  say "repo-level format"
+  local repo
+  repo="$(new_repo)"
+  KEEP="$repo"
+  copy_dir "$REPO/bin" "$repo/bin"
+  printf '%s\n' '#!/usr/bin/env bash' 'set -euo pipefail' 'if true;then' 'echo   "messy"' 'fi' >"$repo/messy"
+  chmod +x "$repo/messy"
+  printf '%s\n' '# Notes' '' '#Heading without a space' >"$repo/notes.md"
+  expect_ok "$repo/bin/format"
+  assert_eq "$(row_of suite "$(summary)")" "PASS" "format runs the repo-level formatter"
+  grep -qx "if true; then" "$repo/messy" || die "bin/format did not reformat the script"
+  grep -qx "## Heading without a space" "$repo/notes.md" ||
+    grep -qx "# Heading without a space" "$repo/notes.md" ||
+    die "bin/format did not fix the Markdown"
+}
+
+make_stub() {
+  cat >"$1/$2" <<'EOF'
+#!/usr/bin/env bash
+printf '%s %s\n' "$(basename "$0")" "$*" >>"$STUB_LOG"
+EOF
+  chmod +x "$1/$2"
+}
+
+test_open() {
+  say "open"
+  local repo stubs home log lang tool tries
+  repo="$(new_repo)"
+  KEEP="$repo"
+  stubs="$repo/.stubs"
+  home="$repo/.home"
+  log="$repo/stub.log"
+  mkdir -p "$stubs" "$home"
+  for tool in npm bundle curl open; do
+    make_stub "$stubs" "$tool"
+  done
+  copy_dir "$REPO/bin" "$repo/bin"
+  for lang in typescript javascript rails; do
+    mkdir -p "$repo/$lang/node_modules"
+  done
+  printf '{}\n' >"$repo/typescript/package.json"
+  printf '{}\n' >"$repo/typescript/tsconfig.json"
+  printf '{}\n' >"$repo/javascript/package.json"
+  printf "source 'https://rubygems.org'\n" >"$repo/rails/Gemfile"
+
+  run_log env CI=1 PATH="$stubs:$PATH" HOME="$home" STUB_LOG="$log" "$repo/bin/open" typescript
+  assert_rc 0 "typescript bin/open"
+  grep -qx "npm run dev -- --host 127.0.0.1 --open" "$log" || die "typescript bin/open ran the wrong command"
+
+  : >"$log"
+  run_log env CI=1 PATH="$stubs:$PATH" HOME="$home" STUB_LOG="$log" "$repo/bin/open" javascript
+  assert_rc 0 "javascript bin/open"
+  grep -qx "npm run dev -- --host 127.0.0.1 --open" "$log" || die "javascript bin/open ran the wrong command"
+
+  run_log env PATH="$stubs:$PATH" HOME="$home" STUB_LOG="$log" PORT=4001 "$repo/bin/open" rails
+  assert_rc 0 "rails bin/open"
+  grep -qx "bundle exec rails server -b 127.0.0.1 -p 4001" "$log" || die "rails bin/open ran the wrong command"
+  tries=0
+  until grep -qx "open http://127.0.0.1:4001" "$log"; do
+    tries=$((tries + 1))
+    [ "$tries" -lt 50 ] || die "rails bin/open never opened the browser"
+    sleep 0.1
+  done
+}
+
+test_qa() {
+  say "qa"
+  local repo stubs home log lang playwright
+  repo="$(new_repo)"
+  KEEP="$repo"
+  stubs="$repo/.stubs"
+  home="$repo/.home"
+  log="$repo/stub.log"
+  mkdir -p "$stubs" "$home"
+  make_stub "$stubs" bundle
+  copy_dir "$REPO/bin" "$repo/bin"
+  for lang in typescript javascript; do
+    mkdir -p "$repo/$lang/node_modules/.bin"
+    playwright="$repo/$lang/node_modules/.bin/playwright"
+    cat >"$playwright" <<'EOF'
+#!/usr/bin/env bash
+printf 'playwright %s\n' "$*" >>"$STUB_LOG"
+[ -z "${QA_WARN:-}" ] || echo "Warning: a slow page"
+EOF
+    chmod +x "$playwright"
+  done
+  printf '{}\n' >"$repo/typescript/package.json"
+  printf '{}\n' >"$repo/typescript/tsconfig.json"
+  printf '{}\n' >"$repo/javascript/package.json"
+  mkdir -p "$repo/rails"
+  printf "source 'https://rubygems.org'\n" >"$repo/rails/Gemfile"
+
+  for lang in typescript javascript; do
+    : >"$log"
+    run_log env CI=1 PATH="$stubs:$PATH" HOME="$home" STUB_LOG="$log" "$repo/bin/qa" "$lang" e2e/home.spec.ts
+    assert_rc 0 "$lang bin/qa"
+    grep -qx "playwright install chromium" "$log" || die "$lang bin/qa did not install Chromium"
+    grep -qx "playwright test e2e/home.spec.ts" "$log" || die "$lang bin/qa did not run Playwright on the spec"
+  done
+  run_log env CI=1 QA_WARN=1 PATH="$stubs:$PATH" HOME="$home" STUB_LOG="$log" "$repo/bin/qa" javascript
+  assert_rc 1 "a run that printed a warning"
+  grep -q "bin/qa: the run printed a warning" "${LAST_LOG}" || die "bin/qa passed a warning"
+  rm "$repo/typescript/node_modules/.bin/playwright"
+  run_log env CI=1 PATH="$stubs:$PATH" HOME="$home" STUB_LOG="$log" "$repo/bin/qa" typescript
+  assert_rc 1 "an app with no Playwright"
+  grep -q "this app has no Playwright" "${LAST_LOG}" || die "bin/qa ran with no Playwright"
+
+  : >"$log"
+  run_log env PATH="$stubs:$PATH" HOME="$home" STUB_LOG="$log" "$repo/bin/qa" rails test/system/home_test.rb
+  assert_rc 0 "rails bin/qa"
+  grep -qx "bundle exec rails test:system test/system/home_test.rb" "$log" || die "rails bin/qa did not run the system tests"
+  run_log "$repo/bin/qa"
+  assert_rc 2 "bin/qa with no app"
+}
+
+test_query() {
+  say "query"
+  local stubs log
+  stubs="$WORK/query-stubs"
+  log="$WORK/query.log"
+  mkdir -p "$stubs"
+  cat >"$stubs/psql" <<'EOF'
+#!/usr/bin/env bash
+printf 'psql %s\n' "$*" >>"$STUB_LOG"
+printf 'PGOPTIONS=%s\n' "$PGOPTIONS" >>"$STUB_LOG"
+EOF
+  chmod +x "$stubs/psql"
+  run_log "$REPO/bin/query"
+  assert_rc 2 "bin/query with no statement"
+  run_log "$REPO/bin/query" "select 1" "select 2"
+  assert_rc 2 "bin/query with two statements"
+  run_log env -u PGOPTIONS PATH="$stubs:$PATH" STUB_LOG="$log" "$REPO/bin/query" "select 1"
+  assert_rc 0 "bin/query"
+  grep -qx "psql --no-psqlrc --set=ON_ERROR_STOP=1 --command select 1" "$log" || die "bin/query ran psql wrongly"
+  grep -qx "PGOPTIONS=-c default_transaction_read_only=on" "$log" || die "bin/query was not read-only"
+  : >"$log"
+  run_log env PGOPTIONS="-c default_transaction_read_only=off" PATH="$stubs:$PATH" STUB_LOG="$log" "$REPO/bin/query" "select 1"
+  grep -qx "PGOPTIONS=-c default_transaction_read_only=off -c default_transaction_read_only=on" "$log" ||
+    die "a PGOPTIONS that turns writes on was not overridden"
+}
+
+hook_on() {
+  LAST_LOG="$(mktemp)"
+  if jq -n --arg c "$1" "{tool_input:{command:\$c}}" |
+    "$REPO/starter/.claude/hooks/require-bin" >"${LAST_LOG}" 2>&1; then
+    LAST_RC=0
+  else
+    LAST_RC=$?
+  fi
+}
+
+test_hooks() {
+  say "starter hooks"
+  local cmd
+  for cmd in "bun test" "cd app && cargo build" "bundle exec rubocop -A" \
+    "RAILS_ENV=test bundle exec rails test" "npx biome check ." "uv run pytest" \
+    "xcrun swift-format lint Sources" "ls; /opt/homebrew/bin/ruff check ."; do
+    hook_on "$cmd"
+    assert_rc 2 "require-bin should block: $cmd"
+    grep -q "Blocked: call the bin/ script" "${LAST_LOG}" || die "no block message for: $cmd"
+  done
+  for cmd in "git commit -m x" "cd app && git commit -am x" \
+    "git -C app commit -m x" "git -c user.name=x commit" "'git' commit -m x" \
+    "sh -c \"git commit -m x\"" "GIT_DIR=. /usr/bin/git commit"; do
+    hook_on "$cmd"
+    assert_rc 2 "require-bin should block: $cmd"
+    grep -q "Blocked: commit with bin/commit" "${LAST_LOG}" || die "no commit block message for: $cmd"
+  done
+  for cmd in "bin/stamp-rules .claude/rules/a.md" "./bin/stamp-rules" "cd app && bin/stamp-rules"; do
+    hook_on "$cmd"
+    assert_rc 2 "require-bin should block: $cmd"
+    grep -q "Blocked: only bin/commit stamps rules" "${LAST_LOG}" || die "no stamp block message for: $cmd"
+  done
+  for cmd in "bin/test src/add.ts" "bin/ci --typescript" "git status" \
+    "bundle exec rails runner 1" "npm test" "ls -la" "git log --grep commit" \
+    "bin/commit main /tmp/flow-commit-msg.abc123"; do
+    hook_on "$cmd"
+    assert_rc 0 "require-bin should allow: $cmd"
+  done
+  run_log env -u CLAUDE_CODE_REMOTE "$REPO/starter/.claude/hooks/session-start"
+  assert_rc 0 "session-start outside the cloud"
+  [ ! -s "${LAST_LOG}" ] || die "session-start ran something outside the cloud"
+}
+
+test_starter() {
+  say "starter in a fresh repo"
+  local repo lang probe token
+  repo="$(new_repo)"
+  KEEP="$repo"
+  copy_dir "$REPO/starter" "$repo"
+  copy_dir "$REPO/bin" "$repo/bin"
+  for lang in typescript javascript python rails rust ios shell; do
+    copy_dir "$REPO/$lang/.claude" "$repo/.claude"
+  done
+  expect_ok "$repo/tests/run"
+  expect_ok "$repo/bin/ci"
+  assert_eq "$(row_of suite "$(summary)")" "PASS" "starter suite through bin/ci"
+
+  local check_probe="$WORK/check-probe"
+  mkdir -p "$repo/checks"
+  cat >"$repo/checks/probe" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+[ ! -e "${PROBE_FILE:?}" ]
+EOF
+  chmod +x "$repo/checks/probe"
+  export PROBE_FILE="$check_probe"
+  expect_ok "$repo/bin/ci"
+  touch "$check_probe"
+  expect_fail "$repo/bin/ci"
+  grep -q "checks/probe failed" "${LAST_LOG}" || die "a failing check did not fail bin/ci"
+  unset PROBE_FILE
+  rm -f "$check_probe"
+  rm -r "$repo/checks"
+
+  {
+    printf '# Notes\n\n'
+    head -c 70000 /dev/zero | tr '\0' 'a'
+    printf '\n'
+  } >"$repo/notes.md"
+  expect_fail "$repo/tests/run"
+  grep -q "notes.md: 70010 bytes, over the 65536-byte cap" "${LAST_LOG}" || die "size cap not enforced"
+  rm "$repo/notes.md"
+
+  probe="$repo/probe.py"
+  token="no"
+  token+="qa"
+  printf 'value = 1  # %s\n' "$token" >"$probe"
+  expect_fail "$repo/tests/run"
+  grep -q "probe.py:1: suppression comment" "${LAST_LOG}" || die "suppression ban not enforced"
+  rm "$probe"
+
+  local cfg="$repo/cfg" msg
+  mkdir -p "$cfg/ok" "$cfg/bad"
+  printf '{ "%sschema": "x", "formatter": { "indentStyle": "space" }, "linter": { "enabled": true, "rules": { "preset": "all", "style": "error" } } }\n' "\$" >"$cfg/ok/biome.json"
+  printf '%s\n' 'export default [{ files: ["**/*.ts"], extends: [base], rules: {' \
+    '  "no-console": "error", eqeqeq: ["error", "always"], "@typescript-eslint/no-explicit-any": 2,' '} }];' \
+    >"$cfg/ok/eslint.config.js"
+  printf 'AllCops:\n  NewCops: enable\n  SuggestExtensions: false\nStyle/Documentation:\n  Enabled: false\nStyle/Copyright:\n  Enabled: true\n' >"$cfg/ok/.rubocop.yml"
+  printf '[package]\nname = "app"\n\n[lints.clippy]\npedantic = { level = "deny", priority = -1 }\n' >"$cfg/ok/Cargo.toml"
+  printf '[project]\nname = "app"\n\n[tool.ruff]\nline-length = 100\n\n[tool.ruff.lint]\nextend-select = ["ALL"]\n' >"$cfg/ok/pyproject.toml"
+  printf '{ "lineLength": 100, "rules": { "AlwaysUseLowerCamelCase": true } }\n' >"$cfg/ok/.swift-format"
+  printf 'source-path=SCRIPTDIR\n' >"$cfg/ok/.shellcheckrc"
+  expect_ok "$repo/tests/run"
+  rm -r "$cfg/ok"
+
+  printf '{ "linter": { "enabled": true, "rules": { "preset": "all", "style": "warn" } } }\n' >"$cfg/bad/biome.json"
+  printf 'export default [{ rules: { "no-console": "error", eqeqeq: 0 } }];\n' >"$cfg/bad/eslint.config.js"
+  printf 'Style/StringLiterals:\n  EnforcedStyle: double_quotes\n' >"$cfg/bad/.rubocop.yml"
+  printf '[lints.clippy]\nall = "%s"\n' allow >"$cfg/bad/Cargo.toml"
+  printf '[tool.ruff.lint.per-file-ignores]\n"tests/*" = ["S101"]\n' >"$cfg/bad/pyproject.toml"
+  printf '{ "rules": { "AlwaysUseLowerCamelCase": false } }\n' >"$cfg/bad/.swift-format"
+  printf 'disable=SC2034\n' >"$cfg/bad/.shellcheckrc"
+  printf '{ "default": true }\n' >"$cfg/bad/.markdownlint.json"
+  printf '{}\n' >"$cfg/bad/brakeman.ignore"
+  expect_fail "$repo/tests/run"
+  for msg in "biome.json: Biome settings outside its list" \
+    "eslint.config.js: sets an ESLint rule below error" \
+    ".rubocop.yml: RuboCop settings outside its list" \
+    "Cargo.toml: a lint level other than warn, deny or forbid" \
+    "pyproject.toml: Ruff settings outside its list" \
+    ".swift-format: turns a swift-format rule off" \
+    ".shellcheckrc: holds a directive other than" \
+    ".markdownlint.json: markdownlint runs with its default rules" \
+    "brakeman.ignore: Brakeman ignores no warning"; do
+    grep -qF "cfg/bad/$msg" "${LAST_LOG}" || die "lint configuration not checked: $msg"
+  done
+  rm -r "$cfg"
+
+  local skips="$repo/skips" form
+  mkdir -p "$skips/tests" "$skips/test" "$skips/src" "$skips/ios/Tests"
+  form="test"
+  form+=".only"
+  printf '%s("a", () => {});\ntest("b", () => {});\n' "$form" >"$skips/a.test.ts"
+  form="x"
+  form+="it"
+  printf '%s("a", () => {});\n' "$form" >"$skips/b.spec.js"
+  form="@pytest.mark."
+  form+="skip"
+  printf 'import pytest\n\n\n%s\ndef test_a():\n    pass\n' "$form" >"$skips/tests/test_a.py"
+  form="  sk"
+  form+="ip"
+  printf 'class ATest\n  def test_a\n%s\n  end\nend\n' "$form" >"$skips/test/a_test.rb"
+  form="#[ign"
+  form+="ore]"
+  printf '%s\n#[test]\nfn a() {}\n' "$form" >"$skips/src/lib.rs"
+  form="XCT"
+  form+="Skip"
+  printf 'func testA() throws {\n  throw %s("x")\n}\n' "$form" >"$skips/ios/Tests/ATests.swift"
+  expect_fail "$repo/tests/run"
+  for msg in a.test.ts:1 b.spec.js:1 tests/test_a.py:4 test/a_test.rb:3 src/lib.rs:1 ios/Tests/ATests.swift:2; do
+    grep -qF "skips/$msg: a test that does not run" "${LAST_LOG}" || die "a test that does not run was not caught: $msg"
+  done
+  if grep -qF "skips/a.test.ts:2:" "${LAST_LOG}"; then
+    die "a test that runs was flagged"
+  fi
+  rm -r "$skips"
+
+  local slow="$repo/timeouts"
+  mkdir -p "$slow/bin/_typescript" "$slow/tests" "$slow/ios/Tests"
+  printf 'vitest run --testTimeout 60000\n' >"$slow/bin/_typescript/test"
+  printf '{ "jest": { "testTimeout": 60000 } }\n' >"$slow/package.json"
+  printf 'export default { test: { testTimeout: 60000 } };\n' >"$slow/vitest.config.ts"
+  printf '[test]\ntimeout = 60000\n' >"$slow/bunfig.toml"
+  printf '[tool.pytest.ini_options]\ntimeout = 60\n' >"$slow/pyproject.toml"
+  printf 'test("a", () => {}, { timeout: 10_000 });\nvi.setConfig({ testTimeout: 60000 });\ntest("b", () => {}, { timeout: 2 * 60000 });\n' >"$slow/a.test.ts"
+  printf '[pytest]\naddopts = --timeout=60\n' >"$slow/pytest.ini"
+  printf 'import pytest\n\n\n@pytest.mark.timeout(10)\ndef test_a():\n    pass\n\n\n@pytest.mark.timeout(LIMIT)\ndef test_b():\n    pass\n' >"$slow/tests/test_slow.py"
+  printf 'final class SlowTests: XCTestCase {\n  override func setUp() { executionTimeAllowance = 600 }\n}\n' >"$slow/ios/Tests/SlowTests.swift"
+  printf '{ "defaultOptions": { "defaultTestExecutionTimeAllowance": 600 } }\n' >"$slow/App.xctestplan"
+  expect_fail "$repo/tests/run"
+  for msg in bin/_typescript/test:1 package.json:1 vitest.config.ts:1 bunfig.toml:2 pyproject.toml:2 \
+    pytest.ini:2 a.test.ts:2 a.test.ts:3 tests/test_slow.py:9 ios/Tests/SlowTests.swift:2 App.xctestplan:1; do
+    grep -qF "timeouts/$msg: raises the test time limit" "${LAST_LOG}" || die "a raised time limit was not caught: $msg"
+  done
+  for msg in a.test.ts:1 tests/test_slow.py:4; do
+    if grep -qF "timeouts/$msg:" "${LAST_LOG}"; then
+      die "a fixed time limit on one test was flagged: $msg"
+    fi
+  done
+  rm -r "$slow"
+
+  local cov="$repo/coverage-config"
+  mkdir -p "$cov/ok/test" "$cov/bad/test" "$cov/bad/App.xcodeproj/xcshareddata/xcschemes"
+  printf "require 'simplecov'\nSimpleCov.start do\n  enable_coverage :branch\n  minimum_coverage line: 100, branch: 100\n  skip %%w[/config/ /test/]\nend\n" >"$cov/ok/test/test_helper.rb"
+  printf '{ "defaultOptions": { "codeCoverage": true } }\n' >"$cov/ok/App.xctestplan"
+  expect_ok "$repo/tests/run"
+  rm -r "$cov/ok"
+  printf "require 'simplecov'\nSimpleCov.start do\n  minimum_coverage line: 90, branch: 100\n  add_filter 'app/payments'\nend\n" >"$cov/bad/test/test_helper.rb"
+  printf '{ "defaultOptions": { "codeCoverage": false } }\n' >"$cov/bad/App.xctestplan"
+  printf '<TestAction onlyGenerateCoverageForSpecifiedTargets = "YES">\n' >"$cov/bad/App.xcodeproj/xcshareddata/xcschemes/App.xcscheme"
+  expect_fail "$repo/tests/run"
+  for msg in "test/test_helper.rb: starts SimpleCov without minimum_coverage line: 100, branch: 100" \
+    "test/test_helper.rb:4: leaves files out of coverage" \
+    "App.xctestplan:1: turns code coverage off" \
+    "App.xcodeproj/xcshareddata/xcschemes/App.xcscheme:1: turns code coverage off"; do
+    grep -qF "coverage-config/bad/$msg" "${LAST_LOG}" || die "narrowed coverage was not caught: $msg"
+  done
+  rm -r "$cov"
+
+  mkdir -p "$repo/web/dist"
+  printf 'x\n' >"$repo/web/dist/app.js"
+  git -C "$repo" add -f web/dist/app.js
+  printf 'TN:\n' >"$repo/web/lcov.info"
+  cp "$repo/.gitignore" "$repo/gitignore.keep"
+  grep -vx 'coverage/' "$repo/gitignore.keep" >"$repo/.gitignore"
+  expect_fail "$repo/tests/run"
+  grep -qF "web/dist/app.js: build or coverage output" "${LAST_LOG}" || die "tracked build output was not caught"
+  grep -qF "web/lcov.info: build or coverage output" "${LAST_LOG}" || die "a coverage report was not caught"
+  grep -qF ".gitignore does not ignore coverage/" "${LAST_LOG}" || die "a missing ignore line was not caught"
+  git -C "$repo" rm -q --cached web/dist/app.js
+  rm -r "$repo/web"
+  mv "$repo/gitignore.keep" "$repo/.gitignore"
+
+  mkdir -p "$repo/web/bin" "$repo/bin/_root"
+  printf '#!/usr/bin/env bash\nset -euo pipefail\n' >"$repo/web/bin/ci"
+  printf '#!/usr/bin/env bash\nset -euo pipefail\n' >"$repo/bin/_root/test"
+  chmod +x "$repo/web/bin/ci" "$repo/bin/_root/test"
+  expect_fail "$repo/tests/run"
+  grep -qF "web/bin/ci: a gate script inside an app" "${LAST_LOG}" || die "a gate script inside an app was not caught"
+  grep -qF "bin/_root/test: the root app runs from bin/_<language>/" "${LAST_LOG}" || die "a bin/_root script was not caught"
+  rm -r "$repo/web" "$repo/bin/_root"
+
+  printf 'npm install\n' >>"$repo/bin/_typescript/build"
+  printf 'uv sync\n' >>"$repo/bin/_python/dependencies"
+  expect_fail "$repo/tests/run"
+  grep -qE "bin/_typescript/build:[0-9]+: installs packages; only bin/dependencies does" "${LAST_LOG}" ||
+    die "a gate script that installs was not caught"
+  grep -q "bin/_python/dependencies:[0-9]*: installs packages" "${LAST_LOG}" && die "bin/dependencies was refused for installing"
+  cp "$REPO/bin/_typescript/build" "$repo/bin/_typescript/build"
+  cp "$REPO/bin/_python/dependencies" "$repo/bin/_python/dependencies"
+
+  local notes="$repo/comment-plants" plant expected actual
+  mkdir -p "$notes"
+  cat >"$notes/a.ts" <<'EOF'
+const a = 'x // y';
+const b = "/* no */";
+const c = `t ${[1].map((e) => `${e}//`)} // still`;
+const r = /\/\/[/]x/u;
+const q = 1 / 2 / 3;
+// flagged
+const z = 1; /* flagged */
+const s = 'x\'y';
+EOF
+  cat >"$notes/s.sh" <<'EOF'
+#!/usr/bin/env bash
+# shellcheck source=lib.sh
+echo "${#arr[@]} $# \#"
+x=1 # flagged
+cat <<'INNER'
+# inside heredoc
+INNER
+echo 'a # b'
+# flagged
+EOF
+  cat >"$notes/r.rb" <<'EOF'
+# frozen_string_literal: true
+x = "#{y}" # flagged
+=begin flagged
+flagged
+=end flagged
+z = <<~TEXT
+  # body
+TEXT
+a = "#"
+# flagged
+EOF
+  cat >"$notes/p.py" <<'EOF'
+s = "# not"
+t = """
+# inside
+"""
+x = 1  # flagged
+# flagged
+EOF
+  printf '%s\n' 'a = "#"' '# flagged' 'b = 1 # flagged' >"$notes/t.toml"
+  printf '%s\n' 'url: http://x#y' 'key: "a # b"' '# flagged' 'c: d # flagged' >"$notes/y.yml"
+  printf '%s\n' '// swift-tools-version: 6.0' 'import PackageDescription' '/// flagged' 'let s = "// no"' >"$notes/Package.swift"
+  printf '%s\n' '//! flagged' "fn f<'a>(s: &'a str) -> &'a str { s }" 'const U: &str = "http://x";' '/// flagged' >"$notes/lib.rs"
+  printf '%s\n' 'a { background: url(http://x); }' '/* flagged */' >"$notes/s.css"
+  printf '%s\n' '# flagged' 'dist/' >"$notes/.gitignore"
+  expect_fail "$repo/tests/run"
+  for plant in a.ts s.sh r.rb p.py t.toml y.yml Package.swift lib.rs s.css .gitignore; do
+    expected="$(grep -n flagged "$notes/$plant" | cut -d: -f1 | tr '\n' ' ')"
+    actual="$(sed -nE "s|^guards: comment-plants/$plant:([0-9]+): a comment.*|\1|p" "${LAST_LOG}" | tr '\n' ' ')"
+    assert_eq "$actual" "$expected" "comments found in $plant"
+  done
+  rm -r "$notes"
+
+  {
+    printf '# Long\n\n'
+    for _ in $(seq 1 45); do printf -- '- line\n'; done
+  } >"$repo/.claude/rules/long.md"
+  expect_fail "$repo/tests/run"
+  grep -q "long.md: 47 lines (cap 40)" "${LAST_LOG}" || die "rule cap not enforced"
+  rm "$repo/.claude/rules/long.md"
+
+  printf '# Probe\n\nA probe rule.\n' >"$repo/.claude/rules/probe.md"
+  expect_fail "$repo/tests/run"
+  grep -q "probe.md: no audit stamp" "${LAST_LOG}" || die "missing stamp not caught"
+  expect_ok "$repo/bin/stamp-rules" "$repo/.claude/rules/probe.md"
+  expect_ok "$repo/tests/run"
+  perl -pi -e 's/A probe rule/A changed rule/' "$repo/.claude/rules/probe.md"
+  expect_fail "$repo/tests/run"
+  grep -q "probe.md: audit stamp does not match its body" "${LAST_LOG}" || die "stale stamp not caught"
+  rm "$repo/.claude/rules/probe.md"
+
+  printf '%s\n' '#!/usr/bin/env bash' 'echo "loose"' >"$repo/bin/loose"
+  chmod +x "$repo/bin/loose"
+  expect_fail "$repo/tests/run"
+  grep -q "bin/loose: first command is not set -euo pipefail" "${LAST_LOG}" || die "strict mode not enforced"
+  rm "$repo/bin/loose"
+
+  printf '%s\n' '#!/usr/bin/env bash' 'set -euo pipefail' 'if true;then' 'echo   "messy"' 'fi' >"$repo/bin/messy"
+  chmod +x "$repo/bin/messy"
+  expect_fail "$repo/tests/run"
+  grep -q "shfmt would reformat" "${LAST_LOG}" || die "script formatting not enforced"
+  rm "$repo/bin/messy"
+
+  printf '%s\n' '# Notes' '' '#Heading without a space' >"$repo/notes.md"
+  expect_fail "$repo/tests/run"
+  grep -q "notes.md:3.*MD018" "${LAST_LOG}" || die "markdownlint not enforced"
+  rm "$repo/notes.md"
+
+  cp "$repo/.claude/settings.json" "$repo/settings.json.keep"
+  jq '.permissions.deny -= ["Bash(git reset *)", "Bash(git push * -f)"]
+    | .permissions.allow += ["Bash(*/bin/*)"] | del(.hooks.SessionStart)' \
+    "$repo/settings.json.keep" >"$repo/.claude/settings.json"
+  expect_fail "$repo/tests/run"
+  grep -q "does not deny Bash(git reset \*)" "${LAST_LOG}" || die "missing deny not caught"
+  grep -q "does not deny Bash(git push \* -f)" "${LAST_LOG}" || die "missing force-push deny not caught"
+  grep -q "allows a command pattern that starts with a wildcard" "${LAST_LOG}" || die "wildcard allow not caught"
+  grep -q "no SessionStart hook runs" "${LAST_LOG}" || die "missing hook not caught"
+  mv "$repo/settings.json.keep" "$repo/.claude/settings.json"
+
+  sed 's/^MAX_AUTHORED_BYTES=65536$/MAX_AUTHORED_BYTES=99999/' "$repo/tests/guards" >"$repo/tests/guards.raised"
+  mv "$repo/tests/guards.raised" "$repo/tests/guards"
+  chmod +x "$repo/tests/guards"
+  expect_fail "$repo/tests/run"
+  grep -q "does not pin MAX_AUTHORED_BYTES=65536" "${LAST_LOG}" || die "raised cap not caught"
+}
+
+fake_claude() {
+  mkdir -p "$1"
+  cat >"$1/claude" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+prompt="$(cat)"
+case "$prompt" in
+  *"You are the rule-fixer."*)
+    echo "fix $*" >>"$FAKE_CLAUDE_LOG"
+    files='[]'
+    while IFS= read -r f; do
+      case "${FAKE_FIX:-}" in
+        good) text="$(perl -pe 's/BAD/GOOD/' "$f")" ;;
+        grow) text="$(cat "$f" && for _ in $(seq 1 50); do echo "- more"; done)" ;;
+        outside)
+          f=notes.md
+          text="replaced"
+          ;;
+        newfile)
+          f=.claude/rules/split.md
+          text="# Split"
+          ;;
+        *) continue ;;
+      esac
+      files="$(jq -c --arg p "$f" --arg c "$text"$'\n' '. + [{path: $p, content: $c}]' <<<"$files")"
+    done < <(awk '/^## Files you may change$/ { on = 1; next } /^## / { on = 0 }
+      on && /^- / { print substr($0, 3) }' <<<"$prompt")
+    printf '{"type":"result","is_error":false,"structured_output":{"files":%s}}\n' "$files"
+    ;;
+  *)
+    if grep -q '^audit' "$FAKE_CLAUDE_LOG"; then
+      echo "verify $*" >>"$FAKE_CLAUDE_LOG"
+      printf '%s\n' "$prompt" >"$FAKE_CLAUDE_LOG.recheck"
+      if [ -n "${FAKE_VERIFY_SEQ:-}" ]; then
+        word="$(printf '%s\n' ${FAKE_VERIFY_SEQ} | sed -n "$(grep -c '^verify' "$FAKE_CLAUDE_LOG")p")"
+        if [ -n "$word" ]; then
+          printf '{"type":"result","is_error":false,"structured_output":{"findings":[{"file":".claude/rules/probe.md","requirement":"r","offending":"%s","fix":"f"}]}}\n' "$word"
+        else
+          echo '{"type":"result","is_error":false,"structured_output":{"findings":[]}}'
+        fi
+      else
+        printf '{"type":"result","is_error":false,"structured_output":{"findings":%s}}\n' "${FAKE_VERIFY:-[]}"
+      fi
+      exit 0
+    fi
+    echo "audit $*" >>"$FAKE_CLAUDE_LOG"
+    printf '%s\n' "$prompt" >"$FAKE_CLAUDE_LOG.prompt"
+    if [ "${FAKE_AUDIT:-}" = none ]; then
+      echo '{"type":"result","is_error":false}'
+    else
+      printf '{"type":"result","is_error":false,"structured_output":{"findings":%s}}\n' "${FAKE_AUDIT:-[]}"
+    fi
+    ;;
+esac
+EOF
+  chmod +x "$1/claude"
+}
+
+commit_json() { jq -r "$1" "${LAST_LOG}"; }
+
+commit_base() {
+  local base="$WORK/commit-base" repo
+  repo="$(new_repo)"
+  copy_dir "$REPO/starter" "$repo"
+  copy_dir "$REPO/bin" "$repo/bin"
+  printf '# Notes\n' >"$repo/notes.md"
+  git -C "$repo" add -A
+  git -C "$repo" commit -q -m starter
+  mkdir -p "$base"
+  mv "$repo" "$base/repo"
+  git init -q --bare "$base/origin.git"
+  git -C "$base/repo" push -q "$base/origin.git" main
+}
+
+commit_case() {
+  local dir
+  dir="$(mktemp -d "$WORK/commit-case.XXXXXX")"
+  cp -R "$WORK/commit-base/repo" "$dir/repo"
+  cp -R "$WORK/commit-base/origin.git" "$dir/origin.git"
+  repo="$dir/repo"
+  origin="$dir/origin.git"
+  rule="$repo/.claude/rules/probe.md"
+  KEEP="$repo"
+  git -C "$repo" remote add origin "$origin"
+  git -C "$repo" config core.hooksPath .githooks
+}
+
+commit() {
+  local vars=()
+  while [ "$#" -gt 0 ] && [ "$1" != "--" ]; do
+    vars+=("$1")
+    shift
+  done
+  [ "$#" -eq 0 ] || shift
+  : >"$CLAUDE_LOG"
+  run_log env PATH="$FAKE_CLAUDE:$PATH" FAKE_CLAUDE_LOG="$CLAUDE_LOG" \
+    ${vars[@]+"${vars[@]}"} "$repo/bin/commit" "$@"
+}
+
+sessions() { cut -d' ' -f1 "$CLAUDE_LOG" | tr '\n' ' '; }
+
+test_commit() {
+  say "commit"
+  local repo origin rule msg empty finding sha before marker
+  FAKE_CLAUDE="$WORK/fake-claude"
+  CLAUDE_LOG="$WORK/claude.log"
+  fake_claude "$FAKE_CLAUDE"
+  commit_base
+  msg="$(mktemp /tmp/flow-commit-msg.XXXXXX)"
+  empty="$(mktemp /tmp/flow-commit-msg.XXXXXX)"
+  printf '  Add notes  \n\n' >"$msg"
+  printf '  \n' >"$empty"
+  finding='[{"file":".claude/rules/probe.md","requirement":"r","offending":"BAD","fix":"say GOOD"}]'
+
+  commit_case
+  commit --
+  assert_rc 1 "bin/commit with no arguments"
+  grep -qx "usage: bin/commit \[--no-push\] <branch> <msgfile>" "${LAST_LOG}" || die "no usage line"
+  commit -- a/b "$msg"
+  assert_rc 1 "a branch with a slash"
+  grep -qx "unsafe branch: a/b" "${LAST_LOG}" || die "a slashed branch was not refused"
+  printf 'x\n' >"$WORK/invented-msg"
+  commit -- main "$WORK/invented-msg"
+  assert_rc 1 "an invented message file"
+  assert_eq "$(commit_json .step)" "message_path" "an invented message file"
+  commit -- main /tmp/flow-commit-msg.XXXXXX
+  assert_eq "$(commit_json .step)" "message_path" "the mktemp template"
+  commit -- main "$empty"
+  assert_eq "$(commit_json .step)" "message_missing" "an empty message"
+
+  commit_case
+  commit -- main "$msg"
+  assert_rc 1 "a clean tree"
+  assert_eq "$(commit_json .step)" "empty" "a clean tree"
+
+  commit_case
+  before="$(git -C "$repo" rev-parse HEAD)"
+  printf '%s\n' '# Notes' '' '#Heading without a space' >"$repo/notes.md"
+  commit -- main "$msg"
+  assert_eq "$(commit_json .step)" "ci" "a red bin/ci"
+  commit_json .detail | grep -q "MD018" || die "the red bin/ci output is missing from the detail"
+  assert_eq "$(git -C "$repo" rev-parse HEAD)" "$before" "a red bin/ci committed"
+
+  commit_case
+  printf '\nMore.\n' >>"$repo/notes.md"
+  commit -- main "$msg"
+  assert_rc 0 "a green commit"
+  sha="$(commit_json .sha)"
+  assert_eq "$sha" "$(git -C "$repo" rev-parse HEAD)" "the printed sha"
+  assert_eq "$(git -C "$origin" rev-parse main)" "$sha" "the push to origin"
+  assert_eq "$(git -C "$repo" log -1 --format=%B)" "Add notes" "the trimmed message"
+  [ ! -s "$CLAUDE_LOG" ] || die "claude ran with no rule edited"
+
+  commit_case
+  before="$(git -C "$origin" rev-parse main)"
+  printf '\nMore.\n' >>"$repo/notes.md"
+  commit -- --no-push main "$msg"
+  assert_rc 0 "a commit without a push"
+  assert_eq "$(commit_json .sha)" "$(git -C "$repo" rev-parse HEAD)" "the unpushed commit"
+  assert_eq "$(git -C "$origin" rev-parse main)" "$before" "--no-push pushed"
+
+  commit_case
+  before="$(git -C "$repo" rev-parse HEAD)"
+  printf '\nRaw.\n' >>"$repo/notes.md"
+  git -C "$repo" add -A
+  run_log git -C "$repo" commit -q -m raw
+  assert_rc 1 "a commit bin/commit did not start"
+  grep -q "pre-commit: commit with bin/commit" "${LAST_LOG}" || die "the hook did not name bin/commit"
+  marker="$(git -C "$repo" rev-parse --path-format=absolute --git-path flow-commit-marker)"
+  printf 'issued\n' >"$marker"
+  run_log env FLOW_COMMIT_NONCE=guessed git -C "$repo" commit -q -m raw
+  assert_rc 1 "a commit with the wrong code"
+  [ ! -f "$marker" ] || die "a refused commit left its code for another try"
+  assert_eq "$(git -C "$repo" rev-parse HEAD)" "$before" "a refused commit landed"
+
+  commit_case
+  printf '# Probe\n\nA probe rule.\n' >"$rule"
+  commit -- main "$msg"
+  assert_rc 0 "a clean rule review"
+  tail -n 1 "$rule" | grep -qE '^<!-- audited: [0-9a-f]{12} -->$' || die "a clean review did not stamp the rule"
+  assert_eq "$(sessions)" "audit " "a clean review's sessions"
+  grep -q -- "--json-schema" "$CLAUDE_LOG" || die "the auditor ran without a findings schema"
+  if grep -q "## Changes since the last review" "$CLAUDE_LOG.prompt"; then
+    die "a new rule was judged on changed lines only"
+  fi
+
+  commit_case
+  printf '# Probe\n\nA probe rule.\n' >"$rule"
+  "$repo/bin/stamp-rules" "$rule"
+  commit -- main "$msg"
+  assert_rc 0 "a rule already stamped for its text"
+  [ ! -s "$CLAUDE_LOG" ] || die "a rule whose stamp matches its text was reviewed again"
+
+  commit_case
+  perl -0pi -e 's/\n<!-- audited/\n- A probe line.\n<!-- audited/' "$repo/.claude/rules/guard-tests.md"
+  commit -- main "$msg"
+  assert_rc 0 "an edit to a reviewed rule"
+  grep -qx "### .claude/rules/guard-tests.md" "$CLAUDE_LOG.prompt" ||
+    die "a reviewed rule was not judged on its changed lines"
+  grep -qx "+- A probe line." "$CLAUDE_LOG.prompt" ||
+    die "the review did not see the changed line"
+  grep -q "never ask for a new file" "$CLAUDE_LOG.prompt" || die "the review may ask for a new file"
+
+  commit_case
+  mkdir -p "$repo/app/.claude/rules"
+  printf '# Probe\n\nA probe rule.\n' >"$repo/app/.claude/rules/probe.md"
+  commit -- main "$msg"
+  assert_rc 0 "a nested rule review"
+  grep -qx "### .claude/rules/guard-tests.md" "$CLAUDE_LOG.prompt" ||
+    die "the review of a nested rule left out the root rules"
+
+  commit_case
+  printf '# Probe\n\nA BAD rule.\n' >"$rule"
+  commit FAKE_AUDIT="$finding" FAKE_FIX=good -- main "$msg"
+  assert_rc 0 "a fixed finding"
+  grep -q "A GOOD rule." "$rule" || die "the fixer's text was not written"
+  tail -n 1 "$rule" | grep -qE '^<!-- audited: ' || die "a fixed rule was not stamped"
+  assert_eq "$(sessions)" "audit fix verify " "a fixed finding's sessions"
+  grep -qx "+A GOOD rule." "$CLAUDE_LOG.recheck" ||
+    die "the review after a fix did not see the lines the fix changed"
+  grep -qF -- "- .claude/rules/probe.md: r — BAD → say GOOD" "$CLAUDE_LOG.recheck" ||
+    die "the review after a fix did not check the prior findings"
+
+  commit_case
+  printf '# Probe\n\nA BAD rule.\n' >"$rule"
+  commit FAKE_AUDIT="$finding" FAKE_FIX=outside -- main "$msg"
+  assert_rc 0 "a fix outside the rules"
+  grep -qx "# Notes" "$repo/notes.md" || die "the fixer wrote outside the rules"
+
+  commit_case
+  printf '# Probe\n\nA BAD rule.\n' >"$rule"
+  commit FAKE_AUDIT="$finding" FAKE_FIX=newfile -- main "$msg"
+  assert_rc 0 "a fix that adds a rule file"
+  [ ! -e "$repo/.claude/rules/split.md" ] || die "the fixer created a rule file nobody flagged"
+
+  commit_case
+  printf '# Probe\n\nA BAD rule.\n' >"$rule"
+  commit FAKE_AUDIT="$finding" FAKE_FIX=good FAKE_VERIFY_SEQ="one two three four" -- main "$msg"
+  assert_rc 0 "a new finding each round until clean"
+  assert_eq "$(sessions)" "audit fix verify fix verify fix verify fix verify fix verify " \
+    "rounds that keep making progress"
+
+  commit_case
+  before="$(git -C "$repo" rev-parse HEAD)"
+  printf '# Probe\n\nA BAD rule.\n' >"$rule"
+  commit FAKE_AUDIT="$finding" FAKE_VERIFY="$finding" -- main "$msg"
+  assert_rc 1 "an unresolved finding"
+  assert_eq "$(commit_json .step)" "ci" "an unresolved finding"
+  assert_eq "$(commit_json .detail | head -n 2)" "$(printf 'rule audit: 1 violation(s)\n- .claude/rules/probe.md: r — BAD → say GOOD')" "the finding detail"
+  assert_eq "$(sessions)" "audit fix verify " "a finding that comes back unchanged stops the rounds"
+  assert_eq "$(git -C "$repo" rev-parse HEAD)" "$before" "an unresolved finding committed"
+  if tail -n 1 "$rule" | grep -q "audited"; then
+    die "an unresolved finding stamped the rule"
+  fi
+  commit_json .detail | grep -qx "stopped: round 1 found the same findings as the round before" ||
+    die "a refusal did not say why the rounds stopped"
+  local review_log
+  review_log="$(commit_json .detail | sed -n 's/^review log: //p')"
+  [ -f "$review_log/round-0-findings.json" ] && [ -f "$review_log/round-1-findings.json" ] &&
+    [ -f "$review_log/round-1-fixed.txt" ] || die "the review log is missing a round"
+
+  commit_case
+  printf '# Probe\n\nA BAD rule.\n' >"$rule"
+  commit FAKE_AUDIT=none -- main "$msg"
+  assert_eq "$(commit_json .detail)" "rule audit: the auditor session never submitted a verdict" "no verdict"
+
+  commit_case
+  printf '# Probe\n\nA BAD rule.\n' >"$rule"
+  commit FAKE_AUDIT="$finding" FAKE_FIX=grow -- main "$msg"
+  assert_rc 0 "an over-bound fix"
+  [ "$(grep -c -- "- more" "$rule" || true)" -eq 0 ] || die "an over-bound fix was kept"
+
+  commit_case
+  marker="$WORK/slow-finished"
+  mkdir -p "$repo/checks"
+  printf '%s\n' '#!/usr/bin/env bash' 'set -euo pipefail' "sleep 3" "touch \"$marker\"" >"$repo/checks/slow"
+  chmod +x "$repo/checks/slow"
+  commit FLOW_CI_TIMEOUT_MS=1000 -- main "$msg"
+  assert_eq "$(commit_json .detail)" "gate timed out after 1s" "a slow bin/ci"
+  sleep 3
+  [ ! -e "$marker" ] || die "the timed-out bin/ci kept running"
+
+  commit_case
+  printf '\nMore.\n' >>"$repo/notes.md"
+  git -C "$repo" remote set-url origin "$WORK/missing.git"
+  before="$(git -C "$repo" rev-parse HEAD)"
+  commit -- main "$msg"
+  assert_eq "$(commit_json .step)" "push" "a failed push"
+  commit_json .detail | grep -q "^push failed: " || die "no push detail"
+  [ "$(git -C "$repo" rev-parse HEAD)" != "$before" ] || die "a failed push undid the commit"
+
+  commit_case
+  git -C "$repo" worktree add -q "$repo/.worktrees/feat" -b feat
+  printf 'feat\n' >"$repo/.worktrees/feat/feat.txt"
+  before="$(git -C "$repo" rev-parse HEAD)"
+  commit -- feat "$msg"
+  assert_rc 0 "a worktree commit"
+  assert_eq "$(git -C "$origin" rev-parse feat)" "$(commit_json .sha)" "the worktree push"
+  assert_eq "$(git -C "$repo" rev-parse HEAD)" "$before" "the worktree commit landed in the root"
+  rm -f "$msg" "$empty"
+}
+
+test_copies_match() {
+  say "every language ships its scripts"
+  local lang script
+  for lang in ios rails typescript javascript python rust shell; do
+    for script in ci changed format lint build test dependencies; do
+      [ -x "$REPO/bin/_$lang/$script" ] || die "$lang bin/$script is not executable"
+    done
+    grep -qF "[\$step/4]" "$REPO/bin/_$lang/ci" || die "$lang ci has no step line"
+  done
+  for lang in typescript javascript rails; do
+    [ -x "$REPO/bin/_$lang/open" ] || die "$lang bin/open is not executable"
+    [ -x "$REPO/bin/_$lang/qa" ] || die "$lang bin/qa is not executable"
+  done
+}
+
+test_changed_empty() {
+  say "changed on a clean tree"
+  local repo
+  repo="$(new_repo)"
+  KEEP="$repo"
+  copy_dir "$REPO/bin" "$repo/bin"
+  git -C "$repo" add bin
+  git -C "$repo" commit -q -m "bin"
+  expect_ok "$repo/bin/changed"
+  grep -q "nothing dirty" "${LAST_LOG}" || die "missing nothing-dirty line"
+}
+
+test_parts() {
+  say "tests/run reruns only the parts whose inputs changed"
+  local repo log
+  repo="$(new_repo)"
+  KEEP="$repo"
+  log="$repo/parts.log"
+  mkdir -p "$repo/tests/lib" "$repo/starter/tests" "$repo/bin" "$repo/python"
+  cp "$REPO/tests/run" "$REPO/tests/lib.sh" "$repo/tests/"
+  printf '%s\n' '#!/usr/bin/env bash' "echo guards >>\"$log\"" >"$repo/starter/tests/run"
+  printf '%s\n' '#!/usr/bin/env bash' "echo core >>\"$log\"" >"$repo/tests/core"
+  printf '%s\n' '#!/usr/bin/env bash' "echo \"\$1\" >>\"$log\"" >"$repo/tests/language"
+  chmod +x "$repo/starter/tests/run" "$repo/tests/core" "$repo/tests/language"
+  echo "one" >"$repo/bin/tool"
+  echo "one" >"$repo/python/notes.md"
+  echo "one" >"$repo/README.md"
+  git -C "$repo" add -A
+  git -C "$repo" commit -q -m "parts"
+  expect_ok "$repo/tests/run"
+  assert_eq "$(tr '\n' ' ' <"$log")" "guards core typescript javascript python rails rust ios shell " "first run"
+  : >"$log"
+  expect_ok "$repo/tests/run"
+  assert_eq "$(tr '\n' ' ' <"$log")" "guards " "unchanged run"
+  : >"$log"
+  echo "two" >>"$repo/README.md"
+  expect_ok "$repo/tests/run"
+  assert_eq "$(tr '\n' ' ' <"$log")" "guards " "a README edit"
+  : >"$log"
+  echo "two" >>"$repo/python/notes.md"
+  expect_ok "$repo/tests/run"
+  assert_eq "$(tr '\n' ' ' <"$log")" "guards core python " "a python edit"
+  : >"$log"
+  echo "two" >>"$repo/bin/tool"
+  expect_ok "$repo/tests/run"
+  assert_eq "$(tr '\n' ' ' <"$log")" "guards core typescript javascript python rails rust ios shell " "a bin/ edit"
+  : >"$log"
+  expect_ok "$repo/tests/run" --force
+  assert_eq "$(tr '\n' ' ' <"$log")" "guards core typescript javascript python rails rust ios shell " "--force"
+}
+
+test_dispatch() {
+  say "dispatcher"
+  local repo sent_rails
+  repo="$(new_repo)"
+  KEEP="$repo"
+  copy_dir "$REPO/bin" "$repo/bin"
+  mkdir -p "$repo/python" "$repo/typescript"
+  seed_python "$repo/python"
+  seed_typescript "$repo/typescript"
+  expect_ok "$repo/bin/dependencies"
+  expect_ok "$repo/bin/format"
+  expect_ok "$repo/bin/ci"
+  local sum
+  sum="$(summary)"
+  assert_eq "$(row_of python "$sum")" "PASS" "first python"
+  assert_eq "$(row_of typescript "$sum")" "PASS" "first typescript"
+  assert_eq "$(row_of suite "$sum")" "PASS" "first suite"
+  grep -qE '^  python +: PASS \(([0-9]+m[0-9]{2}s|[0-9]+s)\)$' "${LAST_LOG}" || die "the summary did not time python"
+  grep -qE '^  elapsed  : ([0-9]+m[0-9]{2}s|[0-9]+s)$' "${LAST_LOG}" || die "the summary has no elapsed time"
+  expect_ok "$repo/bin/ci"
+  sum="$(summary)"
+  assert_eq "$(row_of python "$sum")" "SKIP" "second python"
+  assert_eq "$(row_of typescript "$sum")" "SKIP" "second typescript"
+  if [ "$(row_of suite "$sum")" = "PASS" ]; then
+    expect_ok "$repo/bin/ci"
+    sum="$(summary)"
+  fi
+  assert_eq "$(row_of suite "$sum")" "SKIP" "suite settled"
+  printf '\nexport const marker = 1;\n' >>"$repo/typescript/src/add.ts"
+  expect_ok "$repo/bin/ci"
+  sum="$(summary)"
+  assert_eq "$(row_of typescript "$sum")" "PASS" "edited typescript"
+  assert_eq "$(row_of python "$sum")" "SKIP" "python untouched"
+  sent_rails="$(sentinel_file "$repo/python")"
+  local rails_hash
+  rails_hash="$(cat "$sent_rails")"
+  echo "top" >"$repo/TOP.txt"
+  expect_ok "$repo/bin/ci"
+  sum="$(summary)"
+  assert_eq "$(row_of python "$sum")" "SKIP" "foreign file left python"
+  assert_eq "$(cat "$sent_rails")" "$rails_hash" "foreign file changed rails hash"
+  git -C "$repo" add -A
+  git -C "$repo" commit -q -m "formatted"
+  expect_ok "$repo/bin/ci"
+  sum="$(summary)"
+  assert_eq "$(row_of python "$sum")" "PASS" "commit re-runs python"
+  expect_ok "$repo/bin/ci"
+  sum="$(summary)"
+  assert_eq "$(row_of python "$sum")" "SKIP" "clean tree python"
+  assert_eq "$(row_of typescript "$sum")" "SKIP" "clean tree typescript"
+  assert_eq "$(row_of suite "$sum")" "SKIP" "clean tree suite"
+  echo "corpus" >"$repo/CLAUDE.md"
+  expect_ok "$repo/bin/ci"
+  sum="$(summary)"
+  assert_eq "$(row_of suite "$sum")" "PASS" "corpus selects the suite"
+  assert_eq "$(row_of python "$sum")" "SKIP" "corpus leaves python"
+  assert_eq "$(row_of typescript "$sum")" "SKIP" "corpus leaves typescript"
+  git -C "$repo" add CLAUDE.md
+  git -C "$repo" commit -q -m "corpus"
+  expect_ok "$repo/bin/ci"
+  printf '\n' >>"$repo/bin/_typescript/build"
+  expect_ok "$repo/bin/ci"
+  sum="$(summary)"
+  assert_eq "$(row_of typescript "$sum")" "PASS" "edited typescript script"
+  assert_eq "$(row_of python "$sum")" "SKIP" "typescript script left python"
+  mkdir -p "$repo/tests"
+  printf '%s\n' '#!/usr/bin/env bash' 'set -euo pipefail' 'echo "tests/guards ran"' >"$repo/tests/guards"
+  chmod +x "$repo/tests/guards"
+  git -C "$repo" add tests/guards
+  git -C "$repo" commit -q -a -m "typescript script"
+  expect_ok "$repo/bin/ci"
+  printf '\nexport const changed = 1;\n' >>"$repo/typescript/src/add.ts"
+  expect_ok "$repo/bin/changed"
+  sum="$(summary)"
+  assert_eq "$(row_of typescript "$sum")" "PASS" "changed typescript"
+  assert_eq "$(row_of python "$sum")" "SKIP" "changed leaves python"
+  assert_eq "$(row_of suite "$sum")" "PASS" "changed runs the guards"
+  grep -q "tests/guards ran" "${LAST_LOG}" || die "bin/changed on an app edit did not run tests/guards"
+  expect_ok "$repo/bin/test" typescript/tests/add.test.ts
+  sum="$(summary)"
+  assert_eq "$(row_of typescript "$sum")" "PASS" "filtered test"
+  assert_eq "$(row_of python "$sum")" "SKIP" "filter withheld python"
+  expect_ok "$repo/bin/ci" --force --python --suite
+  sum="$(summary)"
+  assert_eq "$(row_of python "$sum")" "PASS" "selected python"
+  assert_eq "$(row_of suite "$sum")" "PASS" "selected suite"
+  assert_eq "$(row_of typescript "$sum")" "SKIP" "unselected dirty typescript"
+  grep -qE '^  typescript +: SKIP$' "${LAST_LOG}" || die "the summary timed a target that did not run"
+}
+
+test_jobs() {
+  say "the dispatcher caps how many apps run at once"
+  local repo name cap
+  repo="$(new_repo)"
+  KEEP="$repo"
+  copy_dir "$REPO/bin" "$repo/bin"
+  for name in a b c d e; do
+    mkdir -p "$repo/$name/test"
+    printf '%s\n' '#!/usr/bin/env bash' >"$repo/$name/test/run"
+    chmod +x "$repo/$name/test/run"
+  done
+  cat >"$repo/bin/_shell/build" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+touch "$RUNNING/$$"
+find "$RUNNING" -type f | wc -l >>"$RUNNING.counts"
+printf '%s\n' "$*" >>"$RUNNING.args"
+sleep 1
+rm "$RUNNING/$$"
+EOF
+  export RUNNING="$WORK/running"
+  mkdir -p "$RUNNING"
+  expect_ok "$repo/bin/build" --jobs 2
+  [ "$(sort -n "$RUNNING.counts" | tail -n 1 | tr -d ' ')" -le 2 ] || die "--jobs 2 ran more than 2 apps at once"
+  grep -q -- "--jobs" "$RUNNING.args" && die "the dispatcher passed --jobs to an app"
+  cap=$(($(getconf _NPROCESSORS_ONLN) / 2))
+  [ "$cap" -ge 1 ] || cap=1
+  [ "$cap" -le 4 ] || cap=4
+  : >"$RUNNING.counts"
+  expect_ok "$repo/bin/build"
+  [ "$(sort -n "$RUNNING.counts" | tail -n 1 | tr -d ' ')" -le "$cap" ] || die "ran more than $cap apps at once"
+  expect_fail "$repo/bin/build" --jobs 0
+  grep -q "takes a whole number of at least 1" "${LAST_LOG}" || die "--jobs 0 was accepted"
+  unset RUNNING
+}
+
+test_interrupt() {
+  say "Ctrl-C stops every process the dispatcher started"
+  local repo name pid rc=0 tries=0 left
+  repo="$(new_repo)"
+  KEEP="$repo"
+  copy_dir "$REPO/bin" "$repo/bin"
+  for name in a b; do
+    mkdir -p "$repo/$name/test"
+    printf '%s\n' '#!/usr/bin/env bash' >"$repo/$name/test/run"
+    chmod +x "$repo/$name/test/run"
+  done
+  cat >"$repo/bin/_shell/build" <<'EOF'
+#!/usr/bin/env bash
+sleep 60 &
+printf '%s\n' "$$" "$!" >>"$PIDS"
+wait
+EOF
+  export PIDS="$WORK/pids"
+  perl -e 'setpgrp(0, 0); $SIG{INT} = "DEFAULT"; exec @ARGV' "$repo/bin/build" --jobs 2 >/dev/null 2>&1 &
+  pid=$!
+  until [ -f "$PIDS" ] && [ "$(wc -l <"$PIDS")" -ge 4 ]; do
+    tries=$((tries + 1))
+    [ "$tries" -le 100 ] || die "the apps never started"
+    sleep 0.1
+  done
+  kill -INT -- "-$pid"
+  wait "$pid" || rc=$?
+  assert_eq "$rc" 130 "the dispatcher's exit after Ctrl-C"
+  tries=0
+  while left="$(ps -o pid= -p "$(paste -sd, - <"$PIDS")")"; do
+    tries=$((tries + 1))
+    [ "$tries" -le 50 ] || die "Ctrl-C left $(printf '%s' "$left" | wc -l | tr -d ' ') process(es) running"
+    sleep 0.1
+  done
+  unset PIDS
+}
+
+test_start() {
+  say "bin/start opens a worktree with main's saved passes"
+  local repo wt sum
+  repo="$(new_repo)"
+  KEEP="$repo"
+  copy_dir "$REPO/bin" "$repo/bin"
+  mkdir -p "$repo/python"
+  seed_python "$repo/python"
+  expect_ok "$repo/bin/dependencies"
+  expect_ok "$repo/bin/format"
+  git -C "$repo" add -A
+  git -C "$repo" commit -q -m "app"
+  expect_ok "$repo/bin/ci"
+  mkdir -p "$repo/.flow-states/main/commit-review"
+  : >"$repo/.flow-states/main/commit-review/round-1-findings.json"
+
+  run_log "$repo/bin/start"
+  assert_rc 2 "bin/start with no branch"
+  run_log "$repo/bin/start" a/b
+  assert_rc 1 "a branch with a slash"
+  grep -q "unsafe branch name" "${LAST_LOG}" || die "a slashed branch was not refused"
+  run_log "$repo/bin/start" feature
+  assert_rc 1 "worktrees not ignored"
+  grep -q "does not ignore .worktrees/" "${LAST_LOG}" || die "an unignored .worktrees/ was not refused"
+  echo ".worktrees/" >>"$repo/.gitignore"
+  run_log "$repo/bin/start" feature
+  assert_rc 1 "a dirty root"
+  grep -q "uncommitted changes" "${LAST_LOG}" || die "a dirty root was not refused"
+  git -C "$repo" commit -q -a -m "ignore worktrees"
+  git -C "$repo" switch -q -c side
+  run_log "$repo/bin/start" feature
+  assert_rc 1 "a root off main"
+  grep -q "not on main" "${LAST_LOG}" || die "a root off main was not refused"
+  git -C "$repo" switch -q main
+  run_log "$repo/bin/start" side
+  assert_rc 1 "an existing branch"
+  grep -q "branch side already exists" "${LAST_LOG}" || die "an existing branch was not refused"
+  expect_ok "$repo/bin/ci"
+  mkdir -p "$repo/web/node_modules/pkg"
+  echo "module.exports = 1;" >"$repo/web/node_modules/pkg/index.js"
+
+  expect_ok "$repo/bin/start" feature
+  wt="$repo/.worktrees/feature"
+  [ -L "$wt/python/.venv" ] || die "bin/start did not link python's .venv"
+  assert_eq "$(cd "$wt/python/.venv" && pwd -P)" "$(cd "$repo/python/.venv" && pwd -P)" "the linked .venv"
+  [ -d "$wt/web/node_modules" ] && [ ! -L "$wt/web/node_modules" ] || die "bin/start did not copy node_modules as a folder"
+  assert_eq "$(cat "$wt/web/node_modules/pkg/index.js")" "module.exports = 1;" "the cloned node_modules"
+  [ -z "$(git -C "$wt" status --porcelain)" ] || die "the worktree's packages show up in git"
+  assert_eq "$(git -C "$wt" branch --show-current)" "feature" "the worktree's branch"
+  assert_eq "$(git -C "$wt" rev-parse HEAD)" "$(git -C "$repo" rev-parse main)" "the worktree's base"
+  assert_eq "$(cat "$wt/python/.flow-states/feature/ci-sentinel")" "$(cat "$repo/python/.flow-states/main/ci-sentinel")" "the copied pass"
+  [ ! -e "$wt/.flow-states/feature/commit-review" ] || die "bin/start copied main's commit review logs"
+  expect_ok "$wt/bin/ci"
+  sum="$(summary)"
+  assert_eq "$(row_of python "$sum")" "SKIP" "the worktree's first python run"
+  assert_eq "$(row_of suite "$sum")" "SKIP" "the worktree's first suite run"
+  expect_ok "$wt/bin/test" --python
+  assert_eq "$(row_of python "$(summary)")" "PASS" "the worktree's python tests on main's packages"
+  expect_ok "$wt/bin/dependencies" --python
+  [ -d "$wt/python/.venv" ] && [ ! -L "$wt/python/.venv" ] || die "bin/dependencies kept the link to main's .venv"
+  [ -d "$repo/python/.venv" ] && [ ! -L "$repo/python/.venv" ] || die "the worktree's bin/dependencies changed main's .venv"
+}
+
+minted() {
+  local file
+  file="$(mktemp /tmp/flow-commit-msg.XXXXXX)"
+  printf '%s\n' "$1" >"$file"
+  printf '%s\n' "$file"
+}
+
+test_merge() {
+  say "bin/merge squashes a branch onto main through bin/commit"
+  local repo origin wt base
+  repo="$(new_repo)"
+  KEEP="$repo"
+  origin="$WORK/merge-origin.git"
+  copy_dir "$REPO/starter" "$repo"
+  copy_dir "$REPO/bin" "$repo/bin"
+  echo ".worktrees/" >>"$repo/.gitignore"
+  printf '# Notes\n' >"$repo/notes.md"
+  git -C "$repo" add -A
+  git -C "$repo" commit -q -m starter
+  git init -q --bare "$origin"
+  git -C "$repo" remote add origin "$origin"
+  git -C "$repo" push -q -u origin main
+  git -C "$repo" config core.hooksPath .githooks
+
+  run_log "$repo/bin/merge"
+  assert_rc 2 "bin/merge with no arguments"
+  run_log "$repo/bin/merge" nosuch "$(minted 'Land nothing')"
+  assert_rc 1 "a missing branch"
+  grep -q "no branch nosuch" "${LAST_LOG}" || die "a missing branch was not refused"
+  expect_ok "$repo/bin/start" feature
+  wt="$repo/.worktrees/feature"
+  run_log "$repo/bin/merge" feature "$(minted 'Land nothing')"
+  assert_rc 1 "a branch with nothing new"
+  grep -q "nothing to merge" "${LAST_LOG}" || die "an empty branch was not refused"
+
+  printf '\nFeature.\n' >>"$wt/notes.md"
+  expect_ok "$wt/bin/commit" --no-push feature "$(minted 'Add the feature')"
+  printf '# Other\n' >"$repo/other.md"
+  expect_ok "$repo/bin/commit" main "$(minted 'Move main')"
+  run_log "$repo/bin/merge" feature "$(minted 'Land the feature')"
+  assert_rc 1 "main moved on"
+  grep -q "main has moved on since feature started" "${LAST_LOG}" || die "a stale branch was not refused"
+  git -C "$wt" merge -q --no-edit main
+
+  base="$(git -C "$repo" rev-parse HEAD)"
+  expect_ok "$repo/bin/merge" feature "$(minted 'Land the feature')"
+  assert_eq "$(git -C "$repo" log -1 --format=%s)" "Land the feature" "the squash's message"
+  assert_eq "$(git -C "$repo" rev-parse HEAD^)" "$base" "one commit on main"
+  assert_eq "$(git -C "$repo" rev-parse 'HEAD^{tree}')" "$(git -C "$repo" rev-parse 'feature^{tree}')" "the squash's tree"
+  assert_eq "$(git -C "$origin" rev-parse main)" "$(git -C "$repo" rev-parse HEAD)" "the push of main"
+  [ -z "$(git -C "$repo" status --porcelain)" ] || die "a landed merge left the root dirty"
+
+  git -C "$wt" merge -q --no-edit main
+  printf '%s\n' '' '#Heading without a space' >>"$wt/notes.md"
+  git -C "$wt" add -A
+  git -C "$wt" -c core.hooksPath=/dev/null commit -q -m "red"
+  base="$(git -C "$repo" rev-parse HEAD)"
+  run_log "$repo/bin/merge" feature "$(minted 'Land a red feature')"
+  assert_rc 1 "a red squash"
+  grep -q "did not land; main is back where it was" "${LAST_LOG}" || die "a red squash did not say it was undone"
+  assert_eq "$(git -C "$repo" rev-parse HEAD)" "$base" "a red squash committed"
+  [ -z "$(git -C "$repo" status --porcelain)" ] || die "a red squash left the root dirty"
+
+  git -C "$repo" switch -q -c rootwork
+  printf '\nRoot work.\n' >>"$repo/notes.md"
+  expect_ok "$repo/bin/commit" --no-push rootwork "$(minted 'Add root work')"
+  echo "dirty" >"$repo/scratch.txt"
+  run_log "$repo/bin/merge" rootwork "$(minted 'Land root work')"
+  assert_rc 1 "a dirty root on the branch"
+  grep -q "the repo root has uncommitted changes" "${LAST_LOG}" || die "a dirty root on the branch was not refused"
+  assert_eq "$(git -C "$repo" branch --show-current)" rootwork "the root after a refused merge"
+  rm "$repo/scratch.txt"
+  git -C "$repo" branch -q other
+  git -C "$repo" switch -q other
+  run_log "$repo/bin/merge" rootwork "$(minted 'Land root work')"
+  assert_rc 1 "a root on another branch"
+  grep -q "the repo root is not on main" "${LAST_LOG}" || die "a root on another branch was not refused"
+  git -C "$repo" switch -q rootwork
+  expect_ok "$repo/bin/merge" rootwork "$(minted 'Land root work')"
+  assert_eq "$(git -C "$repo" branch --show-current)" main "the root after landing its own branch"
+  assert_eq "$(git -C "$repo" log -1 --format=%s)" "Land root work" "the squash from the root's branch"
+  assert_eq "$(git -C "$repo" rev-parse HEAD^)" "$base" "one commit on main from the root's branch"
+}
+
+test_cleanup() {
+  say "bin/cleanup removes branches whose work is in main"
+  local repo branch wts
+  repo="$(new_repo)"
+  KEEP="$repo"
+  copy_dir "$REPO/bin" "$repo/bin"
+  echo ".worktrees/" >>"$repo/.gitignore"
+  git -C "$repo" add -A
+  git -C "$repo" commit -q -m "bin"
+  run_log "$repo/bin/cleanup" extra
+  assert_rc 2 "bin/cleanup with an argument"
+  wts="$repo/.worktrees"
+  for branch in merged squashed open dirty; do
+    expect_ok "$repo/bin/start" "$branch"
+    printf '%s\n' "$branch" >"$wts/$branch/$branch.txt"
+    git -C "$wts/$branch" add -A
+    git -C "$wts/$branch" commit -q -m "$branch"
+  done
+  git -C "$repo" branch -q --no-track plain main
+  git -C "$repo" worktree add -q "$WORK/elsewhere" -b elsewhere
+  git -C "$repo" merge -q --ff-only merged
+  for branch in squashed dirty; do
+    git -C "$repo" merge -q --squash "$branch" >/dev/null 2>&1
+    git -C "$repo" commit -q -m "squash $branch"
+  done
+  echo "edit" >>"$wts/dirty/dirty.txt"
+
+  expect_ok "$repo/bin/cleanup"
+  for branch in merged squashed plain; do
+    grep -qx "bin/cleanup: removed $branch" "${LAST_LOG}" || die "bin/cleanup kept $branch"
+    git -C "$repo" rev-parse -q --verify "refs/heads/$branch" >/dev/null && die "bin/cleanup left the $branch branch"
+  done
+  [ ! -e "$wts/merged" ] && [ ! -e "$wts/squashed" ] || die "bin/cleanup left a merged worktree"
+  grep -qx "bin/cleanup: kept open: its work is not in main" "${LAST_LOG}" || die "bin/cleanup did not keep unmerged work"
+  grep -q "^bin/cleanup: kept dirty: uncommitted changes in " "${LAST_LOG}" || die "bin/cleanup did not keep a dirty worktree"
+  grep -q "^bin/cleanup: kept elsewhere: checked out at " "${LAST_LOG}" || die "bin/cleanup did not keep a branch checked out elsewhere"
+  [ -d "$wts/open" ] && [ -d "$wts/dirty" ] || die "bin/cleanup removed a kept worktree"
+}
+
+test_complete() {
+  say "bin/complete lands a branch and deletes it"
+  local repo origin wt base
+  repo="$(new_repo)"
+  KEEP="$repo"
+  origin="$WORK/complete-origin.git"
+  copy_dir "$REPO/starter" "$repo"
+  copy_dir "$REPO/bin" "$repo/bin"
+  echo ".worktrees/" >>"$repo/.gitignore"
+  printf '# Notes\n' >"$repo/notes.md"
+  git -C "$repo" add -A
+  git -C "$repo" commit -q -m starter
+  git init -q --bare "$origin"
+  git -C "$repo" remote add origin "$origin"
+  git -C "$repo" push -q -u origin main
+  git -C "$repo" config core.hooksPath .githooks
+
+  run_log "$repo/bin/complete" feature
+  assert_rc 2 "bin/complete with one argument"
+  expect_ok "$repo/bin/start" feature
+  wt="$repo/.worktrees/feature"
+  run_log "$repo/bin/complete" feature "$(minted 'Land nothing')"
+  assert_rc 1 "a branch with nothing new"
+  [ -d "$wt" ] || die "bin/complete cleaned up a branch that did not land"
+  printf '\nFeature.\n' >>"$wt/notes.md"
+  expect_ok "$wt/bin/commit" --no-push feature "$(minted 'Add the feature')"
+  base="$(git -C "$repo" rev-parse HEAD)"
+  expect_ok "$repo/bin/complete" feature "$(minted 'Land the feature')"
+  assert_eq "$(git -C "$repo" rev-parse HEAD^)" "$base" "one commit on main"
+  assert_eq "$(git -C "$origin" rev-parse main)" "$(git -C "$repo" rev-parse HEAD)" "the push of main"
+  grep -qx "bin/cleanup: removed feature" "${LAST_LOG}" || die "bin/complete did not clean up"
+  [ ! -e "$wt" ] || die "bin/complete left the worktree"
+  git -C "$repo" rev-parse -q --verify refs/heads/feature >/dev/null && die "bin/complete left the branch"
+  return 0
+}
+
+test_ci_time() {
+  say "bin/ci records each app's time and fails a slower run"
+  local repo host limits file sum row limit took want
+  host="$(hostname -s 2>/dev/null || hostname)"
+  host="$(printf '%s\n' "$host" | sed -E 's/-[0-9]+$//')"
+  limits="$WORK/limits"
+  for row in "100 125 1" "100 120 0" "1 5 0"; do
+    read -r limit took want <<<"$row"
+    printf 'elsewhere 1\n%s %s\n' "$host" "$limit" >"$limits"
+    run_log "$REPO/bin/_ci-timeout" app "$limits" "$took"
+    assert_rc "$want" "a ${took}s run against a ${limit}s line"
+  done
+  grep -qx "$host 5" "$limits" || die "a passing run did not record its time"
+  grep -qx "elsewhere 1" "$limits" || die "a passing run changed another machine's line"
+
+  repo="$(new_repo)"
+  KEEP="$repo"
+  copy_dir "$REPO/bin" "$repo/bin"
+  mkdir -p "$repo/python"
+  seed_python "$repo/python"
+  expect_ok "$repo/bin/dependencies"
+  expect_ok "$repo/bin/format"
+  git -C "$repo" add -A
+  git -C "$repo" commit -q -m "app"
+  git -C "$repo" switch -q -c work
+  expect_ok "$repo/bin/ci"
+  file="$repo/python/.ci-timeout"
+  grep -qE "^$host [0-9]+$" "$file" || die "a full pass did not record the app's time"
+  expect_ok "$repo/bin/ci"
+  sum="$(summary)"
+  assert_eq "$(row_of python "$sum")" "SKIP" "a new time file left python unchanged"
+  printf '%s\n' '#!/usr/bin/env bash' 'exit 1' >"$repo/bin/_ci-timeout"
+  expect_fail "$repo/bin/ci" --force
+  sum="$(summary)"
+  assert_eq "$(row_of python "$sum")" "FAIL" "a slower run"
+  [ ! -f "$repo/python/.flow-states/work/ci-sentinel" ] || die "a slower run kept its sentinel"
+  [ ! -f "$repo/python/.flow-states/work/ci-test-sentinel" ] || die "a slower run kept its step sentinels"
+}
+
+test_root_app() {
+  say "root app excludes sibling folders"
+  local repo sent hash
+  repo="$(new_repo)"
+  KEEP="$repo"
+  copy_dir "$REPO/bin" "$repo/bin"
+  seed_python "$repo"
+  mkdir -p "$repo/ios/Sources/App"
+  : >"$repo/ios/Package.swift"
+  echo "public func other() {}" >"$repo/ios/Sources/App/Other.swift"
+  expect_ok "$repo/bin/_python/dependencies"
+  expect_ok "$repo/bin/_python/format" --all
+  expect_ok "$repo/bin/_python/ci"
+  sent="$(sentinel_file "$repo")"
+  hash="$(cat "$sent")"
+  echo "public func more() {}" >>"$repo/ios/Sources/App/Other.swift"
+  expect_ok "$repo/bin/_python/ci"
+  grep -q "sentinel written" "${LAST_LOG}" && die "sibling ios edit rewrote the root sentinel"
+  assert_eq "$(cat "$sent")" "$hash" "root hash changed"
+}
+
+test_dependencies() {
+  say "rust dependencies"
+  local repo
+  repo="$(new_repo)"
+  KEEP="$repo"
+  copy_dir "$REPO/bin" "$repo/bin"
+  mkdir -p "$repo/rust"
+  seed_rust "$repo/rust"
+  expect_ok "$repo/bin/dependencies"
+  local sum
+  sum="$(summary)"
+  assert_eq "$(row_of rust "$sum")" "PASS" "dependencies"
+}
+
+test_settings
+test_scan
+test_root_format
+test_open
+test_qa
+test_query
+test_hooks
+test_starter
+test_commit
+test_copies_match
+test_changed_empty
+test_parts
+test_dispatch
+test_jobs
+test_interrupt
+test_start
+test_merge
+test_cleanup
+test_complete
+test_ci_time
+test_root_app
+test_dependencies
+stop_spin "✓"

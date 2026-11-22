@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+set -euo pipefail
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+root="$(cd "${APP_DIR:-$here/../..}" && pwd)"
+cd "$root"
+
+# shellcheck source=lib/toolchain.sh
+. "$here/lib/toolchain.sh"
+if [ -z "${CI:-}" ]; then
+  toolchain_check "$root"
+fi
+
+packages_check "$root" || exit 1
+exec npm run dev -- --host 127.0.0.1 --open "$@"

@@ -1,11 +1,17 @@
 #!/usr/bin/env bash
-# Fingerprint the working tree for one gate.
-# Source this from the directory the sentinel guards. Do not execute it.
-#
-# The hash covers the committed subtree, both diffs, and every untracked
-# regular file. Dependency trees and the sentinel directory are left out.
-# Untracked files are hashed in one git hash-object batch. A symlink is
-# skipped before that batch, because git hash-object cannot hash it.
+
+# shellcheck source=apps.sh
+. "$(dirname "${BASH_SOURCE[0]}")/apps.sh"
+GATE_LIB="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+GATE_DRIVER="$(cd "$(dirname "${BASH_SOURCE[1]}")" && pwd)"
+
+gate_fingerprint() {
+  local f
+  while IFS= read -r f; do
+    printf '%s ' "${f#"$(dirname "$GATE_LIB")"/}"
+    git hash-object -- "$f"
+  done < <(find "$GATE_LIB" "$GATE_DRIVER" -type f | LC_ALL=C sort -u)
+}
 
 root_app_fingerprint() {
   local name path d skip e
@@ -14,11 +20,11 @@ root_app_fingerprint() {
   for d in "$top"/*/; do
     [ -d "$d" ] || continue
     name="$(basename "$d")"
-    if [ -x "${d}bin/ci" ]; then
+    if is_app_dir "$d"; then
       excludes+=("$name")
     fi
   done
-  excludes+=(CLAUDE.md .claude checks tests)
+  excludes+=(CLAUDE.md .claude checks tests .ci-timeout)
   local spec=(.)
   for name in "${excludes[@]}"; do
     spec+=(":!$name")
@@ -66,10 +72,11 @@ tree_fingerprint() {
     root_app_fingerprint
     return
   fi
+  local not_timeout=':(exclude,glob)**/.ci-timeout'
   if git rev-parse --verify HEAD >/dev/null 2>&1; then
-    git rev-parse 'HEAD:./' 2>/dev/null || echo "untracked-subtree"
-    git diff --relative HEAD -- .
-    git diff --relative --cached -- .
+    git ls-tree -r HEAD -- . | awk -F'\t' '$2 !~ /(^|\/)\.ci-timeout$/'
+    git diff --relative HEAD -- . "$not_timeout"
+    git diff --relative --cached -- . "$not_timeout"
   else
     echo "untracked-subtree"
   fi
@@ -81,11 +88,12 @@ tree_fingerprint() {
       .flow-states/* | .venv/* | node_modules/* | vendor/* | target/* | .build/*) continue ;;
     esac
     paths+=("$f")
-  done < <(git ls-files --others --exclude-standard -z -- .)
+  done < <(git ls-files --others --exclude-standard -z -- . "$not_timeout")
   if [ "${#paths[@]}" -gt 0 ]; then
     printf '%s\0' "${paths[@]}"
     git hash-object -- "${paths[@]}"
   fi
+  gate_fingerprint
 }
 
 tree_hash() {

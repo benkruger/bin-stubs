@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
-# Corpus dirty-tree gate. The dispatcher calls this only when a corpus
-# path is dirty. Runs every check in checks/ and the suite, past the
-# sentinel.
 set -euo pipefail
-exec "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/_root-tests" --force
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+if [ -x "$ROOT/tests/guards" ]; then
+  exec "$ROOT/tests/guards"
+fi
+echo "root-suite: no tests/guards"

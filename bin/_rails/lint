@@ -1,0 +1,52 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "${APP_DIR:-$HERE/../..}" && pwd)"
+cd "$REPO_ROOT"
+# shellcheck source=lib/toolchain.sh
+. "$HERE/lib/toolchain.sh"
+packages_check "$PWD" || exit 1
+
+# shellcheck source=_run_quiet
+. "$HERE/_run_quiet"
+
+all=0
+paths=()
+for arg in "$@"; do
+  case "$arg" in
+    --all) all=1 ;;
+    *) paths+=("$arg") ;;
+  esac
+done
+
+if [ "$all" -eq 1 ]; then
+  listing="$(git ls-files --cached --others --exclude-standard -- '*.md')"
+elif [ "${#paths[@]}" -gt 0 ]; then
+  listing="$(printf '%s\n' "${paths[@]}")"
+else
+  listing="$("$HERE/changed" --files)"
+fi
+
+rb_files=()
+md_files=()
+while IFS= read -r path; do
+  [ -f "$path" ] || continue
+  case "$path" in
+    *.rb) rb_files+=("$path") ;;
+    *.md) md_files+=("$path") ;;
+  esac
+done <<<"$listing"
+
+if [ "$all" -eq 1 ]; then
+  run_quiet "rails (rubocop)" bundle exec rubocop --format quiet --display-cop-names
+elif [ "${#rb_files[@]}" -gt 0 ]; then
+  run_quiet "rails (rubocop)" bundle exec rubocop --force-exclusion --format quiet --display-cop-names "${rb_files[@]}"
+fi
+run_quiet "rails (brakeman)" bundle exec brakeman --quiet --no-pager --exit-on-warn --exit-on-error
+
+if [ "${#md_files[@]}" -eq 0 ]; then
+  echo "  ✓ markdownlint (no Markdown files)"
+else
+  run_quiet "markdownlint" markdownlint-cli2 "${md_files[@]}"
+fi

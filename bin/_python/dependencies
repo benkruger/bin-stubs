@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+set -euo pipefail
+export PATH="${HOME}/.local/bin:${PATH}"
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+root="$(cd "${APP_DIR:-$here/../..}" && pwd)"
+cd "$root"
+if [ -L .venv ]; then
+  rm .venv
+fi
+uv sync --upgrade
+
+exec uv lock --check

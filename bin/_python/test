@@ -1,0 +1,255 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+all=0
+args=()
+for arg in "$@"; do
+  case "$arg" in
+    --all) all=1 ;;
+    *) args+=("$arg") ;;
+  esac
+done
+set -- ${args[@]+"${args[@]}"}
+export PATH="${HOME}/.local/bin:${PATH}"
+export UV_NO_SYNC=1
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+root="$(cd "${APP_DIR:-$here/../..}" && pwd)"
+cd "$root"
+# shellcheck source=lib/toolchain.sh
+. "$here/lib/toolchain.sh"
+packages_check "$PWD" || exit 1
+
+if [ -d src ]; then
+  export PYTHONPATH="${root}/src${PYTHONPATH:+:$PYTHONPATH}"
+else
+  export PYTHONPATH="${root}${PYTHONPATH:+:$PYTHONPATH}"
+fi
+
+covjson="$(mktemp)"
+covrc="$(mktemp)"
+covdata="$(mktemp -d)"
+trap 'rm -rf "$covjson" "$covrc" "$covdata"' EXIT
+export COVERAGE_FILE="$covdata/.coverage" PYTHONDONTWRITEBYTECODE=1
+cat >"$covrc" <<'EOF'
+[run]
+omit =
+    .venv/*
+    tests/*
+EOF
+
+pytest_args=(--cov-branch --cov-report=term-missing:skip-covered "--cov-report=json:$covjson" "--cov-config=$covrc")
+if [ -d src ]; then
+  pytest_args+=(--cov=src)
+else
+  pytest_args+=(--cov=.)
+fi
+
+rc=0
+if [ "$#" -gt 0 ]; then
+  uv run pytest "${pytest_args[@]}" "$@" || rc=$?
+elif [ -d tests ]; then
+  uv run pytest tests "${pytest_args[@]}" || rc=$?
+else
+  echo "bin/test: no tests/ directory" >&2
+  rc=1
+fi
+
+# shellcheck source=../lib/apps.sh
+. "$here/../lib/apps.sh"
+root_app=0
+if [ "$(pwd -P)" = "$(git rev-parse --show-toplevel)" ]; then
+  root_app=1
+fi
+
+has_own_test() {
+  local top="$1"
+  [ "$root_app" -eq 1 ] && is_app_dir "$root/$top"
+}
+
+owned_change() {
+  local path="$1" top
+  [ -f "$path" ] || return 1
+  top="${path%%/*}"
+  if [ "$top" != "$path" ] && has_own_test "$top"; then
+    return 1
+  fi
+  return 0
+}
+
+is_source() {
+  case "$1" in
+    tests/* | .venv/* | test_*.py | */test_*.py | conftest.py | */conftest.py) return 1 ;;
+    *.py) ;;
+    *) return 1 ;;
+  esac
+  [ ! -d src ] || [ "${1#src/}" != "$1" ]
+}
+
+needs_twin() {
+  [ "$(basename "$1")" != "__init__.py" ]
+}
+
+is_test() {
+  case "$1" in
+    tests/test_*.py | tests/*/test_*.py) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+test_for_source() {
+  local rel="$1" dir base
+  if [[ "$rel" == src/* ]]; then
+    rel="${rel#src/}"
+  fi
+  dir="$(dirname "$rel")"
+  base="$(basename "$rel" .py)"
+  if [ "$dir" = "." ]; then
+    echo "tests/test_${base}.py"
+  else
+    echo "tests/${dir}/test_${base}.py"
+  fi
+}
+
+source_for_test() {
+  local rel="${1#tests/}" dir base
+  base="$(basename "$rel")"
+  base="${base#test_}"
+  dir="$(dirname "$rel")"
+  if [ "$dir" = "." ]; then
+    if [ -f "src/${base}" ]; then
+      echo "src/${base}"
+    else
+      echo "${base}"
+    fi
+  else
+    if [ -f "src/${dir}/${base}" ]; then
+      echo "src/${dir}/${base}"
+    else
+      echo "${dir}/${base}"
+    fi
+  fi
+}
+
+already() {
+  local n="$1" t
+  for t in "${required[@]+"${required[@]}"}"; do
+    [ "$t" = "$n" ] && return 0
+  done
+  return 1
+}
+
+required=()
+missing_mirror=()
+orphans=()
+
+if [ "$#" -gt 0 ]; then
+  for arg in "$@"; do
+    case "$arg" in
+      -*) continue ;;
+    esac
+    arg="${arg#./}"
+    if is_source "$arg"; then
+      already "$arg" || required+=("$arg")
+    elif is_test "$arg"; then
+      src="$(source_for_test "$arg")"
+      if [ -f "$src" ]; then
+        already "$src" || required+=("$src")
+      else
+        orphans+=("$arg → $src")
+      fi
+    fi
+  done
+else
+  if [ "$all" -eq 1 ]; then
+    listing="$(git -C "$root" ls-files --cached --others --exclude-standard -- .)"
+  else
+    listing="$("$here/changed" --files)"
+  fi
+  while IFS= read -r path; do
+    [ -z "$path" ] && continue
+    case "$path" in
+      node_modules/* | .venv/* | .flow-states/* | */node_modules/* | */.venv/* | */.flow-states/*)
+        continue
+        ;;
+    esac
+    owned_change "$path" || continue
+    if is_source "$path"; then
+      already "$path" || required+=("$path")
+      mirror="$(test_for_source "$path")"
+      if [ ! -f "$mirror" ] && needs_twin "$path"; then
+        missing_mirror+=("$path → $mirror")
+      fi
+    elif is_test "$path"; then
+      src="$(source_for_test "$path")"
+      if [ -f "$src" ]; then
+        already "$src" || required+=("$src")
+      else
+        orphans+=("$path → $src")
+      fi
+    fi
+  done <<<"$listing"
+fi
+
+file_cov() {
+  local file="$1"
+  uv run python -c '
+import json, sys
+data = json.load(open(sys.argv[1]))
+want = sys.argv[2]
+files = data.get("files", {})
+info = files.get(want)
+if info is None:
+    for key, val in files.items():
+        if key.endswith("/" + want):
+            info = val
+            break
+if info is None:
+    print("missing")
+    raise SystemExit(0)
+s = info.get("summary", {})
+stmts = s.get("num_statements", 0)
+covered = s.get("covered_lines", 0)
+branches = s.get("num_branches", 0)
+b_cov = s.get("covered_branches", 0)
+print(f"{covered}/{stmts} {b_cov}/{branches}")
+' "$covjson" "$file"
+}
+
+ratchet=0
+for msg in "${missing_mirror[@]+"${missing_mirror[@]}"}"; do
+  echo "bin/test: no mirrored test for $msg" >&2
+  ratchet=1
+done
+for msg in "${orphans[@]+"${orphans[@]}"}"; do
+  echo "bin/test: no source for test $msg" >&2
+  ratchet=1
+done
+
+for src in "${required[@]+"${required[@]}"}"; do
+  if [ ! -f "$src" ]; then
+    echo "bin/test: $src is required at 100/100 but is missing" >&2
+    ratchet=1
+    continue
+  fi
+  cov="$(file_cov "$src")"
+  if [ "$cov" = "missing" ]; then
+    echo "bin/test: $src has no coverage row (need 100/100)" >&2
+    ratchet=1
+    continue
+  fi
+  lines="${cov%% *}"
+  branches="${cov##* }"
+  covered_l="${lines%%/*}"
+  stmts="${lines##*/}"
+  covered_b="${branches%%/*}"
+  brs="${branches##*/}"
+  if [ "$stmts" != "$covered_l" ] || { [ "$brs" != "0" ] && [ "$covered_b" != "$brs" ]; }; then
+    echo "bin/test: $src at ${lines} stmts ${branches} branches (need 100/100)" >&2
+    ratchet=1
+  fi
+done
+
+if [ "$ratchet" -ne 0 ]; then
+  exit 1
+fi
+exit "$rc"

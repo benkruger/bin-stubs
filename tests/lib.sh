@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-# Shared helpers for tests/run. A failing command leaves its log on stderr.
 
 SPIN_PID=
 
@@ -80,3 +79,45 @@ copy_dir() {
 sentinel_file() {
   printf '%s\n' "$1/.flow-states/main/ci-sentinel"
 }
+
+start_work() {
+  WORK="$(mktemp -d "${TMPDIR:-/tmp}/bin-stubs-tests.XXXXXX")"
+  trap 'stop_spin; rm -rf "$WORK"' EXIT
+  set -o errtrace
+  trap 'echo "FAIL: ${SAY:-suite}: line $LINENO exited $?: $BASH_COMMAND" >&2' ERR
+}
+
+new_repo() {
+  local d
+  d="$(mktemp -d "$WORK/repo.XXXXXX")"
+  git -C "$d" init -q -b main
+  git -C "$d" config user.email "bin-stubs@example.com"
+  git -C "$d" config user.name "bin-stubs"
+  cat >"$d/.gitignore" <<'EOF'
+.flow-states/
+node_modules/
+.venv/
+vendor/
+target/
+.build/
+dist/
+build/
+coverage/
+.bundle/
+EOF
+  git -C "$d" add .gitignore
+  git -C "$d" commit -q -m init
+  printf '%s\n' "$d"
+}
+
+expect_ok() {
+  run_log "$@"
+  assert_rc 0 "$*"
+}
+
+expect_fail() {
+  run_log "$@"
+  [ "${LAST_RC}" -ne 0 ] || die "expected failure: $*"
+}
+
+summary() { tail -n 20 "${LAST_LOG}"; }

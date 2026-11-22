@@ -64,10 +64,225 @@ for path in "${files[@]}"; do
   done < <(grep -nIE "$BANNED_SUPPRESSIONS" "$path" | cut -d: -f1 || true)
 done
 
-# Lint configuration: each file holds only the settings on its tool's list
-# below, so no setting can turn a rule off or down, known or not.
+comment_lines() {
+  perl - "$@" <<'PERL'
+use strict;
+use warnings;
+
+my $magic = qr/^#\s*(?:frozen_string_literal|encoding|coding|warn_indent|shareable_constant_value):/;
+my $preceders = '(,=:[!&|?{};+-*%<>~^';
+my $keywords = qr/(?:^|[^\w\$])(?:return|typeof|case|do|else|in|of|void|yield|await)\z/;
+
+sub kind_of {
+  my ($path, $first) = @_;
+  return 'slash' if $path =~ /\.(?:[cm]?[jt]sx?|jsonc?|rs|swift)\z/;
+  return 'css' if $path =~ /\.css\z/;
+  return 'ruby' if $path =~ /(?:\.rb|\.rake|\.ru|\.gemspec|(?:\A|\/)(?:Gemfile|Rakefile))\z/;
+  return 'python' if $path =~ /\.pyi?\z/;
+  return 'toml' if $path =~ /\.toml\z/;
+  return 'yaml' if $path =~ /\.ya?ml\z/;
+  return 'line' if $path =~ /(?:\A|\/)\.(?:gitignore|gitattributes|shellcheckrc)\z/;
+  return 'shell' if $path =~ /\.(?:sh|bash)\z/;
+  return 'ruby' if $first =~ /\A#!.*\bruby\b/;
+  return 'python' if $first =~ /\A#!.*\bpython/;
+  return 'shell' if $first =~ /\A#!.*\b(?:ba|z)?sh\b/;
+  return '';
+}
+
+sub line_at {
+  my ($text, $index) = @_;
+  return (substr($text, 0, $index) =~ tr/\n//) + 1;
+}
+
+sub skip_quoted {
+  my ($text, $start, $quote) = @_;
+  my $i = $start + 1;
+  while ($i < length $text) {
+    my $c = substr($text, $i, 1);
+    last if $c eq $quote || $c eq "\n";
+    $i += $c eq '\\' ? 2 : 1;
+  }
+  return $i + 1;
+}
+
+sub skip_regex {
+  my ($text, $start) = @_;
+  my ($i, $class) = ($start + 1, 0);
+  while ($i < length $text) {
+    my $c = substr($text, $i, 1);
+    last if $c eq "\n";
+    if ($c eq '\\') {
+      $i += 2;
+      next;
+    }
+    return $i + 1 if $c eq '/' && !$class;
+    $class = 1 if $c eq '[';
+    $class = 0 if $c eq ']';
+    $i++;
+  }
+  return $i;
+}
+
+sub allows_regex {
+  my ($text, $i) = @_;
+  my $from = $i > 64 ? $i - 64 : 0;
+  my $before = substr($text, $from, $i - $from);
+  $before =~ s/\s+\z//;
+  return 1 if $before eq '';
+  return 1 if index($preceders, substr($before, -1)) >= 0;
+  return $before =~ $keywords;
+}
+
+sub slash_lines {
+  my ($text, $block_only) = @_;
+  my @found;
+  my @stack = ('code');
+  my $i = 0;
+  my $n = length $text;
+  if ($text =~ /\A(?:#!|\/\/ swift-tools-version:)/) {
+    $i = index($text, "\n");
+    $i = $n if $i < 0;
+  }
+  while ($i < $n) {
+    my $c = substr($text, $i, 1);
+    my $d = substr($text, $i + 1, 1);
+    if ($stack[-1] eq 'template') {
+      if ($c eq '\\') {
+        $i += 2;
+      } elsif ($c eq '`') {
+        pop @stack;
+        $i++;
+      } elsif ($c eq '$' && $d eq '{') {
+        push @stack, 'code';
+        $i += 2;
+      } else {
+        $i++;
+      }
+      next;
+    }
+    if ($c eq '/' && $d eq '*') {
+      push @found, line_at($text, $i);
+      my $end = index($text, '*/', $i + 2);
+      $i = $end < 0 ? $n : $end + 2;
+    } elsif (!$block_only && $c eq '/' && $d eq '/') {
+      push @found, line_at($text, $i);
+      my $end = index($text, "\n", $i);
+      $i = $end < 0 ? $n : $end;
+    } elsif (!$block_only && $c eq '/' && allows_regex($text, $i)) {
+      $i = skip_regex($text, $i);
+    } elsif ($c eq "'" || $c eq '"') {
+      $i = skip_quoted($text, $i, $c);
+    } elsif (!$block_only && $c eq '`') {
+      push @stack, 'template';
+      $i++;
+    } elsif (!$block_only && $c eq '{') {
+      push @stack, 'code';
+      $i++;
+    } elsif (!$block_only && $c eq '}' && @stack > 1) {
+      pop @stack;
+      $i++;
+    } else {
+      $i++;
+    }
+  }
+  return @found;
+}
+
+sub hash_comment_at {
+  my ($kind, $line, $i) = @_;
+  return 1 if $i == 0;
+  my $prev = substr($line, $i - 1, 1);
+  return $prev =~ /[\s;|&(]/ if $kind eq 'shell';
+  return $prev =~ /\s/ if $kind eq 'yaml';
+  return 1;
+}
+
+sub hash_lines {
+  my ($text, $kind) = @_;
+  my @found;
+  my ($quote, $heredoc, $block) = ('', '', 0);
+  my @lines = split /\n/, $text, -1;
+  for my $k (0 .. $#lines) {
+    my ($line, $no) = ($lines[$k], $k + 1);
+    if ($kind eq 'line') {
+      push @found, $no if $line =~ /\A\s*#/;
+      next;
+    }
+    if ($heredoc ne '') {
+      $heredoc = '' if $line =~ /\A\s*\Q$heredoc\E\s*\z/;
+      next;
+    }
+    if ($kind eq 'ruby' && ($block || $line =~ /\A=begin/)) {
+      push @found, $no;
+      $block = $line !~ /\A=end/;
+      next;
+    }
+    next if $no == 1 && $line =~ /\A#!/;
+    next if $kind eq 'ruby' && $quote eq '' && $line =~ $magic;
+    next if $kind eq 'shell' && $quote eq '' && $line =~ /\A\s*# shellcheck source=\S+\s*\z/;
+    my ($i, $hit) = (0, 0);
+    while ($i < length $line) {
+      my $c = substr($line, $i, 1);
+      if ($quote ne '') {
+        if ($c eq '\\' && $quote ne "'") {
+          $i += 2;
+          next;
+        }
+        $quote = '' if $c eq $quote;
+      } elsif ($c eq '\\') {
+        $i += 2;
+        next;
+      } elsif ($c eq "'" || $c eq '"' || ($c eq '`' && ($kind eq 'shell' || $kind eq 'ruby'))) {
+        $quote = $c;
+      } elsif ($c eq '#' && hash_comment_at($kind, $line, $i)) {
+        $hit = 1;
+        last;
+      }
+      $i++;
+    }
+    if ($hit) {
+      push @found, $no;
+    } elsif (($kind eq 'shell' || $kind eq 'ruby') && $quote eq ''
+      && $line =~ /<<[-~]?['"]?([A-Z_][A-Z0-9_]*)['"]?/) {
+      $heredoc = $1;
+    }
+  }
+  return @found;
+}
+
+for my $path (@ARGV) {
+  open my $fh, '<', $path or next;
+  my $text = do { local $/; <$fh> };
+  close $fh;
+  my ($first) = split /\n/, $text, 2;
+  $first = '' unless defined $first;
+  my $kind = kind_of($path, $first);
+  next if $kind eq '';
+  my @lines = $kind eq 'slash' ? slash_lines($text, 0)
+    : $kind eq 'css' ? slash_lines($text, 1)
+    : hash_lines($text, $kind);
+  print "$path:$_\n" for @lines;
+}
+PERL
+}
+
+code=()
+for path in "${files[@]}"; do
+  is_exempt "$path" && continue
+  case "$path" in
+    *.md) continue ;;
+  esac
+  is_text "$path" && code+=("$path")
+done
+
+if [ "${#code[@]}" -gt 0 ]; then
+  while IFS= read -r hit; do
+    fail "$hit: a comment; only a shebang, a Ruby magic comment, a shellcheck source= line or Swift's tools-version line may stay"
+  done < <(comment_lines "${code[@]}")
+fi
+
 BIOME_KEYS="[\"\$schema\", \"vcs\", \"files\", \"formatter\", \"assist\", \"linter\"]"
-# A TOML key line: a bare or quoted key, possibly dotted, then =.
+BIOME_GROUPS='["a11y", "complexity", "correctness", "nursery", "performance", "security", "style", "suspicious"]'
 TOML_KEY='^[[:space:]]*("[^"]*"|[A-Za-z0-9_-])[^=]*='
 RUBOCOP_KEYS='plugins require AllCops'
 RUBOCOP_ALLCOPS_KEYS='NewCops SuggestExtensions TargetRubyVersion'
@@ -77,28 +292,72 @@ LINT_LEVELS=' warn deny forbid '
 SHELLCHECKRC_KEYS='source-path|external-sources|enable'
 
 biome_ok() {
-  jq -e --argjson keys "$BIOME_KEYS" '
+  jq -e --argjson keys "$BIOME_KEYS" --argjson groups "$BIOME_GROUPS" '
     (keys - $keys | length == 0)
-    and ((.linter // {}) | (keys - ["enabled"] | length == 0)
-      and ((has("enabled") | not) or .enabled == true))' "$1" >/dev/null 2>&1
+    and ((.linter // {}) | (keys - ["enabled", "rules"] | length == 0)
+      and ((has("enabled") | not) or .enabled == true)
+      and ((.rules // {}) | to_entries | all(
+        (.key == "preset" and .value == "all")
+        or (.key as $k | ($groups | index($k)) != null and .value == "error"))))' "$1" >/dev/null 2>&1
 }
 
 eslint_ok() {
-  ! grep -qE "(^|[^A-Za-z0-9_\$])[\"']?(rules|linterOptions)[\"']?[[:space:]]*:" "$1"
+  perl - "$1" <<'PERL'
+use strict;
+use warnings;
+
+my $text = do { local $/; <> };
+my $quote = qr/["\x27]/;
+exit 1 if $text =~ /(?:\A|[^\w\$])$quote?linterOptions$quote?\s*:/;
+my $error = qr/(?:${quote}error$quote|2)/;
+while ($text =~ /(?:\A|[^\w\$])$quote?rules$quote?\s*:\s*\{/g) {
+  my $at = pos $text;
+  my ($depth, $quoted, $entry) = (1, '', '');
+  my @entries;
+  while ($depth > 0 && $at < length $text) {
+    my $c = substr($text, $at++, 1);
+    if ($quoted ne '') {
+      $quoted = '' if $c eq $quoted;
+    } elsif ($c eq '"' || $c eq "'" || $c eq '`') {
+      $quoted = $c;
+    } elsif ($c =~ /[\[{(]/) {
+      $depth++;
+    } elsif ($c =~ /[\]})]/) {
+      $depth--;
+      last if $depth == 0;
+    } elsif ($c eq ',' && $depth == 1) {
+      push @entries, $entry;
+      $entry = '';
+      next;
+    }
+    $entry .= $c;
+  }
+  push @entries, $entry;
+  for my $item (@entries) {
+    next if $item =~ /\A\s*\z/;
+    exit 1 unless $item =~ /\A\s*(?:$quote[^"\x27]*$quote|[\w\$\/@-]+)\s*:\s*(?:$error|\[\s*$error)/;
+  }
+}
+exit 0;
+PERL
 }
 
 rubocop_ok() {
   ruby -ryaml -e '
     config = YAML.safe_load(File.read(ARGV[0])) || {}
-    exit 1 unless config.is_a?(Hash) && (config.keys - ARGV[1].split).empty?
+    exit 1 unless config.is_a?(Hash)
+    config.each do |key, value|
+      next if ARGV[1].split.include?(key)
+      next if value == { "Enabled" => true }
+      next if key == "Style/Documentation" && value == { "Enabled" => false }
+      exit 1
+    end
     all = config.fetch("AllCops", {}) || {}
     exit 1 unless all.is_a?(Hash) && (all.keys - ARGV[2].split).empty?
     exit 1 if all.key?("NewCops") && all["NewCops"] != "enable"
   ' "$1" "$RUBOCOP_KEYS" "$RUBOCOP_ALLCOPS_KEYS" 2>/dev/null
 }
 
-# Cargo.toml: every lint level under [lints] or [workspace.lints] is warn,
-# deny or forbid; clippy runs with warnings as errors.
 cargo_ok() {
   awk -v levels="$LINT_LEVELS" -v keyline="$TOML_KEY" '
     /^[[:space:]]*\[/ { section = $0; gsub(/[][[:space:]]/, "", section); next }
@@ -115,8 +374,6 @@ cargo_ok() {
     END { exit bad }' "$1"
 }
 
-# Ruff, in pyproject.toml under [tool.ruff] or in ruff.toml: the top level
-# holds only RUFF_KEYS, [lint] only RUFF_LINT_KEYS, and [format] anything.
 ruff_ok() {
   awk -v prefix="$2" -v top="$RUFF_KEYS" -v lint="$RUFF_LINT_KEYS" -v keyline="$TOML_KEY" '
     /^[[:space:]]*\[/ { section = $0; gsub(/[][[:space:]]/, "", section); next }
@@ -150,17 +407,17 @@ for path in "${files[@]}"; do
   case "$(basename "$path")" in
     biome.json | biome.jsonc)
       biome_ok "$path" ||
-        fail "$path: Biome settings outside its list (\$schema, vcs, files, formatter, assist, linter.enabled true)"
+        fail "$path: Biome settings outside its list (\$schema, vcs, files, formatter, assist, linter.enabled true, linter.rules preset all or a group at error)"
       ;;
     eslint.config.js | eslint.config.mjs | eslint.config.cjs | eslint.config.ts | eslint.config.mts | eslint.config.cts)
       eslint_ok "$path" ||
-        fail "$path: sets ESLint rules or linterOptions; rules come only from the shared configs it extends"
+        fail "$path: sets an ESLint rule below error, or linterOptions; a rule may only be raised to error"
       ;;
     .rubocop.yml)
       if ! command -v ruby >/dev/null 2>&1; then
         fail "$path: ruby is not installed to read it"
       elif ! rubocop_ok "$path"; then
-        fail "$path: RuboCop settings outside its list ($RUBOCOP_KEYS; AllCops: $RUBOCOP_ALLCOPS_KEYS, NewCops enable)"
+        fail "$path: RuboCop settings outside its list ($RUBOCOP_KEYS; AllCops: $RUBOCOP_ALLCOPS_KEYS, NewCops enable; a cop only Enabled true; Style/Documentation may be Enabled false)"
       fi
       ;;
     Cargo.toml)
@@ -186,6 +443,161 @@ for path in "${files[@]}"; do
       ;;
     brakeman.ignore)
       fail "$path: Brakeman ignores no warning"
+      ;;
+  esac
+done
+
+SKIP_JS='\b(test|it|describe|suite|t|context)[[:space:]]*\.[[:space:]]*(skip|only|todo|skipIf|runIf|fails|failing)\b|\b(xit|xtest|xdescribe|fit|fdescribe)[[:space:]]*\(|\b(skip|only|todo)[[:space:]]*:[[:space:]]*true\b'
+SKIP_PY='@pytest\.mark\.(skip|skipif|xfail)\b|\bpytest\.(skip|xfail|importorskip)[[:space:]]*\(|@unittest\.(skip|skipIf|skipUnless|expectedFailure)\b|\.skipTest[[:space:]]*\('
+SKIP_RUBY='^[[:space:]]*(skip|pending|xit|xdescribe|fit|fdescribe|focus)([[:space:](]|$)'
+SKIP_RUST='#\[[[:space:]]*ignore[[:space:]]*[]=(]'
+SKIP_SWIFT='\bXCTSkip(If|Unless)?\b|\.disabled[[:space:]]*\(|\bXCTExpectFailure\b|\bwithKnownIssue\b'
+
+skip_pattern_of() {
+  skip_pattern=""
+  case "/$1" in
+    *.rs) skip_pattern="$SKIP_RUST" ;;
+    */tests/*.py | */test/*.py | */test_*.py | *_test.py | */conftest.py) skip_pattern="$SKIP_PY" ;;
+    *_test.rb | *_spec.rb) skip_pattern="$SKIP_RUBY" ;;
+    */Tests/*.swift | *Tests.swift) skip_pattern="$SKIP_SWIFT" ;;
+    *.test.[cm][jt]s | *.test.[jt]s | *.test.[jt]sx | *.spec.[cm][jt]s | *.spec.[jt]s | *.spec.[jt]sx) skip_pattern="$SKIP_JS" ;;
+    */test-*.[cm]js | */test-*.js | */test-*.jsx) skip_pattern="$SKIP_JS" ;;
+    */tests/*.[cm][jt]s | */tests/*.[jt]s | */tests/*.[jt]sx | */__tests__/*.[jt]s | */__tests__/*.[jt]sx) skip_pattern="$SKIP_JS" ;;
+  esac
+}
+
+for path in "${files[@]}"; do
+  skip_pattern_of "$path"
+  [ -n "$skip_pattern" ] || continue
+  while IFS= read -r line; do
+    fail "$path:$line: a test that does not run (skipped, focused, todo or expected to fail)"
+  done < <(grep -nE "$skip_pattern" "$path" | cut -d: -f1 || true)
+done
+
+TIMEOUT_FLAGS='(--test-?[tT]imeout|--timeout)\b|-(default|maximum)-test-execution-time-allowance\b|-test-timeouts-enabled\b'
+TIMEOUT_JS_CONFIG='\b(testTimeout|hookTimeout|teardownTimeout)\b'
+TIMEOUT_JS_CODE='\b(jest\.setTimeout|vi\.setConfig|setDefaultTimeout)[[:space:]]*\('
+TIMEOUT_JS_LIMIT='\btimeout[[:space:]]*:[^,})]*'
+TIMEOUT_PY_LIMIT='@pytest\.mark\.timeout[[:space:]]*\([^)]*'
+TIMEOUT_SWIFT_CODE='\bexecutionTimeAllowance[[:space:]]*='
+TIMEOUT_XCTESTPLAN='"(defaultTestExecutionTimeAllowance|maximumTestExecutionTimeAllowance|testTimeoutsEnabled)"'
+
+section_key_lines() {
+  awk -v want="$2" -v key="$3" '
+    /^[[:space:]]*\[/ { section = $0; gsub(/[][[:space:]]/, "", section); next }
+    section ~ want && $0 ~ ("^[[:space:]]*" key "[[:space:]]*=") { print NR }
+  ' "$1"
+}
+
+matching_lines() {
+  grep -nE "$1" "$2" | cut -d: -f1 || true
+}
+
+non_number_limits() {
+  local line value
+  while IFS=: read -r line value; do
+    value="${value#*[:(]}"
+    value="$(printf '%s' "$value" | tr -d '[:space:]')"
+    [[ "$value" =~ ^[0-9][0-9_]*$ ]] || printf '%s\n' "$line"
+  done < <(grep -noE "$1" "$2" || true)
+}
+
+timeout_lines() {
+  case "/$1" in
+    */bin/*) matching_lines "$TIMEOUT_FLAGS" "$1" ;;
+    */package.json) matching_lines "$TIMEOUT_FLAGS|$TIMEOUT_JS_CONFIG" "$1" ;;
+    */vitest.config.* | */vite.config.* | */vitest.workspace.* | */jest.config.*)
+      matching_lines "$TIMEOUT_JS_CONFIG" "$1"
+      ;;
+    */bunfig.toml) section_key_lines "$1" '^test$' timeout ;;
+    */pyproject.toml)
+      section_key_lines "$1" '^tool\.pytest\.ini_options$' timeout
+      matching_lines "$TIMEOUT_FLAGS" "$1"
+      ;;
+    */pytest.ini | */tox.ini | */setup.cfg)
+      section_key_lines "$1" '^(pytest|tool:pytest)$' timeout
+      matching_lines "$TIMEOUT_FLAGS" "$1"
+      ;;
+    *.xctestplan) matching_lines "$TIMEOUT_XCTESTPLAN" "$1" ;;
+  esac
+  skip_pattern_of "$1"
+  case "$skip_pattern" in
+    "$SKIP_JS")
+      matching_lines "$TIMEOUT_JS_CODE" "$1"
+      non_number_limits "$TIMEOUT_JS_LIMIT" "$1"
+      ;;
+    "$SKIP_PY") non_number_limits "$TIMEOUT_PY_LIMIT" "$1" ;;
+    "$SKIP_SWIFT") matching_lines "$TIMEOUT_SWIFT_CODE" "$1" ;;
+  esac
+}
+
+for path in "${files[@]}"; do
+  [ "$path" = "$SELF" ] && continue
+  while IFS= read -r line; do
+    [ -n "$line" ] || continue
+    fail "$path:$line: raises the test time limit beyond the runner's default; only a fixed number on one test is allowed"
+  done < <(timeout_lines "$path")
+done
+
+OUTPUT_DIRS=(node_modules dist build coverage .venv target .build .flow-states)
+
+for path in "${files[@]}"; do
+  case "/$path" in
+    */node_modules/* | */dist/* | */build/* | */coverage/* | */.venv/* | */target/* | */.build/* | */.flow-states/* | */lcov.info | *.tsbuildinfo)
+      fail "$path: build or coverage output; .gitignore keeps it out of git"
+      ;;
+  esac
+done
+
+if [ ! -f .gitignore ]; then
+  fail ".gitignore is missing"
+else
+  for dir in "${OUTPUT_DIRS[@]}"; do
+    grep -qxF "$dir/" .gitignore || fail ".gitignore does not ignore $dir/"
+  done
+fi
+
+for path in "${files[@]}"; do
+  case "$path" in
+    */bin/ci | */bin/changed | */bin/format | */bin/lint | */bin/build | */bin/test | */bin/dependencies | */bin/open | */bin/qa)
+      fail "$path: a gate script inside an app; the root bin/ runs every app"
+      ;;
+    bin/_root/*)
+      fail "$path: the root app runs from bin/_<language>/, not bin/_root/"
+      ;;
+  esac
+done
+
+INSTALL_COMMANDS='\b(npm|pnpm|yarn|bun)[[:space:]]+(install|i|ci|add|update|upgrade)\b|\buv[[:space:]]+(sync|add|lock|pip)\b|\bbundle[[:space:]]+(install|update|add)\b|\bcargo[[:space:]]+(fetch|update|add)\b|\bswift[[:space:]]+package[[:space:]]+(update|resolve)\b'
+
+for path in "${files[@]}"; do
+  case "$path" in
+    bin/_*/dependencies) continue ;;
+    bin/_*/*/*) continue ;;
+    bin/_*/*) ;;
+    *) continue ;;
+  esac
+  while IFS= read -r line; do
+    fail "$path:$line: installs packages; only bin/dependencies does"
+  done < <(matching_lines "$INSTALL_COMMANDS" "$path")
+done
+
+COVERAGE_NARROWED='"codeCoverage"[[:space:]]*:[[:space:]]*(false|\{)|codeCoverageEnabled[[:space:]]*=[[:space:]]*"NO"|onlyGenerateCoverageForSpecifiedTargets[[:space:]]*=[[:space:]]*"YES"'
+
+for path in "${files[@]}"; do
+  case "$path" in
+    *.rb)
+      grep -q 'SimpleCov\.start' "$path" || continue
+      grep -qE '^[[:space:]]*minimum_coverage line: 100, branch: 100[[:space:]]*$' "$path" ||
+        fail "$path: starts SimpleCov without minimum_coverage line: 100, branch: 100"
+      while IFS= read -r line; do
+        fail "$path:$line: leaves files out of coverage (add_filter)"
+      done < <(matching_lines '\badd_filter\b' "$path")
+      ;;
+    *.xctestplan | *.xcscheme)
+      while IFS= read -r line; do
+        fail "$path:$line: turns code coverage off or limits it to some targets"
+      done < <(matching_lines "$COVERAGE_NARROWED" "$path")
       ;;
   esac
 done
@@ -244,13 +656,10 @@ for path in "${scripts[@]+"${scripts[@]}"}"; do
     fail "$path: first command is not set -euo pipefail"
 done
 
-# A file's text without its trailing audit stamp line.
 unstamped() {
   perl -0777 -pe 's/\n<!-- audited: [0-9a-f]{12} -->\s*\z/\n/' "$1"
 }
 
-# The stamp bin/stamp-rules writes: the first 12 hex chars of sha256 over the
-# body above the stamp, trailing whitespace normalized to one final newline.
 stamp_of() {
   perl -0777 -pe 's/\n<!-- audited: [0-9a-f]{12} -->\s*\z/\n/; s/\s*\z/\n/' "$1" |
     shasum -a 256 | cut -c1-12
@@ -332,7 +741,6 @@ else
     jq -e --arg e "$entry" ".permissions.allow // [] | index(\$e) != null" "$SETTINGS" >/dev/null ||
       fail "$SETTINGS: does not allow $entry"
   done
-  # A leading wildcard also matches absolute paths such as /usr/bin/git.
   jq -e '[.permissions.allow // [] | .[] | select(startswith("Bash(*"))] | length == 0' "$SETTINGS" >/dev/null ||
     fail "$SETTINGS: allows a command pattern that starts with a wildcard"
   for entry in "${REQUIRED_DENY[@]}"; do

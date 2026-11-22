@@ -1,0 +1,130 @@
+#!/usr/bin/env bash
+set -euo pipefail
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "${APP_DIR:-$HERE/../..}" && pwd)"
+cd "$REPO_ROOT"
+# shellcheck source=lib/toolchain.sh
+. "$HERE/lib/toolchain.sh"
+packages_check "$PWD" || exit 1
+
+changed_files() {
+  local path
+  while IFS= read -r path; do
+    [ -z "$path" ] && continue
+    [ -f "$path" ] || continue
+    case "$path" in
+      vendor/* | tmp/* | log/* | coverage/* | db/schema.rb | .flow-states/*) continue ;;
+    esac
+    printf '%s\n' "$path"
+  done < <(
+    {
+      git diff --name-only --relative HEAD -- .
+      git ls-files --others --exclude-standard -- .
+    } | sort -u
+  )
+}
+
+if [ "${1:-}" = "--files" ]; then
+  changed_files
+  exit 0
+fi
+
+quietly() {
+  local log rc=0
+  log="$(mktemp)"
+  "$@" >"$log" 2>&1 || rc=$?
+  if [ "$rc" -ne 0 ]; then
+    cat "$log" >&2
+    rm -f "$log"
+    return "$rc"
+  fi
+  rm -f "$log"
+  return 0
+}
+
+is_source() {
+  case "$1" in
+    app/*.rb | lib/*.rb) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+is_test() {
+  case "$1" in
+    test/*_test.rb) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+test_for_source() {
+  case "$1" in
+    app/*)
+      local rel="${1#app/}"
+      echo "test/${rel%.rb}_test.rb"
+      ;;
+    lib/*)
+      echo "test/${1%.rb}_test.rb"
+      ;;
+  esac
+}
+
+already() {
+  local n="$1" t
+  for t in "${tests[@]+"${tests[@]}"}"; do
+    [ "$t" = "$n" ] && return 0
+  done
+  return 1
+}
+
+files=()
+while IFS= read -r path; do
+  files+=("$path")
+done < <(changed_files)
+
+if [ "${#files[@]}" -eq 0 ]; then
+  exit 0
+fi
+
+"$HERE/format" "${files[@]}"
+"$HERE/lint" "${files[@]}"
+
+tests=()
+dirty_sources=()
+missing_mirror=()
+for path in "${files[@]}"; do
+  if is_source "$path"; then
+    dirty_sources+=("$path")
+    mirror="$(test_for_source "$path")"
+    if [ ! -f "$mirror" ]; then
+      missing_mirror+=("$path → $mirror")
+    elif ! already "$mirror"; then
+      tests+=("$mirror")
+    fi
+  elif is_test "$path"; then
+    if ! already "$path"; then
+      tests+=("$path")
+    fi
+  fi
+done
+
+if [ "${#missing_mirror[@]}" -gt 0 ]; then
+  for msg in "${missing_mirror[@]}"; do
+    echo "bin/changed: no mirrored test for $msg" >&2
+  done
+  exit 1
+fi
+
+if [ "${#tests[@]}" -eq 0 ]; then
+  exit 0
+fi
+
+list="$(mktemp)"
+trap 'rm -f "$list"' EXIT
+if [ "${#dirty_sources[@]}" -gt 0 ]; then
+  printf '%s\n' "${dirty_sources[@]}" >"$list"
+else
+  : >"$list"
+fi
+export COVERAGE_DIRTY_FILES="$list"
+quietly "$HERE/test" "${tests[@]}"
+exit 0
