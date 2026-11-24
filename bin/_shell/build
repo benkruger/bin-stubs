@@ -12,11 +12,38 @@ if [ ! -x test/run ]; then
   echo "bin/build: no executable test/run" >&2
   fail=1
 fi
+scripts=()
 while IFS= read -r path; do
-  if [ "$(head -c 2 "$path")" = '#!' ] && [ ! -x "$path" ]; then
+  scripts+=("$path")
+done < <(shell_listing --all | shell_scripts)
+[ "${#scripts[@]}" -gt 0 ] || exit "$fail"
+parsed="$(mktemp -d)"
+trap 'rm -rf "$parsed"' EXIT
+jobs="$(getconf _NPROCESSORS_ONLN)"
+parse_every() {
+  local i
+  for ((i = $1; i < ${#scripts[@]}; i += jobs)); do
+    bash -n "${scripts[$i]}" >"$parsed/$i.out" 2>"$parsed/$i.err" || : >"$parsed/$i.fail"
+  done
+}
+pids=()
+for ((j = 0; j < jobs && j < ${#scripts[@]}; j++)); do
+  parse_every "$j" &
+  pids+=("$!")
+done
+for pid in "${pids[@]}"; do
+  wait "$pid"
+done
+for i in "${!scripts[@]}"; do
+  path="${scripts[$i]}"
+  first=""
+  IFS= read -r first <"$path" || true
+  if [ "${first:0:2}" = '#!' ] && [ ! -x "$path" ]; then
     echo "bin/build: $path has a shebang but is not executable" >&2
     fail=1
   fi
-  bash -n "$path" || fail=1
-done < <(shell_listing --all | shell_scripts)
+  [ ! -s "$parsed/$i.out" ] || cat "$parsed/$i.out"
+  [ ! -s "$parsed/$i.err" ] || cat "$parsed/$i.err" >&2
+  [ ! -e "$parsed/$i.fail" ] || fail=1
+done
 exit "$fail"

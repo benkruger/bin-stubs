@@ -34,8 +34,21 @@ tests_to_check() {
 if [ -f config/database.yml ]; then
   run_quiet "rails (db:test:prepare)" bundle exec rails db:test:prepare
 fi
+resultset=coverage/.resultset.json
+rm -f "$resultset"
 echo "  → rails test"
 bundle exec rails test "$@"
+if [ ! -f "$resultset" ]; then
+  echo "bin/test: SimpleCov wrote no $resultset; test/test_helper.rb starts it" >&2
+  exit 1
+fi
+whole=0
+[ "$#" -gt 0 ] || [ -n "${COVERAGE_DIRTY_FILES:-}" ] || whole=1
+measured="$(jq '[.[].coverage | keys[]] | unique | length' "$resultset")"
+if [ "$whole" -eq 1 ] && [ "$measured" -eq 0 ]; then
+  echo "bin/test: SimpleCov measured no source" >&2
+  exit 1
+fi
 
 orphan=0
 while IFS= read -r t; do
@@ -51,4 +64,5 @@ while IFS= read -r t; do
     orphan=1
   fi
 done < <(tests_to_check "$@")
-exit "$orphan"
+[ "$orphan" -eq 0 ] || exit 1
+[ "$whole" -eq 0 ] || echo "bin/test: coverage bar held on $measured source(s)"

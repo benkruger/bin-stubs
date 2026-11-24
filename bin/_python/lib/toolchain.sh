@@ -2,6 +2,7 @@
 
 toolchain_check() {
   local root="$1" pinned python active
+  [ "${FLOW_CHECKED_APP:-}" != "$root" ] || return 0
   if [ ! -f "$root/.python-version" ]; then
     echo "toolchain: .python-version is missing; pin Python with: uv python pin <version>" >&2
     return 1
@@ -11,7 +12,8 @@ toolchain_check() {
     echo "toolchain: no installed Python matches .python-version ($pinned); install it with: uv python install $pinned" >&2
     return 1
   fi
-  active="$("$python" -c 'import platform; print(platform.python_version())')"
+  active="$("$python" --version)"
+  active="${active#Python }"
   case "$active" in
     "$pinned" | "$pinned".*) ;;
     *)
@@ -23,6 +25,7 @@ toolchain_check() {
 
 packages_check() {
   local root="$1"
+  [ "${FLOW_CHECKED_APP:-}" != "$root" ] || return 0
   if ! (cd "$root" && uv sync --frozen --offline --check >/dev/null 2>&1); then
     echo "packages: .venv is missing or does not match uv.lock; run bin/dependencies" >&2
     return 1

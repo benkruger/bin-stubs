@@ -7,11 +7,16 @@ cd "$root"
 . "$here/lib/toolchain.sh"
 packages_check "$PWD" || exit 1
 
+whole=0
+[ "$#" -gt 0 ] || whole=1
+
 coverage_ok() {
   local report="$1"
-  python3 - "$report" <<'PY'
+  python3 - "$report" "$whole" <<'PY'
 import json, sys
 report = json.load(open(sys.argv[1]))
+whole = sys.argv[2] == "1"
+checked = 0
 files = []
 if "targets" in report:
     for target in report["targets"]:
@@ -36,13 +41,17 @@ for f in files:
         pct = covered / count
     if pct is None:
         continue
+    checked += 1
     if pct < 1:
         bad.append(f"{name}: {int(float(pct) * 100)}%")
 if bad:
     print("FAIL: line coverage is under 100%")
     print("\n".join(bad))
     sys.exit(1)
-print("OK: 100% line coverage")
+if whole and checked == 0:
+    print("bin/test: llvm-cov measured no source", file=sys.stderr)
+    sys.exit(1)
+print(f"bin/test: coverage bar held on {checked} source(s)")
 PY
 }
 
@@ -77,18 +86,33 @@ fi
 
 swift test --enable-code-coverage "$@"
 prof="$(find .build -name 'default.profdata' | head -n 1)"
-binpath="$(swift build --show-bin-path)"
-binary="$(find "$binpath" -type f -path '*/MacOS/*PackageTests' ! -path '*.dSYM/*' | head -n 1 || true)"
-if [ -n "$prof" ] && [ -n "$binary" ]; then
-  dsym="${binary}.dSYM"
-  [ -d "$dsym" ] && mv "$dsym" "${dsym}.aside"
-  set +e
-  xcrun llvm-cov export "$binary" -instr-profile "$prof" -format=text -ignore-filename-regex='Tests|\.build' >"$root/.coverage.json"
-  cov_rc=$?
-  set -e
-  [ -d "${dsym}.aside" ] && mv "${dsym}.aside" "$dsym"
-  if [ "$cov_rc" -eq 0 ]; then
-    coverage_ok "$root/.coverage.json"
-  fi
-  rm -f "$root/.coverage.json"
+binaries=()
+while IFS= read -r binary; do
+  binaries+=("$binary")
+done < <(find .build/debug/ -type f -path '*.xctest/Contents/MacOS/*' ! -path '*.dSYM/*' | sort)
+if [ -z "$prof" ] || [ "${#binaries[@]}" -eq 0 ]; then
+  echo "bin/test: swift test left no coverage data to check" >&2
+  exit 1
 fi
+objects=()
+for binary in "${binaries[@]:1}"; do
+  objects+=(-object "$binary")
+done
+for binary in "${binaries[@]}"; do
+  [ ! -d "$binary.dSYM" ] || mv "$binary.dSYM" "$binary.dSYM.aside"
+done
+cov_rc=0
+xcrun llvm-cov export "${binaries[0]}" ${objects[@]+"${objects[@]}"} -instr-profile "$prof" -format=text \
+  -ignore-filename-regex='Tests|\.build' >"$root/.coverage.json" || cov_rc=$?
+for binary in "${binaries[@]}"; do
+  [ ! -d "$binary.dSYM.aside" ] || mv "$binary.dSYM.aside" "$binary.dSYM"
+done
+if [ "$cov_rc" -ne 0 ]; then
+  rm -f "$root/.coverage.json"
+  echo "bin/test: llvm-cov could not export the coverage" >&2
+  exit 1
+fi
+cov_ok=0
+coverage_ok "$root/.coverage.json" || cov_ok=$?
+rm -f "$root/.coverage.json"
+exit "$cov_ok"

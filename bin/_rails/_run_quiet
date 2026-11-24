@@ -1,20 +1,39 @@
 #!/usr/bin/env bash
-run_quiet() {
-  local label="$1"
+QUIET_PIDS=()
+QUIET_LABELS=()
+QUIET_LOGS=()
+
+start_quiet() {
+  local label="$1" log
   shift
-  local log
   log="$(mktemp "${TMPDIR:-/tmp}/run-quiet.XXXXXX")"
-  local status=0
-  "$@" >"$log" 2>&1 </dev/null || status=$?
+  "$@" >"$log" 2>&1 </dev/null &
+  QUIET_PIDS+=("$!")
+  QUIET_LABELS+=("$label")
+  QUIET_LOGS+=("$log")
+}
 
-  if [ "$status" -ne 0 ]; then
-    echo "  ✗ ${label}"
-    cat "$log"
-    rm -f "$log"
-    return "$status"
-  fi
+finish_quiet() {
+  local i status rc=0
+  for i in ${QUIET_PIDS[@]+"${!QUIET_PIDS[@]}"}; do
+    status=0
+    wait "${QUIET_PIDS[$i]}" || status=$?
+    if [ "$status" -ne 0 ]; then
+      echo "  ✗ ${QUIET_LABELS[$i]}"
+      cat "${QUIET_LOGS[$i]}"
+      rc="$status"
+    else
+      echo "  ✓ ${QUIET_LABELS[$i]}"
+    fi
+    rm -f "${QUIET_LOGS[$i]}"
+  done
+  QUIET_PIDS=()
+  QUIET_LABELS=()
+  QUIET_LOGS=()
+  return "$rc"
+}
 
-  echo "  ✓ ${label}"
-  rm -f "$log"
-  return 0
+run_quiet() {
+  start_quiet "$@"
+  finish_quiet
 }

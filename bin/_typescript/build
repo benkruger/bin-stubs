@@ -11,7 +11,56 @@ if [ -z "${CI:-}" ]; then
 fi
 packages_check "$PWD" || exit 1
 
-if node -e 'const p = require("./package.json"); process.exit(p.scripts && p.scripts.build ? 0 : 1)'; then
+if jq -e '(.scripts.build // "") != ""' package.json >/dev/null; then
   exec npm run build
 fi
-exec "$root/node_modules/.bin/tsc" --noEmit
+
+STRICT_FLAGS='["alwaysStrict", "noImplicitAny", "noImplicitThis", "strictBindCallApply", "strictBuiltinIteratorReturn", "strictFunctionTypes", "strictNullChecks", "strictPropertyInitialization", "useUnknownInCatchVariables"]'
+tsc="$root/node_modules/.bin/tsc"
+config="$(mktemp)"
+trap 'rm -f "$config"' EXIT
+"$tsc" --showConfig >"$config" 2>&1 &
+shown=$!
+status=0
+"$tsc" --noEmit || status=1
+if ! wait "$shown"; then
+  cat "$config" >&2
+  exit 1
+fi
+
+while IFS= read -r loose; do
+  echo "bin/build: tsconfig turns type checking down: $loose" >&2
+  status=1
+done < <(jq -r --argjson flags "$STRICT_FLAGS" '.compilerOptions as $o
+  | (if $o.strict == true then empty else "strict is not true" end),
+    ($flags[] | select($o[.] == false) | "\(.) is false"),
+    (if $o.noCheck == true then "noCheck is true" else empty end)' "$config")
+
+# shellcheck source=../lib/apps.sh
+. "$here/../lib/apps.sh"
+root_app=0
+if [ "$(pwd -P)" = "$(git rev-parse --show-toplevel)" ]; then
+  root_app=1
+fi
+
+app_sources() {
+  local path top
+  while IFS= read -r -d '' path; do
+    [ -f "$path" ] || continue
+    case "$path" in
+      node_modules/* | .venv/* | .flow-states/* | */node_modules/* | */.venv/* | */.flow-states/*) continue ;;
+    esac
+    top="${path%%/*}"
+    if [ "$root_app" -eq 1 ] && [ "$top" != "$path" ] && is_app_dir "$root/$top"; then
+      continue
+    fi
+    printf '%s\n' "$path"
+  done < <(git ls-files -z --cached --others --exclude-standard -- '*.ts' '*.tsx' '*.mts' '*.cts')
+}
+
+while IFS= read -r outside; do
+  echo "bin/build: $outside is outside tsconfig's files, so tsc never checks it" >&2
+  status=1
+done < <(app_sources | awk 'NR == FNR { seen[$0] = 1; next } !($0 in seen)' \
+  <(jq -r '.files[]? | sub("^\\./"; "")' "$config") -)
+exit "$status"

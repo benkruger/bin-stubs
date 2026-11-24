@@ -11,9 +11,10 @@
 - Commit only with `bin/commit <branch> <msgfile>`, the message written to a
   file from `mktemp /tmp/flow-commit-msg.XXXXXX`. It reviews changed rules,
   runs `bin/ci`, then commits and pushes; read the JSON line it prints.
-- Start work with `bin/start <branch>` and work in `.worktrees/<branch>`;
-  land it with `bin/complete <branch> <msgfile>`, which squashes it onto
-  `main` and deletes it.
+- Start work with `bin/start <branch>`, then `cd .worktrees/<branch>` and
+  run every script and make every edit there. Land it from the worktree
+  with `bin/complete <branch> <msgfile>`, which squashes it onto `main`
+  and deletes it.
 - Run scripts by relative path (`bin/ci`), never an absolute one. Never call
   the toolchain (bun, Biome, Ruff, RuboCop, cargo, swift) directly; call the
   `bin/` script that wraps it.

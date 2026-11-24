@@ -19,9 +19,9 @@ and a JS or pytest limit on one test is a plain number.
   `setDefaultTimeout` call or a `timeout:` value that is not a plain
   number in JS, or an `@pytest.mark.timeout` argument that is not a
   plain number. Trigger: any new or edited test, test config or `bin/`
-  script; the review refuses any other limit.
+  script.
 - A test that times out is a failing test, fixed or deleted as
-  `every-test-runs.md` states; the fix makes it faster, never gives it
-  more time, and the review refuses a change that does otherwise.
-  Trigger: a test that times out.
-<!-- audited: a7f8ea26431c -->
+  `every-test-runs.md` states; the fix makes it faster and adds no limit
+  the bullet above lists, which `tests/guards` fails. Trigger: a test
+  that times out.
+<!-- audited: 0476649b5170 -->

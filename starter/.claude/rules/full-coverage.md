@@ -6,9 +6,15 @@ full bar the language's standards state.
 ## The Rule
 
 - On the `--all` run `bin/ci` makes, each language's `bin/test` holds
-  every source to the bar `<language>-standards.md` states, and the review
-  refuses a coverage config or `bin/test` change that narrows it. Trigger:
-  any change to a coverage config or a language's `bin/test`.
+  every source to the bar `<language>-standards.md` states, and fails a
+  run that falls below it, failing `bin/ci`. Trigger: any change to a
+  coverage config or a language's `bin/test`.
+- A `bin/test` that measures coverage prints `bin/test: coverage bar held
+  on N source(s)` once every source it measured meets the bar. A run over
+  the whole app fails when it measured no source, and one whose coverage
+  tool can finish without writing a report, such as SimpleCov or
+  `swift test`, fails when it writes none, so a check never passes by
+  measuring nothing. Trigger: any change to a language's `bin/test`.
 - A coverage config measures every target with no filter. `tests/guards`
   checks two: it fails a Ruby file that starts SimpleCov without the line
   `minimum_coverage line: 100, branch: 100` or with an `add_filter`, and
@@ -16,4 +22,4 @@ full bar the language's standards state.
   turns code coverage off or limits it to some targets. Trigger: any
   change to a Ruby file that starts SimpleCov, an `.xctestplan` or an
   `.xcscheme`.
-<!-- audited: a39f109afe98 -->
+<!-- audited: 8268e162df3b -->

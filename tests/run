@@ -22,24 +22,28 @@ SHARED=(bin starter tests/lib.sh tests/lib tests/run tests/picomatch-ghsa-fc5q-3
 PASSES="$REPO/.flow-states/$(git -C "$REPO" rev-parse --abbrev-ref HEAD)/tests"
 
 inputs_hash() {
-  local path
-  local files=()
+  local path sum
+  local files=() digest=(shasum -a 256)
+  ! command -v sha256sum >/dev/null 2>&1 || digest=(sha256sum)
   while IFS= read -r -d '' path; do
     [ -f "$REPO/$path" ] && files+=("$path")
   done < <(git -C "$REPO" ls-files -z --cached --others --exclude-standard -- "$@")
-  {
+  sum="$({
     printf '%s\n' "${files[@]}"
-    (cd "$REPO" && git hash-object -- "${files[@]}")
-  } | shasum -a 256 | cut -d' ' -f1
+    git -C "$REPO" hash-object -- "${files[@]}"
+  } | "${digest[@]}")" || return
+  printf '%s\n' "${sum%% *}"
 }
 
 part() {
-  local name="$1" inputs="$2" hash pass="$PASSES/$1"
+  local name="$1" inputs="$2" hash saved pass="$PASSES/$1"
   local extra=()
   shift 2
   read -r -a extra <<<"$inputs"
   hash="$(inputs_hash "${SHARED[@]}" "${extra[@]}")"
-  if [ "$force" -eq 0 ] && [ -f "$pass" ] && [ "$(cat "$pass")" = "$hash" ]; then
+  saved=""
+  [ ! -f "$pass" ] || read -r saved <"$pass" || true
+  if [ "$force" -eq 0 ] && [ -n "$saved" ] && [ "$saved" = "$hash" ]; then
     printf 'bin/ci: %s unchanged since its last pass\n' "$name"
     return 0
   fi
@@ -49,20 +53,28 @@ part() {
   printf '%s\n' "$hash" >"$pass"
 }
 
-say "repo guards (starter suite on this repo)"
-expect_ok "$REPO/starter/tests/run"
-
 say "every kit script is bash"
 while IFS= read -r -d '' path; do
   [ -f "$REPO/$path" ] && [ ! -L "$REPO/$path" ] || continue
-  first="$(head -n 1 "$REPO/$path")"
+  first=""
+  IFS= read -r first <"$REPO/$path" || true
   case "$first" in
     "#!"*) [ "$first" = "#!/usr/bin/env bash" ] || die "$path: shebang is $first" ;;
   esac
 done < <(git -C "$REPO" ls-files -z --cached --others --exclude-standard)
 stop_spin "✓"
 
-part core "tests/core .claude/settings.json ${LANGUAGES[*]}" "$HERE/core"
-for lang in "${LANGUAGES[@]}"; do
-  part "$lang" "tests/language $lang" "$HERE/language" "$lang"
-done
+run_part() {
+  case "$1" in
+    guards)
+      say "repo guards (starter suite on this repo)"
+      expect_ok "$REPO/starter/tests/run"
+      ;;
+    core) part core "tests/core .claude/settings.json ${LANGUAGES[*]}" "$HERE/core" ;;
+    *) part "$1" "tests/language $1" "$HERE/language" "$1" ;;
+  esac
+}
+
+LOGS="$(mktemp -d)"
+trap 'stop_spin; rm -rf "$LOGS"' EXIT
+run_all "$LOGS" run_part guards core "${LANGUAGES[@]}"

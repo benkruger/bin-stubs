@@ -17,7 +17,7 @@ GENERATED_NAMES=(
 )
 EXEMPT_PATHS=()
 
-BANNED_SUPPRESSIONS='shellcheck[ ]disable|eslint[-](disable|enable)|@ts[-](ignore|expect-error|nocheck)|(istanbul|v8|c8)[ ]ignore|biome[-]ignore|rubocop[:](disable|todo)|:no[c]ov:|#[ ]*no[q]a|type[:][ ]*ignore|pragma[:] no cover|prettier[-]ignore|markdownlint[-]disable|#!?\[(al[l]ow|expec[t])\(|swift[-]format[-]ignore|swiftlint[:]disable'
+BANNED_SUPPRESSIONS='shellcheck[ ]disable|eslint[-](disable|enable)|@ts[-](ignore|expect-error|nocheck)|(istanbul|v8|c8)[ ]ignore|biome[-]ignore|rubocop[:](disable|todo)|:no[c]ov:|#[ ]*no[q]a|type[:][ ]*ignore|pragma[:] no cover|prettier[-]ignore|markdownlint[-](disable|configure[-]file)|#!?\[(al[l]ow|expec[t])\(|swift[-]format[-]ignore|swiftlint[:]disable'
 BACKWARD_FACING='\bwe hit\b|during PR #|after the fix|\bused to\b|\bno longer\b|\b(previously|formerly)\b|in the past|removed in PR|\bport(ed)? (of|from)\b'
 NARRATIVE_HEADING='^##[[:space:]]+(why|rationale|background|history|cross-references?|how to apply)\b'
 
@@ -27,13 +27,9 @@ fail() {
   failures=$((failures + 1))
 }
 
-is_text() {
-  LC_ALL=C grep -qI . "$1"
-}
-
 is_exempt() {
   local path="$1" name entry
-  name="$(basename "$path")"
+  name="${path##*/}"
   for entry in "${GENERATED_NAMES[@]}"; do
     [ "$name" = "$entry" ] && return 0
   done
@@ -49,20 +45,31 @@ while IFS= read -r -d '' path; do
   files+=("$path")
 done < <(git ls-files -z --cached --others --exclude-standard)
 
-for path in "${files[@]}"; do
-  is_exempt "$path" && continue
-  is_text "$path" || continue
-  bytes="$(wc -c <"$path" | tr -d ' ')"
-  [ "$bytes" -le "$MAX_AUTHORED_BYTES" ] ||
-    fail "$path: $bytes bytes, over the $MAX_AUTHORED_BYTES-byte cap"
-done
+text_files=()
+while IFS= read -r path; do
+  text_files+=("$path")
+done < <(printf '%s\0' "${files[@]}" | LC_ALL=C xargs -0 grep -lI . -- 2>/dev/null || true)
 
-for path in "${files[@]}"; do
-  [ "$path" = "$SELF" ] && continue
-  while IFS= read -r line; do
-    fail "$path:$line: suppression comment"
-  done < <(grep -nIE "$BANNED_SUPPRESSIONS" "$path" | cut -d: -f1 || true)
+measured=()
+for path in "${text_files[@]+"${text_files[@]}"}"; do
+  is_exempt "$path" || measured+=("$path")
 done
+if [ "${#measured[@]}" -gt 0 ]; then
+  while IFS= read -r line; do
+    fail "$line"
+  done < <(printf '%s\n' "${measured[@]}" |
+    CAP="$MAX_AUTHORED_BYTES" perl -nle 'my $b = -s $_; print "$_: $b bytes, over the $ENV{CAP}-byte cap" if $b > $ENV{CAP}')
+fi
+
+scanned=()
+for path in "${files[@]}"; do
+  [ "$path" = "$SELF" ] || scanned+=("$path")
+done
+if [ "${#scanned[@]}" -gt 0 ]; then
+  while IFS= read -r line; do
+    fail "$line: suppression comment"
+  done < <(printf '%s\0' "${scanned[@]}" | xargs -0 grep -nIHE "$BANNED_SUPPRESSIONS" -- | cut -d: -f1,2 || true)
+fi
 
 comment_lines() {
   perl - "$@" <<'PERL'
@@ -267,12 +274,12 @@ PERL
 }
 
 code=()
-for path in "${files[@]}"; do
+for path in "${text_files[@]+"${text_files[@]}"}"; do
   is_exempt "$path" && continue
   case "$path" in
     *.md) continue ;;
   esac
-  is_text "$path" && code+=("$path")
+  code+=("$path")
 done
 
 if [ "${#code[@]}" -gt 0 ]; then
@@ -283,6 +290,8 @@ fi
 
 BIOME_KEYS="[\"\$schema\", \"vcs\", \"files\", \"formatter\", \"assist\", \"linter\"]"
 BIOME_GROUPS='["a11y", "complexity", "correctness", "nursery", "performance", "security", "style", "suspicious"]'
+BIOME_FILES_KEYS='["maxSize", "ignoreUnknown"]'
+BIOME_FORMATTER_KEYS='["enabled", "formatWithErrors", "indentStyle", "indentWidth", "lineEnding", "lineWidth", "attributePosition", "bracketSameLine", "bracketSpacing", "expand", "useEditorconfig"]'
 TOML_KEY='^[[:space:]]*("[^"]*"|[A-Za-z0-9_-])[^=]*='
 RUBOCOP_KEYS='plugins require AllCops'
 RUBOCOP_ALLCOPS_KEYS='NewCops SuggestExtensions TargetRubyVersion'
@@ -292,8 +301,14 @@ LINT_LEVELS=' warn deny forbid '
 SHELLCHECKRC_KEYS='source-path|external-sources|enable'
 
 biome_ok() {
-  jq -e --argjson keys "$BIOME_KEYS" --argjson groups "$BIOME_GROUPS" '
+  jq -e --argjson keys "$BIOME_KEYS" --argjson groups "$BIOME_GROUPS" \
+    --argjson files "$BIOME_FILES_KEYS" --argjson formatter "$BIOME_FORMATTER_KEYS" '
     (keys - $keys | length == 0)
+    and ((.files // {}) | keys - $files | length == 0)
+    and ((.formatter // {}) | (keys - $formatter | length == 0)
+      and ((has("enabled") | not) or .enabled == true))
+    and ((.assist // {}) | (keys - ["enabled", "actions"] | length == 0)
+      and ([.. | scalars] | all(. == true or . == "on")))
     and ((.linter // {}) | (keys - ["enabled", "rules"] | length == 0)
       and ((has("enabled") | not) or .enabled == true)
       and ((.rules // {}) | to_entries | all(
@@ -309,6 +324,12 @@ use warnings;
 my $text = do { local $/; <> };
 my $quote = qr/["\x27]/;
 exit 1 if $text =~ /(?:\A|[^\w\$])$quote?linterOptions$quote?\s*:/;
+my $any = qr/["\x27`]/;
+exit 1 if $text =~ /(?:\A|[^\w\$])$quote?rules$quote?\s*:\s*+(?!\{)/;
+exit 1 if $text =~ /(?:\A|[^\w\$.])rules$quote?\s*[,}]/;
+exit 1 if $text =~ /\[\s*${any}rules$any\s*\]|\.\s*rules\b/;
+exit 1 if $text =~ /\b(?:from|import|require)\s*\(?\s*$any(?:\.{1,2})?\//;
+exit 1 if $text =~ /\b(?:import|require)\s*\(\s*[^"\x27`\s]/;
 my $error = qr/(?:${quote}error$quote|2)/;
 while ($text =~ /(?:\A|[^\w\$])$quote?rules$quote?\s*:\s*\{/g) {
   my $at = pos $text;
@@ -346,6 +367,10 @@ rubocop_ok() {
   ruby -ryaml -e '
     config = YAML.safe_load(File.read(ARGV[0])) || {}
     exit 1 unless config.is_a?(Hash)
+    %w[require plugins].each do |key|
+      names = Array(config[key])
+      exit 1 unless names.all? { |name| name.is_a?(String) && name.match?(/\A[\w-]+\z/) }
+    end
     config.each do |key, value|
       next if ARGV[1].split.include?(key)
       next if value == { "Enabled" => true }
@@ -403,15 +428,88 @@ shellcheckrc_ok() {
   ! grep -vE "^[[:space:]]*(#|$)|^[[:space:]]*($SHELLCHECKRC_KEYS)=" "$1" | grep -q .
 }
 
+rustfmt_ok() {
+  ! grep -qE '^[[:space:]]*(disable_all_formatting|ignore)[[:space:]]*=' "$1"
+}
+
+cargo_config_ok() {
+  perl - "$1" <<'PERL'
+use strict;
+use warnings;
+
+my $text = do { local $/; <> };
+while ($text =~ /\brustflags\s*=\s*(\[[^\]]*\]|"[^"]*"|'[^']*')/g) {
+  my $value = $1;
+  my @flags = $value =~ /\A\[/ ? $value =~ /["']([^"']*)["']/g : split ' ', substr($value, 1, -1);
+  for my $flag (@flags) {
+    exit 1 if $flag =~ /\A(?:-A|--allow|--cap-lints)/;
+  }
+}
+exit 0;
+PERL
+}
+
+RUST_QUIET_ATTRS='\b(?:al[l]ow|expec[t])\s*\(|\brustfm[t](?:_skip)?\b'
+
+rust_quiet_attrs() {
+  ATTRS="$RUST_QUIET_ATTRS" perl - "$@" <<'PERL'
+use strict;
+use warnings;
+
+my $quiet = qr/$ENV{ATTRS}/;
+for my $path (@ARGV) {
+  open my $fh, '<', $path or next;
+  my $text = do { local $/; <$fh> };
+  close $fh;
+  while ($text =~ /#!?\s*\[/g) {
+    my ($start, $at, $depth, $quoted, $body) = ($-[0], pos $text, 1, 0, '');
+    while ($depth > 0 && $at < length $text) {
+      my $c = substr($text, $at++, 1);
+      if ($quoted) {
+        if ($c eq '\\') {
+          $at++;
+        } elsif ($c eq '"') {
+          $quoted = 0;
+        }
+        next;
+      }
+      if ($c eq '"') {
+        $quoted = 1;
+        next;
+      }
+      $depth++ if $c eq '[';
+      $depth-- if $c eq ']';
+      $body .= $c;
+    }
+    print "$path:", (substr($text, 0, $start) =~ tr/\n//) + 1, "\n" if $body =~ $quiet;
+    pos($text) = $at;
+  }
+}
+PERL
+}
+
+rust_files=()
 for path in "${files[@]}"; do
-  case "$(basename "$path")" in
+  case "${path##*/}" in
     biome.json | biome.jsonc)
       biome_ok "$path" ||
-        fail "$path: Biome settings outside its list (\$schema, vcs, files, formatter, assist, linter.enabled true, linter.rules preset all or a group at error)"
+        fail "$path: Biome settings outside its list (\$schema, vcs, files maxSize or ignoreUnknown, formatter style keys with enabled true, assist on, linter.enabled true, linter.rules preset all or a group at error)"
       ;;
     eslint.config.js | eslint.config.mjs | eslint.config.cjs | eslint.config.ts | eslint.config.mts | eslint.config.cts)
       eslint_ok "$path" ||
-        fail "$path: sets an ESLint rule below error, or linterOptions; a rule may only be raised to error"
+        fail "$path: sets an ESLint rule below error or linterOptions, sets rules other than in an object literal, or loads a local file; a rule may only be raised to error"
+      ;;
+    .rubocop)
+      fail "$path: RuboCop takes its options from bin/lint, so it has no options file"
+      ;;
+    brakeman.yml)
+      fail "$path: Brakeman runs with bin/lint's options, so it has no config file"
+      ;;
+    clippy.toml | .clippy.toml)
+      fail "$path: Clippy runs with its default settings, so it has no config file"
+      ;;
+    rustfmt.toml | .rustfmt.toml)
+      rustfmt_ok "$path" || fail "$path: turns rustfmt off for some or all files"
       ;;
     .rubocop.yml)
       if ! command -v ruby >/dev/null 2>&1; then
@@ -444,8 +542,23 @@ for path in "${files[@]}"; do
     brakeman.ignore)
       fail "$path: Brakeman ignores no warning"
       ;;
+    .prettierignore)
+      fail "$path: Prettier formats every file, so it has no ignore file"
+      ;;
+  esac
+  case "$path" in
+    .cargo/config | .cargo/config.toml | */.cargo/config | */.cargo/config.toml)
+      cargo_config_ok "$path" || fail "$path: sets a lint level in rustflags; lint levels live in Cargo.toml [lints]"
+      ;;
+    *.rs) rust_files+=("$path") ;;
   esac
 done
+
+if [ "${#rust_files[@]}" -gt 0 ]; then
+  while IFS= read -r hit; do
+    fail "$hit: a Rust attribute that allows or expects a lint, or skips rustfmt"
+  done < <(rust_quiet_attrs "${rust_files[@]}")
+fi
 
 SKIP_JS='\b(test|it|describe|suite|t|context)[[:space:]]*\.[[:space:]]*(skip|only|todo|skipIf|runIf|fails|failing)\b|\b(xit|xtest|xdescribe|fit|fdescribe)[[:space:]]*\(|\b(skip|only|todo)[[:space:]]*:[[:space:]]*true\b'
 SKIP_PY='@pytest\.mark\.(skip|skipif|xfail)\b|\bpytest\.(skip|xfail|importorskip)[[:space:]]*\(|@unittest\.(skip|skipIf|skipUnless|expectedFailure)\b|\.skipTest[[:space:]]*\('
@@ -466,9 +579,23 @@ skip_pattern_of() {
   esac
 }
 
+test_files=()
 for path in "${files[@]}"; do
   skip_pattern_of "$path"
-  [ -n "$skip_pattern" ] || continue
+  [ -z "$skip_pattern" ] || test_files+=("$path")
+done
+skip_candidates=$'\n'
+if [ "${#test_files[@]}" -gt 0 ]; then
+  skip_candidates+="$(printf '%s\0' "${test_files[@]}" |
+    xargs -0 grep -lE "($SKIP_JS)|($SKIP_PY)|($SKIP_RUBY)|($SKIP_RUST)|($SKIP_SWIFT)" -- || true)"$'\n'
+fi
+
+for path in "${test_files[@]+"${test_files[@]}"}"; do
+  case "$skip_candidates" in
+    *$'\n'"$path"$'\n'*) ;;
+    *) continue ;;
+  esac
+  skip_pattern_of "$path"
   while IFS= read -r line; do
     fail "$path:$line: a test that does not run (skipped, focused, todo or expected to fail)"
   done < <(grep -nE "$skip_pattern" "$path" | cut -d: -f1 || true)
@@ -531,13 +658,15 @@ timeout_lines() {
   esac
 }
 
-for path in "${files[@]}"; do
+TIMEOUT_ANY="$TIMEOUT_FLAGS|$TIMEOUT_JS_CONFIG|$TIMEOUT_JS_CODE|$TIMEOUT_JS_LIMIT|$TIMEOUT_PY_LIMIT|$TIMEOUT_SWIFT_CODE|$TIMEOUT_XCTESTPLAN|^[[:space:]]*timeout[[:space:]]*="
+
+while IFS= read -r path; do
   [ "$path" = "$SELF" ] && continue
   while IFS= read -r line; do
     [ -n "$line" ] || continue
     fail "$path:$line: raises the test time limit beyond the runner's default; only a fixed number on one test is allowed"
   done < <(timeout_lines "$path")
-done
+done < <(printf '%s\0' "${files[@]}" | xargs -0 grep -lE "$TIMEOUT_ANY" -- 2>/dev/null || true)
 
 OUTPUT_DIRS=(node_modules dist build coverage .venv target .build .flow-states)
 
@@ -552,8 +681,12 @@ done
 if [ ! -f .gitignore ]; then
   fail ".gitignore is missing"
 else
+  ignored=$'\n'"$(<.gitignore)"$'\n'
   for dir in "${OUTPUT_DIRS[@]}"; do
-    grep -qxF "$dir/" .gitignore || fail ".gitignore does not ignore $dir/"
+    case "$ignored" in
+      *$'\n'"$dir/"$'\n'*) ;;
+      *) fail ".gitignore does not ignore $dir/" ;;
+    esac
   done
 fi
 
@@ -570,17 +703,54 @@ done
 
 INSTALL_COMMANDS='\b(npm|pnpm|yarn|bun)[[:space:]]+(install|i|ci|add|update|upgrade)\b|\buv[[:space:]]+(sync|add|lock|pip)\b|\bbundle[[:space:]]+(install|update|add)\b|\bcargo[[:space:]]+(fetch|update|add)\b|\bswift[[:space:]]+package[[:space:]]+(update|resolve)\b'
 
+leaf_scripts=()
 for path in "${files[@]}"; do
   case "$path" in
     bin/_*/dependencies) continue ;;
     bin/_*/*/*) continue ;;
-    bin/_*/*) ;;
-    *) continue ;;
+    bin/_*/*) leaf_scripts+=("$path") ;;
   esac
-  while IFS= read -r line; do
-    fail "$path:$line: installs packages; only bin/dependencies does"
-  done < <(matching_lines "$INSTALL_COMMANDS" "$path")
 done
+if [ "${#leaf_scripts[@]}" -gt 0 ]; then
+  while IFS= read -r hit; do
+    fail "$hit: installs packages; only bin/dependencies does"
+  done < <(grep -nHE "$INSTALL_COMMANDS" -- "${leaf_scripts[@]}" | cut -d: -f1,2 || true)
+fi
+
+UPDATE_COMMANDS='[[:space:]](update|upgrade|--upgrade)([[:space:]]|$)'
+
+dependency_scripts=()
+for path in "${files[@]}"; do
+  case "$path" in
+    bin/_*/*/*) continue ;;
+    bin/_*/dependencies) dependency_scripts+=("$path") ;;
+  esac
+done
+installing=()
+if [ "${#dependency_scripts[@]}" -gt 0 ]; then
+  while IFS= read -r path; do
+    installing+=("$path")
+  done < <(grep -lE "$INSTALL_COMMANDS" -- "${dependency_scripts[@]}" || true)
+fi
+if [ "${#installing[@]}" -gt 0 ]; then
+  while IFS= read -r path; do
+    fail "$path: installs packages without updating them first"
+  done < <(grep -LE "$UPDATE_COMMANDS" -- "${installing[@]}" || true)
+fi
+
+gate_scripts=()
+for path in "${files[@]}"; do
+  case "$path" in
+    bin/_*/*/*) continue ;;
+    bin/_*/ci | bin/_*/changed | bin/_*/format | bin/_*/lint | bin/_*/build | bin/_*/test | bin/_*/open | bin/_*/qa) gate_scripts+=("$path") ;;
+  esac
+done
+if [ "${#gate_scripts[@]}" -gt 0 ]; then
+  while IFS= read -r path; do
+    grep -qx 'packages_check() {' "${path%/*}/lib/toolchain.sh" 2>/dev/null || continue
+    fail "$path: never runs packages_check; every gate script but bin/dependencies does"
+  done < <(grep -Lw packages_check -- "${gate_scripts[@]}" || true)
+fi
 
 COVERAGE_NARROWED='"codeCoverage"[[:space:]]*:[[:space:]]*(false|\{)|codeCoverageEnabled[[:space:]]*=[[:space:]]*"NO"|onlyGenerateCoverageForSpecifiedTargets[[:space:]]*=[[:space:]]*"YES"'
 
@@ -609,22 +779,62 @@ is_sourced() {
   esac
 }
 
-first_command() {
-  grep -vE '^[[:space:]]*(#|$)' "$1" | head -n 1
+entry_point_findings() {
+  perl - "$@" <<'PERL'
+use strict;
+use warnings;
+
+for my $path (@ARGV) {
+  print "$path: entry point is not executable\n" unless -x $path;
+  my $first = '';
+  if (open my $fh, '<', $path) {
+    while (my $line = <$fh>) {
+      chomp $line;
+      next if $line =~ /^[[:space:]]*(?:#|$)/;
+      $first = $line;
+      last;
+    }
+  }
+  print "$path: first command is not set -euo pipefail\n"
+    unless $first eq 'set -euo pipefail';
+}
+PERL
 }
 
 scripts=()
-for path in "${files[@]}"; do
-  if head -n 1 "$path" | grep -qE '^#!.*\bbash\b'; then
-    scripts+=("$path")
-  fi
-done
+while IFS= read -r path; do
+  scripts+=("$path")
+done < <(printf '%s\n' "${files[@]}" |
+  perl -nle 'open(my $f, "<", $_) or next; my $l = <$f>; print if defined $l && $l =~ /^#!.*\bbash\b/')
+
+SHELLCHECK_PASSES="${XDG_CACHE_HOME:-$HOME/.cache}/flow-guards/shellcheck"
+
+shellcheck_key() {
+  local path
+  {
+    shellcheck --version
+    for path in "${files[@]}" "$HOME/.shellcheckrc"; do
+      case "$path" in
+        .shellcheckrc | */.shellcheckrc) [ ! -f "$path" ] || cat "$path" ;;
+      esac
+    done
+    shasum -a 256 "$@"
+  } | shasum -a 256 | cut -d' ' -f1
+}
 
 if [ "${#scripts[@]}" -gt 0 ]; then
   if ! command -v shellcheck >/dev/null 2>&1; then
     fail "shellcheck is not installed (brew install shellcheck)"
-  elif ! shellcheck -x -P SCRIPTDIR "${scripts[@]}" >&2; then
-    fail "shellcheck reported findings (above)"
+  else
+    key="$(shellcheck_key "${scripts[@]}")"
+    if [ ! -e "$SHELLCHECK_PASSES/$key" ]; then
+      if printf '%s\0' "${scripts[@]}" |
+        xargs -0 -n 16 -P "$(getconf _NPROCESSORS_ONLN)" shellcheck -x -P SCRIPTDIR >&2; then
+        { mkdir -p "$SHELLCHECK_PASSES" && : >"$SHELLCHECK_PASSES/$key"; } 2>/dev/null || true
+      else
+        fail "shellcheck reported findings (above)"
+      fi
+    fi
   fi
   if ! command -v shfmt >/dev/null 2>&1; then
     fail "shfmt is not installed (brew install shfmt)"
@@ -649,35 +859,88 @@ if [ "${#markdown[@]}" -gt 0 ]; then
   fi
 fi
 
+entry_points=()
 for path in "${scripts[@]+"${scripts[@]}"}"; do
-  is_sourced "$path" && continue
-  [ -x "$path" ] || fail "$path: entry point is not executable"
-  [ "$(first_command "$path")" = "set -euo pipefail" ] ||
-    fail "$path: first command is not set -euo pipefail"
+  is_sourced "$path" || entry_points+=("$path")
 done
+if [ "${#entry_points[@]}" -gt 0 ]; then
+  while IFS= read -r line; do
+    fail "$line"
+  done < <(entry_point_findings "${entry_points[@]}")
+fi
 
-unstamped() {
-  perl -0777 -pe 's/\n<!-- audited: [0-9a-f]{12} -->\s*\z/\n/' "$1"
+markdown_findings() {
+  RULE_LINES="$MAX_RULE_LINES" RULE_CHARS="$MAX_RULE_CHARS" \
+    CLAUDE_LINES="$MAX_CLAUDE_LINES" CLAUDE_CHARS="$MAX_CLAUDE_CHARS" \
+    BACKWARD="$BACKWARD_FACING" NARRATIVE="$NARRATIVE_HEADING" perl - "$@" <<'PERL'
+use strict;
+use warnings;
+use Digest::SHA qw(sha256_hex);
+
+my $backward = qr/$ENV{BACKWARD}/i;
+my $narrative = qr/$ENV{NARRATIVE}/i;
+my $stamp_line = qr/\n<!-- audited: [0-9a-f]{12} -->\s*\z/;
+
+sub read_text {
+  my ($path) = @_;
+  open my $fh, '<', $path or return '';
+  local $/;
+  my $text = <$fh>;
+  return defined $text ? $text : '';
 }
 
-stamp_of() {
-  perl -0777 -pe 's/\n<!-- audited: [0-9a-f]{12} -->\s*\z/\n/; s/\s*\z/\n/' "$1" |
-    shasum -a 256 | cut -c1-12
+sub check_markdown {
+  my ($path, $text, $max_lines, $max_chars) = @_;
+  (my $body = $text) =~ s/$stamp_line/\n/;
+  my $lines = ($body =~ tr/\n//);
+  my $chars = length $body;
+  my @lines = split /\n/, $text;
+  print "$path: $lines lines (cap $max_lines)\n" if $lines > $max_lines;
+  print "$path: $chars characters (cap $max_chars)\n" if $chars > $max_chars;
+  my ($lead) = grep { !/^[[:space:]]*$/ } @lines;
+  print "$path: does not lead with an H1\n"
+    unless defined $lead && substr($lead, 0, 2) eq '# ';
+  my $h1s = grep { /^# / } @lines;
+  print "$path: $h1s H1 headings (want 1)\n" unless $h1s == 1;
+  print "$path: backward-facing wording\n" if grep { /$backward/ } @lines;
+  return @lines;
 }
 
-check_markdown() {
-  local path="$1" max_lines="$2" max_chars="$3" lines chars h1s
-  lines="$(unstamped "$path" | wc -l | tr -d ' ')"
-  chars="$(unstamped "$path" | wc -c | tr -d ' ')"
-  [ "$lines" -le "$max_lines" ] || fail "$path: $lines lines (cap $max_lines)"
-  [ "$chars" -le "$max_chars" ] || fail "$path: $chars characters (cap $max_chars)"
-  [ "$(grep -vE '^[[:space:]]*$' "$path" | head -n 1 | cut -c1-2)" = "# " ] ||
-    fail "$path: does not lead with an H1"
-  h1s="$(grep -cE '^# ' "$path" || true)"
-  [ "$h1s" -eq 1 ] || fail "$path: $h1s H1 headings (want 1)"
-  if grep -qiE "$BACKWARD_FACING" "$path"; then
-    fail "$path: backward-facing wording"
-  fi
+for my $path (@ARGV) {
+  my $text = read_text($path);
+  my @lines = check_markdown($path, $text, $ENV{RULE_LINES}, $ENV{RULE_CHARS});
+  print "$path: frontmatter\n" if @lines && $lines[0] eq '---';
+  print "$path: narrative heading\n" if grep { /$narrative/ } @lines;
+  my ($last) = reverse grep { !/^[[:space:]]*$/ } @lines;
+  my ($stamp) = defined $last
+    ? $last =~ /^[[:space:]]*<!-- audited: ([0-9a-f]{12}) -->[[:space:]]*$/ : ();
+  if (!defined $stamp) {
+    print "$path: no audit stamp (commit it through bin/commit)\n";
+  } else {
+    (my $body = $text) =~ s/$stamp_line/\n/;
+    $body =~ s/\s*\z/\n/;
+    print "$path: audit stamp does not match its body (commit it through bin/commit)\n"
+      if $stamp ne substr(sha256_hex($body), 0, 12);
+  }
+  for my $line (@lines) {
+    while ($line =~ /`([a-z0-9\/_-]+\.md)`/g) {
+      my $ref = $1;
+      print "$path: cites missing $ref\n"
+        unless -f ".claude/rules/$ref" || $ref eq 'CLAUDE.md' || $ref eq 'README.md';
+    }
+  }
+}
+
+if (-f 'CLAUDE.md') {
+  my $text = read_text('CLAUDE.md');
+  check_markdown('CLAUDE.md', $text, $ENV{CLAUDE_LINES}, $ENV{CLAUDE_CHARS});
+  print "CLAUDE.md: points at the rules directory\n" if index($text, '.claude/rules') >= 0;
+  for my $path (@ARGV) {
+    (my $name = $path) =~ s{.*/}{};
+    print "CLAUDE.md: names the rule $name\n" if index($text, $name) >= 0;
+  }
+}
+PERL
 }
 
 rules=()
@@ -687,38 +950,11 @@ done < <(find .claude/rules -name '*.md' -type f -print0 2>/dev/null | sort -z)
 
 [ "${#rules[@]}" -gt 0 ] || fail ".claude/rules holds no rules"
 
-for path in "${rules[@]+"${rules[@]}"}"; do
-  check_markdown "$path" "$MAX_RULE_LINES" "$MAX_RULE_CHARS"
-  [ "$(head -n 1 "$path")" != "---" ] || fail "$path: frontmatter"
-  if grep -qiE "$NARRATIVE_HEADING" "$path"; then
-    fail "$path: narrative heading"
-  fi
-  stamp="$(grep -vE '^[[:space:]]*$' "$path" | tail -n 1 |
-    sed -nE 's/^[[:space:]]*<!-- audited: ([0-9a-f]{12}) -->[[:space:]]*$/\1/p')"
-  if [ -z "$stamp" ]; then
-    fail "$path: no audit stamp (commit it through bin/commit)"
-  elif [ "$stamp" != "$(stamp_of "$path")" ]; then
-    fail "$path: audit stamp does not match its body (commit it through bin/commit)"
-  fi
-  while IFS= read -r ref; do
-    [ -f ".claude/rules/$ref" ] || [ "$ref" = "CLAUDE.md" ] || [ "$ref" = "README.md" ] ||
-      fail "$path: cites missing $ref"
-  done < <(grep -oE "\`[a-z0-9/_-]+\.md\`" "$path" | tr -d "\`" || true)
-done
+while IFS= read -r line; do
+  fail "$line"
+done < <(markdown_findings "${rules[@]+"${rules[@]}"}")
 
-if [ ! -f CLAUDE.md ]; then
-  fail "CLAUDE.md is missing"
-else
-  check_markdown CLAUDE.md "$MAX_CLAUDE_LINES" "$MAX_CLAUDE_CHARS"
-  if grep -q '\.claude/rules' CLAUDE.md; then
-    fail "CLAUDE.md: points at the rules directory"
-  fi
-  for path in "${rules[@]+"${rules[@]}"}"; do
-    if grep -qF "$(basename "$path")" CLAUDE.md; then
-      fail "CLAUDE.md: names the rule $(basename "$path")"
-    fi
-  done
-fi
+[ -f CLAUDE.md ] || fail "CLAUDE.md is missing"
 
 SETTINGS=.claude/settings.json
 REQUIRED_ALLOW=("Bash(bin/*)")
@@ -736,25 +972,31 @@ elif ! command -v jq >/dev/null 2>&1; then
   fail "jq is not installed (brew install jq)"
 elif ! jq empty "$SETTINGS" >/dev/null 2>&1; then
   fail "$SETTINGS is not valid JSON"
+elif ! settings_checks="$(jq -r --argjson na "${#REQUIRED_ALLOW[@]}" --argjson nd "${#REQUIRED_DENY[@]}" '
+  . as $s | $ARGS.positional as $p
+  | ($p[0:$na][] | . as $e
+    | select((try (($s.permissions.allow // []) | index($e) != null) catch false) | not)
+    | "fail\tdoes not allow \($e)"),
+  (select((try ([$s.permissions.allow // [] | .[] | select(startswith("Bash(*"))] | length == 0) catch false) | not)
+    | "fail\tallows a command pattern that starts with a wildcard"),
+  ($p[$na:$na + $nd][] | . as $e
+    | select((try (($s.permissions.deny // []) | index($e) != null) catch false) | not)
+    | "fail\tdoes not deny \($e)"),
+  ($p[$na + $nd:][] | (split(":") | .[0]) as $ev | (sub("^[^:]*:"; "")) as $hook
+    | (try ([$s.hooks[$ev][]?.hooks[]?.command | select(contains(".claude/hooks/" + $hook))] | length > 0) catch false) as $ok
+    | "hook\t\($ev)\t\($hook)\t\(if $ok then 1 else 0 end)")
+' "$SETTINGS" --args "${REQUIRED_ALLOW[@]}" "${REQUIRED_DENY[@]}" "${REQUIRED_HOOKS[@]}")"; then
+  fail "$SETTINGS: could not be checked"
 else
-  for entry in "${REQUIRED_ALLOW[@]}"; do
-    jq -e --arg e "$entry" ".permissions.allow // [] | index(\$e) != null" "$SETTINGS" >/dev/null ||
-      fail "$SETTINGS: does not allow $entry"
-  done
-  jq -e '[.permissions.allow // [] | .[] | select(startswith("Bash(*"))] | length == 0' "$SETTINGS" >/dev/null ||
-    fail "$SETTINGS: allows a command pattern that starts with a wildcard"
-  for entry in "${REQUIRED_DENY[@]}"; do
-    jq -e --arg e "$entry" ".permissions.deny // [] | index(\$e) != null" "$SETTINGS" >/dev/null ||
-      fail "$SETTINGS: does not deny $entry"
-  done
-  for pair in "${REQUIRED_HOOKS[@]}"; do
-    event="${pair%%:*}"
-    hook="${pair#*:}"
-    jq -e --arg ev "$event" --arg h ".claude/hooks/$hook" \
-      "[.hooks[\$ev][]?.hooks[]?.command | select(contains(\$h))] | length > 0" "$SETTINGS" >/dev/null ||
-      fail "$SETTINGS: no $event hook runs .claude/hooks/$hook"
-    [ -x ".claude/hooks/$hook" ] || fail ".claude/hooks/$hook is missing or not executable"
-  done
+  while IFS=$'\t' read -r kind a b c; do
+    case "$kind" in
+      fail) fail "$SETTINGS: $a" ;;
+      hook)
+        [ "$c" = 1 ] || fail "$SETTINGS: no $a hook runs .claude/hooks/$b"
+        [ -x ".claude/hooks/$b" ] || fail ".claude/hooks/$b is missing or not executable"
+        ;;
+    esac
+  done <<<"$settings_checks"
 fi
 
 if [ "$failures" -gt 0 ]; then

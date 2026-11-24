@@ -73,6 +73,7 @@ if ! packages_check "$root"; then
   echo "bin/ci: gate RED ($branch) — packages are not installed (above)." >&2
   exit 1
 fi
+export FLOW_CHECKED_APP="$root"
 
 case "$pm" in
   pnpm) audit=(pnpm audit --audit-level moderate) ;;
@@ -80,68 +81,27 @@ case "$pm" in
   bun) audit=(bun audit --audit-level=moderate) ;;
   *) audit=(npm audit --audit-level=moderate) ;;
 esac
-if ! "${audit[@]}" >>"$log" 2>&1; then
-  cat "$log" >&2
+audit_log="$(mktemp)"
+trap 'rm -f "$log" "$audit_log"' EXIT
+"${audit[@]}" >"$audit_log" 2>&1 &
+audit_pid=$!
+
+# shellcheck source=../lib/steps.sh
+. "$here/../lib/steps.sh"
+steps_init "$root/.flow-states/$branch" "$force" "$pre_hash" "$log" "$branch" \
+  'npm warn|DeprecationWarning|^Warning: ' '| *100.00 | *100.00 |'
+start_step format "$here/format" --check --all
+start_step lint "$here/lint" --all
+start_step build "$here/build" --all
+start_step test "$here/test" --all
+red=0
+finish_steps || red=1
+if ! wait "$audit_pid"; then
+  cat "$audit_log" >&2
   echo "bin/ci: gate RED ($branch) — $pm audit found a moderate or worse advisory (above)." >&2
-  exit 1
+  red=1
 fi
-
-spin() {
-  local spin_label="$1" i=0 frames="|/-\\"
-  while :; do
-    printf '\rbin/ci: %s %s ' "$spin_label" "${frames:i++%4:1}"
-    sleep 0.1
-  done
-}
-
-WARNINGS='npm warn|DeprecationWarning|^Warning: '
-step=0
-run_step() {
-  local name="$1"
-  shift
-  step=$((step + 1))
-  local step_label="[$step/4] $name"
-  local step_sentinel="$root/.flow-states/$branch/ci-$name-sentinel"
-  if [ "$force" -eq 0 ] && [ -f "$step_sentinel" ] && [ "$(cat "$step_sentinel")" = "$pre_hash" ]; then
-    echo "bin/ci: $step_label ✓ (unchanged since it passed)"
-    return 0
-  fi
-  local rc=0 step_log sp="" mark="✓"
-  step_log="$(mktemp)"
-  if [ -t 1 ]; then
-    spin "$step_label" &
-    sp=$!
-  fi
-  "$@" >"$step_log" 2>&1 || rc=$?
-  if [ -n "$sp" ]; then
-    kill "$sp" 2>/dev/null || true
-    wait "$sp" 2>/dev/null || true
-  fi
-  cat "$step_log" >>"$log"
-  if [ "$rc" -eq 0 ] && grep -qiE "$WARNINGS" "$step_log"; then
-    echo "bin/ci: step '$name' printed a warning (above); a warning fails the gate" >>"$log"
-    rc=1
-  fi
-  rm -f "$step_log"
-  [ "$rc" -eq 0 ] || mark="✗"
-  if [ -n "$sp" ]; then
-    printf '\rbin/ci: %s %s\033[K\n' "$step_label" "$mark"
-  else
-    echo "bin/ci: $step_label $mark"
-  fi
-  if [ "$rc" -ne 0 ]; then
-    grep -v '| *100.00 | *100.00 |' "$log" >&2 || true
-    echo "bin/ci: gate RED ($branch) — step '$name' failed (above; 100%-covered rows elided)." >&2
-    exit "$rc"
-  fi
-  mkdir -p "$(dirname "$step_sentinel")"
-  printf '%s\n' "$pre_hash" >"$step_sentinel"
-}
-
-run_step format "$here/format" --check --all
-run_step lint "$here/lint" --all
-run_step build "$here/build" --all
-run_step test "$here/test" --all
+[ "$red" -eq 0 ] || exit 1
 
 tally="$(grep -E '^# pass [0-9]+|Suites: [0-9]+' "$log" | tail -n1 || true)"
 

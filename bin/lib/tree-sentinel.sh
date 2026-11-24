@@ -1,21 +1,29 @@
 #!/usr/bin/env bash
 
+GATE_LIB="${BASH_SOURCE[0]%/*}"
+[ "$GATE_LIB" != "${BASH_SOURCE[0]}" ] || GATE_LIB=.
+GATE_DRIVER="${BASH_SOURCE[1]%/*}"
+[ "$GATE_DRIVER" != "${BASH_SOURCE[1]}" ] || GATE_DRIVER=.
 # shellcheck source=apps.sh
-. "$(dirname "${BASH_SOURCE[0]}")/apps.sh"
-GATE_LIB="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-GATE_DRIVER="$(cd "$(dirname "${BASH_SOURCE[1]}")" && pwd)"
+. "${GATE_LIB:-/}/apps.sh"
+GATE_LIB="$(cd "${GATE_LIB:-/}" && pwd)"
+GATE_DRIVER="$(cd "${GATE_DRIVER:-/}" && pwd)"
 
 gate_fingerprint() {
-  local f
+  local f base="${GATE_LIB%/*}" files=()
   while IFS= read -r f; do
-    printf '%s ' "${f#"$(dirname "$GATE_LIB")"/}"
-    git hash-object -- "$f"
+    files+=("$f")
   done < <(find "$GATE_LIB" "$GATE_DRIVER" -type f | LC_ALL=C sort -u)
+  [ "${#files[@]}" -gt 0 ] || return 0
+  paste -d ' ' <(printf '%s\n' "${files[@]#"$base"/}") <(git hash-object -- "${files[@]}")
 }
 
+GATE_PRINT=""
+[ "${ROOT_APP:-0}" = 1 ] || GATE_PRINT="$(gate_fingerprint)"
+
 root_app_fingerprint() {
-  local name path d skip e
-  local excludes=()
+  local name path d skip e meta i
+  local excludes=() paths=() hashes=()
   local top="$PWD"
   for d in "$top"/*/; do
     [ -d "$d" ] || continue
@@ -30,7 +38,7 @@ root_app_fingerprint() {
     spec+=(":!$name")
   done
   if git rev-parse --verify HEAD >/dev/null 2>&1; then
-    while IFS= read -r name; do
+    while IFS=$'\t' read -r meta name; do
       [ -z "$name" ] && continue
       skip=0
       for e in "${excludes[@]}"; do
@@ -40,8 +48,8 @@ root_app_fingerprint() {
         fi
       done
       [ "$skip" -eq 1 ] && continue
-      printf '%s %s\n' "$name" "$(git rev-parse "HEAD:$name" 2>/dev/null || echo missing)"
-    done < <(git ls-tree --name-only HEAD)
+      printf '%s %s\n' "$name" "${meta##* }"
+    done < <(git ls-tree HEAD)
     git diff --relative HEAD -- "${spec[@]}"
     git diff --relative --cached -- "${spec[@]}"
   else
@@ -62,9 +70,15 @@ root_app_fingerprint() {
       esac
     done
     [ "$skip" -eq 1 ] && continue
-    printf '%s\0' "$path"
-    git hash-object "$path"
+    paths+=("$path")
   done < <(git ls-files --others --exclude-standard -z -- "${spec[@]}")
+  [ "${#paths[@]}" -gt 0 ] || return 0
+  while IFS= read -r meta; do
+    hashes+=("$meta")
+  done < <(git hash-object -- "${paths[@]}")
+  for i in "${!paths[@]}"; do
+    printf '%s\0%s\n' "${paths[$i]}" "${hashes[$i]}"
+  done
 }
 
 tree_fingerprint() {
@@ -93,9 +107,15 @@ tree_fingerprint() {
     printf '%s\0' "${paths[@]}"
     git hash-object -- "${paths[@]}"
   fi
-  gate_fingerprint
+  [ -z "$GATE_PRINT" ] || printf '%s\n' "$GATE_PRINT"
 }
 
 tree_hash() {
-  tree_fingerprint | shasum -a 256 | cut -d' ' -f1
+  local sum
+  if command -v sha256sum >/dev/null 2>&1; then
+    sum="$(tree_fingerprint | sha256sum)" || return
+  else
+    sum="$(tree_fingerprint | shasum -a 256)" || return
+  fi
+  printf '%s\n' "${sum%% *}"
 }

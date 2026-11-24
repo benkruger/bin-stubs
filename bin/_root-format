@@ -5,12 +5,15 @@ cd "$ROOT"
 
 scripts=()
 markdown=()
+shebang='^#!(.*[^[:alnum:]_])?bash([^[:alnum:]_]|$)'
 while IFS= read -r -d '' path; do
   [ -f "$path" ] && [ ! -L "$path" ] || continue
   case "$path" in
     *.md) markdown+=("$path") ;;
     *)
-      if head -n 1 "$path" | grep -qE '^#!.*\bbash\b'; then
+      first=""
+      IFS= read -r first <"$path" || true
+      if [[ "$first" =~ $shebang ]]; then
         scripts+=("$path")
       fi
       ;;

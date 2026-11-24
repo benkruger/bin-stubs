@@ -2,6 +2,7 @@
 
 toolchain_check() {
   local root="$1" channel active
+  [ "${FLOW_CHECKED_APP:-}" != "$root" ] || return 0
   if [ ! -f "$root/rust-toolchain.toml" ]; then
     echo "toolchain: rust-toolchain.toml is missing; pin Rust with a [toolchain] channel" >&2
     return 1
@@ -31,6 +32,7 @@ toolchain_check() {
 
 packages_check() {
   local root="$1"
+  [ "${FLOW_CHECKED_APP:-}" != "$root" ] || return 0
   if ! (cd "$root" && cargo fetch --offline --locked >/dev/null 2>&1); then
     echo "packages: crates are missing or Cargo.lock is out of date; run bin/dependencies" >&2
     return 1

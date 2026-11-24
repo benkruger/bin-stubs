@@ -6,6 +6,7 @@ cd "$root"
 # shellcheck source=lib/toolchain.sh
 . "$here/lib/toolchain.sh"
 packages_check "$PWD" || exit 1
+export FLOW_CHECKED_APP="$PWD"
 
 changed_files() {
   local path

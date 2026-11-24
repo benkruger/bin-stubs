@@ -7,14 +7,20 @@ match it or its lockfile.
 ## The Rule
 
 - `bin/dependencies` updates an app's packages to the newest versions its
-  manifest allows, then installs them; the review refuses one that only
-  installs. `tests/guards` fails a line in any other script directly
-  under a `bin/_<language>/` folder that matches `INSTALL_COMMANDS`,
-  which names the package managers' install, update and add commands.
+  manifest allows, then installs them. `tests/guards` fails a
+  `dependencies` script directly under a `bin/_<language>/` folder that
+  has a line matching `INSTALL_COMMANDS`, which names each package
+  manager's install, ci, sync, lock, pip, fetch, resolve, update, upgrade
+  and add commands, and none matching `UPDATE_COMMANDS`, an `update`,
+  `upgrade` or `--upgrade` argument. It fails a line matching
+  `INSTALL_COMMANDS` in any other script directly under such a folder.
   Trigger: any change to a gate script.
-- Every other gate script of a language with a package manifest runs
-  its language's `packages_check`, which fails with "run
-  bin/dependencies" when the packages are missing or do not match the
-  manifest or lockfile; the review refuses a gate script that skips it.
-  Trigger: any change to how a gate script gets its packages.
-<!-- audited: 7f2dbc8fffe4 -->
+- Every other gate script of a language whose
+  `bin/_<language>/lib/toolchain.sh` defines `packages_check` runs it, and
+  it fails with "run bin/dependencies" when the packages are missing or do
+  not match the manifest or lockfile. `tests/guards` fails a `ci`,
+  `changed`, `format`, `lint`, `build`, `test`, `open` or `qa` script
+  directly under that `bin/_<language>/` folder that never names
+  `packages_check`. Trigger: any change to how a gate script gets its
+  packages.
+<!-- audited: 84ac4d04ab09 -->

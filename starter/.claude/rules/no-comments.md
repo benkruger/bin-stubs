@@ -5,8 +5,9 @@ does.
 
 ## The Rule
 
-- No code file holds a comment; the review refuses one in a file
-  `comment_lines` does not class. `tests/guards` runs `comment_lines` on
+- A file `comment_lines` classes holds no comment but the lines the next
+  bullet allows. `tests/guards` runs
+  `comment_lines` on
   every tracked or new text file except Markdown and the files `is_exempt`
   names, and fails each line with a comment outside a string, regex or
   heredoc: `//` or `/* */` in JavaScript, TypeScript, JSON, Rust and
@@ -20,6 +21,6 @@ does.
   the shellcheck line `script-standards.md` allows and Swift's line-1
   `// swift-tools-version:`. A lint rule only a comment can satisfy is
   handled as `no-lint-exceptions.md` states. `tests/guards` fails any
-  other comment line in a file `comment_lines` classes, and the review
-  refuses one elsewhere. Trigger: any new or edited code file.
-<!-- audited: e229c2e1d046 -->
+  other comment line in a file `comment_lines` classes. Trigger: any new
+  or edited code file.
+<!-- audited: f9105caf52c7 -->

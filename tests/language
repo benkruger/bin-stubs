@@ -8,15 +8,55 @@ REPO="$(cd "$HERE/.." && pwd)"
 . "$HERE/lib/seeds.sh"
 start_work
 
-test_language() {
-  local lang="$1" repo app sent hash pin script step spec
-  say "$lang bin"
+fresh_app() {
   repo="$(new_repo)"
   KEEP="$repo"
   app="$repo/$lang"
   mkdir -p "$app"
   copy_dir "$REPO/bin" "$repo/bin"
   seed_of "$lang" "$app"
+}
+
+committed_app() {
+  local copy
+  if [ -n "${TEMPLATE:-}" ]; then
+    copy="$(mktemp -d "$WORK/copy.XXXXXX")"
+    rmdir "$copy"
+    cp -cR "${TEMPLATE%/*}" "$copy" 2>/dev/null || cp -R "${TEMPLATE%/*}" "$copy"
+    repo="$copy/${TEMPLATE##*/}"
+    KEEP="$repo"
+    app="$repo/$lang"
+    return 0
+  fi
+  fresh_app
+  expect_ok leaf "$app" "$lang" dependencies
+  expect_ok leaf "$app" "$lang" format --all
+  git -C "$repo" add -A
+  git -C "$repo" commit -q -m "$lang app"
+}
+
+section_installed() {
+  local repo app work="$WORK"
+  case "$lang" in
+    typescript | javascript | rails)
+      WORK="$work/template/copy"
+      mkdir -p "$WORK"
+      committed_app
+      TEMPLATE="$repo"
+      WORK="$work"
+      ;;
+  esac
+  case "$lang" in
+    typescript | javascript) run_all "$WORK/logs" run_section changed whole plants audit ;;
+    python) run_all "$WORK/logs" run_section changed whole plants ;;
+    rails) run_all "$WORK/logs" run_section changed plants audit ;;
+    *) run_all "$WORK/logs" run_section changed plants ;;
+  esac
+}
+
+section_sentinels() {
+  local repo app sent hash step
+  fresh_app
   case "$lang" in
     rails | ios | shell) ;;
     *)
@@ -36,13 +76,6 @@ test_language() {
   }
 }
 EOF
-      ;;
-    rails)
-      cp "$app/Gemfile" "$WORK/Gemfile.keep"
-      echo "gem 'rake', '12.3.2'" >>"$app/Gemfile"
-      expect_fail leaf "$app" "$lang" dependencies
-      grep -q "Name: rake" "${LAST_LOG}" || die "rails bin/dependencies let a gem with an advisory through"
-      mv "$WORK/Gemfile.keep" "$app/Gemfile"
       ;;
   esac
   expect_ok leaf "$app" "$lang" dependencies
@@ -94,9 +127,11 @@ EOF
   grep -q "sentinel written" "${LAST_LOG}" || die "$lang --force did not write"
   expect_ok leaf "$app" "$lang" ci --clean
   [ ! -f "$sent" ] || die "$lang --clean left the sentinel"
+}
 
-  git -C "$repo" add -A
-  git -C "$repo" commit -q -m "$lang app"
+section_changed() {
+  local repo app
+  committed_app
   unformat "$app" "$lang"
   expect_ok leaf "$app" "$lang" changed --files
   assert_eq "$(cat "${LAST_LOG}")" "$(source_of "$lang")" "$lang changed --files"
@@ -110,11 +145,22 @@ EOF
   expect_fail leaf "$app" "$lang" ci --force
   grep -q "step 'format' failed" "${LAST_LOG}" || die "$lang ci passed a committed unformatted file"
   formatted "$app" "$lang" && die "$lang ci rewrote a committed file"
-  expect_ok leaf "$app" "$lang" format --all
-  git -C "$repo" commit -q -a -m "$lang formatted"
+  red_file "$app" "$lang"
+  expect_fail leaf "$app" "$lang" ci --force
+  grep -q "step 'format' failed" "${LAST_LOG}" || die "$lang ci did not report its format step failing"
+  grep -q "step 'test' failed" "${LAST_LOG}" || die "$lang ci stopped at its first failing step"
+}
+
+section_whole() {
+  local repo app
+  committed_app
   whole_app "$app" "$lang"
   source_rules "$app" "$lang"
+}
 
+section_plants() {
+  local repo app pin script spec
+  committed_app
   if pin="$(pin_file_of "$lang")"; then
     pin="$app/$pin"
     cp "$pin" "$pin.keep"
@@ -153,6 +199,11 @@ EOF
     expect_fail leaf "$app" "$lang" ci --force
     grep -q "loose has a shebang but is not executable" "${LAST_LOG}" || die "shell let a script that cannot run through"
     rm "$app/loose"
+    printf '%s\n' '#!/usr/bin/env bash' 'if true; then' '  echo x' >"$app/broken"
+    chmod +x "$app/broken"
+    expect_fail leaf "$app" "$lang" build
+    grep -q "broken: line [0-9]*: syntax error" "${LAST_LOG}" || die "shell build let a script bash cannot parse through"
+    rm "$app/broken"
   fi
 
   case "$lang" in
@@ -169,16 +220,65 @@ EOF
     typescript)
       echo "plain text" >"$app/notes.txt"
       printf 'a {\n  color: red;\n}\n' >"$app/styles.css"
+      printf '# Notes\n\n#Heading\n' >"$app/NOTES.md"
+      printf '%s\n' '#!/usr/bin/env bash' 'echo deployed' >"$app/deploy"
       expect_fail leaf "$app" "$lang" ci --force
       grep -q "notes.txt: no formatter (Prettier)" "${LAST_LOG}" || die "$lang let a file with no formatter through"
       grep -q "styles.css: no linter (no ESLint rules apply)" "${LAST_LOG}" || die "$lang let a file with no linter through"
-      rm "$app/notes.txt" "$app/styles.css"
+      grep -q "NOTES.md:3:1 error MD018" "${LAST_LOG}" || die "$lang lint stopped at its first failing tool"
+      ! grep -q "deploy: no" "${LAST_LOG}" || die "$lang held a bash script to Prettier and ESLint"
+      rm "$app/notes.txt" "$app/styles.css" "$app/NOTES.md" "$app/deploy"
+      mv "$app/eslint.config.js" "$WORK/eslint.config.keep"
+      printf '%s\n' 'export default [{ files: ["**/*.xyz"], rules: { "no-console": "error" } }];' >"$app/eslint.config.js"
+      echo "export const a = 1;" >"$app/src/plain.xyz"
+      expect_fail leaf "$app" "$lang" lint src/plain.xyz
+      grep -q "src/plain.xyz: no formatter (Prettier)" "${LAST_LOG}" || die "$lang let a file only ESLint checks through"
+      mv "$WORK/eslint.config.keep" "$app/eslint.config.js"
+      rm "$app/src/plain.xyz"
+      printf '{ bad json\n' >"$app/.prettierrc"
+      echo "const unused = 1;" >"$app/src/unused.ts"
+      expect_fail leaf "$app" "$lang" lint src/unused.ts
+      grep -q "YAML Error in .*\.prettierrc" "${LAST_LOG}" || die "$lang hid a Prettier config it cannot read"
+      grep -q "no-unused-vars" "${LAST_LOG}" || die "$lang skipped ESLint after Prettier failed"
+      rm "$app/.prettierrc" "$app/src/unused.ts"
+      printf '{ "requirePragma": true }\n' >"$app/.prettierrc"
+      expect_fail leaf "$app" "$lang" lint src/add.ts
+      grep -q "src/add.ts: no formatter (Prettier)" "${LAST_LOG}" || die "$lang let Prettier skip files without a pragma"
+      rm "$app/.prettierrc"
+      cp "$app/tsconfig.json" "$WORK/tsconfig.keep"
+      jq '.compilerOptions += { strict: false, noImplicitAny: false, noCheck: true } | .exclude = ["tests"]' \
+        "$WORK/tsconfig.keep" >"$app/tsconfig.json"
+      expect_fail leaf "$app" "$lang" build
+      for msg in "strict is not true" "noImplicitAny is false" "noCheck is true"; do
+        grep -q "tsconfig turns type checking down: $msg" "${LAST_LOG}" || die "$lang let tsconfig turn type checking down: $msg"
+      done
+      grep -q "tests/add.test.ts is outside tsconfig's files" "${LAST_LOG}" || die "$lang let tsconfig leave a file unchecked"
+      mv "$WORK/tsconfig.keep" "$app/tsconfig.json"
       ;;
     javascript)
       echo "plain text" >"$app/notes.txt"
+      printf '# Notes\n\n#Heading\n' >"$app/NOTES.md"
+      printf '%s\n' '#!/usr/bin/env bash' 'echo deployed' >"$app/deploy"
       expect_fail leaf "$app" "$lang" ci --force
       grep -q "notes.txt: no formatter or linter (Biome)" "${LAST_LOG}" || die "$lang let a file with no formatter through"
-      rm "$app/notes.txt"
+      grep -q "NOTES.md:3:1 error MD018" "${LAST_LOG}" || die "$lang lint stopped at its first failing tool"
+      ! grep -q "deploy: no" "${LAST_LOG}" || die "$lang held a bash script to Biome"
+      rm "$app/notes.txt" "$app/NOTES.md" "$app/deploy"
+      printf '%s\n' 'export const broken = (;' >"$app/src/broken.js"
+      expect_fail leaf "$app" "$lang" build --all
+      grep -q "src/broken.js:1" "${LAST_LOG}" || die "$lang build did not name the file node cannot parse"
+      grep -q "SyntaxError" "${LAST_LOG}" || die "$lang build let a file node cannot parse through"
+      rm "$app/src/broken.js"
+      printf 'const unused = 1;\nexport const kept = 2;\n' >"$app/src/warn.js"
+      expect_fail leaf "$app" "$lang" lint src/warn.js
+      grep -q "noUnusedVariables" "${LAST_LOG}" || die "$lang let a Biome warning through"
+      rm "$app/src/warn.js"
+      ;;
+    ios)
+      printf 'let Bad_Name = 1\n' >"$app/Sources/App/Bad.swift"
+      expect_fail leaf "$app" "$lang" lint --all
+      grep -q "AlwaysUseLowerCamelCase" "${LAST_LOG}" || die "$lang let a swift-format finding through"
+      rm "$app/Sources/App/Bad.swift"
       ;;
   esac
 
@@ -195,41 +295,67 @@ EOF
       ;;
   esac
 
-  if branch_gap "$app" "$lang"; then
-    expect_fail leaf "$app" "$lang" ci --force
-    grep -qE "at 100\.00 functions, 100\.00 lines, [0-9]{1,2}\.[0-9]{2} branches" "${LAST_LOG}" ||
-      die "$lang did not hold branches to 100%"
+  coverage_gap "$app" "$lang"
+
+  if [ "$lang" = "ios" ]; then
+    printf '{ "version": 1, "indentation": { "spaces": 8 } }\n' >"$repo/.swift-format"
+    expect_fail leaf "$app" "$lang" format --check --all
+    grep -qF "bin/format: Tests/AppTests/AddTests.swift is not formatted" "${LAST_LOG}" ||
+      die "ios format --check ignored the repo's .swift-format"
+    rm "$repo/.swift-format"
+    printf 'public func broken( {\n' >"$app/Sources/App/Broken.swift"
+    expect_fail leaf "$app" "$lang" format --check --all
+    grep -qF "bin/format: Sources/App/Broken.swift is not formatted" "${LAST_LOG}" ||
+      die "ios format --check passed a file swift-format cannot parse"
+    rm "$app/Sources/App/Broken.swift"
   fi
 
-  if [ "$lang" = "rust" ]; then
-    cp "$app/src/lib.rs" "$WORK/lib.rs.keep"
-    printf '%s\n' 'pub fn add(a: i32, b: i32) -> i32 {' '    a + b' '}' '' 'pub fn untested() -> i32 {' '    1' '}' '' \
-      '#[cfg(test)]' 'mod tests {' '    use super::add;' '' '    #[test]' '    fn adds() {' \
-      '        assert_eq!(add(1, 2), 3);' '    }' '}' >"$app/src/lib.rs"
+  if [ "$lang" = "rails" ]; then
+    printf '%s\n' '# frozen_string_literal: true' '' 'module Unused' '  def self.call' '    unused = 1' '    2' '  end' 'end' \
+      >"$app/app/models/unused.rb"
+    printf '# Notes\n\n#Heading\n' >"$app/NOTES.md"
     expect_fail leaf "$app" "$lang" ci --force
-    grep -q "test result: ok" "${LAST_LOG}" || die "rust tests failed instead of the line bar"
-    grep -q "step 'test' failed" "${LAST_LOG}" || die "rust did not hold lines to 100%"
-    mv "$WORK/lib.rs.keep" "$app/src/lib.rs"
+    grep -q "step 'lint' failed" "${LAST_LOG}" || die "rails lint passed a RuboCop finding"
+    grep -q "Lint/UselessAssignment" "${LAST_LOG}" || die "rails lint did not show the RuboCop finding"
+    grep -q "✗ markdownlint" "${LAST_LOG}" || die "rails lint stopped at its first failing tool"
+    rm "$app/app/models/unused.rb" "$app/NOTES.md"
   fi
+}
 
-  case "$lang" in
-    typescript | javascript)
-      (cd "$app" && npm pkg set dependencies.lodash=4.17.20)
-      expect_fail leaf "$app" "$lang" ci --force
-      grep -q "run bin/dependencies" "${LAST_LOG}" || die "$lang ci ran with a package missing"
-      expect_ok leaf "$app" "$lang" dependencies
-      expect_fail leaf "$app" "$lang" ci --force
-      grep -q "npm audit found a moderate or worse advisory" "${LAST_LOG}" ||
-        die "$lang let a package with an advisory through"
-      ;;
-  esac
+section_audit() {
+  local repo app
+  if [ "$lang" = rails ]; then
+    fresh_app
+    echo "gem 'rake', '12.3.2'" >>"$app/Gemfile"
+    expect_fail leaf "$app" "$lang" dependencies
+    grep -q "Name: rake" "${LAST_LOG}" || die "rails bin/dependencies let a gem with an advisory through"
+    return 0
+  fi
+  committed_app
+  (cd "$app" && npm pkg set dependencies.lodash=4.17.20)
+  expect_fail leaf "$app" "$lang" ci --force
+  grep -q "run bin/dependencies" "${LAST_LOG}" || die "$lang ci ran with a package missing"
+  expect_ok leaf "$app" "$lang" dependencies
+  expect_fail leaf "$app" "$lang" ci --force
+  grep -q "npm audit found a moderate or worse advisory" "${LAST_LOG}" ||
+    die "$lang let a package with an advisory through"
+}
+
+run_section() {
+  WORK="$WORK/$1"
+  mkdir -p "$WORK"
+  "section_$1"
 }
 
 case "${1:-}" in
-  typescript | javascript | python | rails | rust | ios | shell) test_language "$1" ;;
+  typescript | javascript | python | rails | rust | ios | shell) lang="$1" ;;
   *)
     echo "usage: tests/language <typescript|javascript|python|rails|rust|ios|shell>" >&2
     exit 2
     ;;
 esac
+say "$lang bin"
+PICOMATCH_DIR="$WORK/picomatch"
+[ "$lang" != typescript ] || fixed_picomatch >/dev/null
+run_all "$WORK/logs" run_section sentinels installed
 stop_spin "✓"

@@ -23,14 +23,61 @@ args=()
 if [ "${#args[@]}" -eq 0 ]; then
   exit 0
 fi
+
+mirror_check() {
+  local real copy dir rc differ="" file unformatted=0
+  real="$(pwd -P)"
+  copy="$mirror$real"
+  mkdir -p "$copy" || return 2
+  dir="$real"
+  while :; do
+    if [ -f "$dir/.swift-format" ]; then
+      { mkdir -p "$mirror$dir" && cp "$dir/.swift-format" "$mirror$dir/"; } || return 2
+    fi
+    [ -n "$dir" ] || break
+    dir="${dir%/*}"
+  done
+  {
+    printf '%s\0' "${files[@]}"
+    find "${args[@]}" -name .swift-format -print0
+  } |
+    tar -chf - --null -T - | tar -xf - -C "$copy" || return 2
+  (cd "$copy" && xcrun swift-format format --in-place --parallel "${files[@]}") 2>"$mirror/err" || return 2
+  for dir in "${args[@]}"; do
+    rc=0
+    differ+="$(diff -rq "$dir" "$copy/$dir")"$'\n' || rc=$?
+    [ "$rc" -le 1 ] || return 2
+  done
+  cat "$mirror/err" >&2
+  for file in "${files[@]}"; do
+    case $'\n'"$differ" in
+      *$'\n'"Files $file and $copy/$file differ"$'\n'*)
+        echo "bin/format: $file is not formatted (bin/format rewrites it)" >&2
+        unformatted=1
+        ;;
+    esac
+  done
+  return "$unformatted"
+}
+
 if [ "$check" -eq 1 ]; then
-  unformatted=0
+  files=()
   while IFS= read -r -d '' file; do
+    files+=("$file")
+  done < <(find "${args[@]}" -name '*.swift' -type f -print0)
+  [ "${#files[@]}" -gt 0 ] || exit 0
+  mirror="$(mktemp -d)"
+  trap 'rm -rf "$mirror"' EXIT
+  rc=0
+  mirror_check || rc=$?
+  [ "$rc" -eq 2 ] || exit "$rc"
+  unformatted=0
+  for file in "${files[@]}"; do
     if ! xcrun swift-format format "$file" | cmp -s - "$file"; then
       echo "bin/format: $file is not formatted (bin/format rewrites it)" >&2
       unformatted=1
     fi
-  done < <(find "${args[@]}" -name '*.swift' -type f -print0)
+  done
   exit "$unformatted"
 fi
 xcrun swift-format format --in-place --recursive "${args[@]}"

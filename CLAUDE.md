@@ -12,7 +12,8 @@
 - Commits here go through `bin/commit <branch> <msgfile>`, not
   `flow-pro commit`.
 - Branch names have no `/`; `bin/commit` rejects them.
-- Work happens on a branch opened with `bin/start <branch>`, in
-  `.worktrees/<branch>`, one `bin/commit --no-push <branch>` commit per
-  task; it lands on `main` as one squash with
-  `bin/complete <branch> <msgfile>`.
+- Work happens on a branch opened with `bin/start <branch>`: `cd` into
+  `.worktrees/<branch>` and run every script and make every edit there,
+  one `bin/commit --no-push <branch>` commit per task. It lands on `main`
+  as one squash with `bin/complete <branch> <msgfile>`, run from the
+  worktree.

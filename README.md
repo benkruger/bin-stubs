@@ -61,7 +61,8 @@ time. A pass shows the step lines. A failure shows the step that broke.
 
 After an edit, the agent runs `changed`, or one step. It runs again until that
 command passes. Before the commit, it runs `ci`. A matching sentinel finishes
-at once. Otherwise the four steps run and a new sentinel is written.
+at once. Otherwise the four steps run at the same time, each failing step is
+reported, and a new sentinel is written when all four pass.
 `bin/commit` commits only when `ci` exits 0. Version changes go through
 `dependencies`, then `ci`.
 
@@ -136,7 +137,7 @@ alone does not explain.
 - **`--clean`** deletes the sentinel and exits.
 - **A failure** leaves the old sentinel in place.
 - **Each step** that passes also saves its own sentinel, so a rerun on the
-  same tree skips the steps that passed and starts at the one that failed.
+  same tree skips the steps that passed and reruns the ones that failed.
   `--force` ignores those, and `--clean` deletes them too.
 
 A root app (a project file at the repo root) leaves the other apps,

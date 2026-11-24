@@ -116,19 +116,14 @@ source_for_test() {
   fi
 }
 
-file_cov() {
-  node -e '
-    const summary = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"));
-    const want = process.argv[2];
-    const key = Object.keys(summary).find((k) => k === want || k.endsWith("/" + want));
-    if (key === undefined) {
-      console.log("missing");
-    } else {
-      const row = summary[key];
-      const metrics = [row.functions, row.lines, row.branches, row.statements];
-      console.log(metrics.map((m) => m.pct.toFixed(2)).join(" "));
-    }
-  ' "$covjson" "$1"
+file_covs() {
+  jq -r '. as $summary | $ARGS.positional[] as $want
+    | first($summary | keys_unsorted[] | select(. == $want or endswith("/" + $want))) // null
+    | if . == null then "missing"
+      else $summary[.] | [.functions, .lines, .branches, .statements]
+        | map(.pct * 100 | round | "\(. / 100 | floor).\(. % 100 | tostring | if length < 2 then "0" + . else . end)")
+        | join(" ")
+      end' "$covjson" --args "$@"
 }
 
 already() {
@@ -201,13 +196,23 @@ for msg in "${orphans[@]+"${orphans[@]}"}"; do
   ratchet=1
 done
 
+covs=()
+if [ "${#required[@]}" -gt 0 ]; then
+  rows="$(file_covs "${required[@]}")"
+  while IFS= read -r row; do
+    covs+=("$row")
+  done <<<"$rows"
+fi
+
+i=0
 for src in "${required[@]+"${required[@]}"}"; do
+  cov="${covs[$i]:-}"
+  i=$((i + 1))
   if [ ! -f "$src" ]; then
     echo "bin/test: $src is required at 100% but is missing" >&2
     ratchet=1
     continue
   fi
-  cov="$(file_cov "$src")"
   if [ "$cov" = "missing" ]; then
     echo "bin/test: $src has no coverage row (need 100%)" >&2
     ratchet=1
@@ -223,4 +228,9 @@ done
 if [ "$ratchet" -ne 0 ]; then
   exit 1
 fi
+if [ "$all" -eq 1 ] && [ "${#required[@]}" -eq 0 ]; then
+  echo "bin/test: --all found no source to hold at 100%" >&2
+  exit 1
+fi
+echo "bin/test: coverage bar held on ${#required[@]} source(s)"
 exit "$rc"

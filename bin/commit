@@ -165,7 +165,7 @@ corpus_files() {
 }
 
 shared_block() {
-  local corpus=() overflow=() f size used=0 first=1
+  local corpus=() overflow=() f size used=0 files=() sizes=() i counts
   printf '%s\n\n' "$REFERENCE_NOTICE"
   if [ -f "$AUTHORITY" ] && [ -r "$AUTHORITY" ]; then
     printf '## Authority: %s\n\n' "$AUTHORITY"
@@ -181,22 +181,40 @@ shared_block() {
       "against the criteria list in your prompt."
   fi
   while IFS= read -r f; do
-    size="$(wc -c <"$f" | tr -d ' ')"
+    files+=("$f")
+  done < <(corpus_files "$@")
+  if [ "${#files[@]}" -gt 0 ] && counts="$(wc -c "${files[@]}" 2>/dev/null)"; then
+    while read -r size _; do
+      sizes+=("$size")
+    done <<<"$counts"
+  fi
+  for i in ${files[@]+"${!files[@]}"}; do
+    f="${files[$i]}"
+    size="${sizes[$i]:-}"
+    if [ -z "$size" ]; then
+      size="$(wc -c <"$f")"
+      size="${size//[[:space:]]/}"
+    fi
     if [ $((used + size)) -le "$MAX_INLINE_RULES_BYTES" ]; then
       corpus+=("$f")
       used=$((used + size))
     else
       overflow+=("$f")
     fi
-  done < <(corpus_files "$@")
+  done
   if [ "${#corpus[@]}" -gt 0 ]; then
     printf '\n\n## Corpus rules (other than the authority and the files under audit)\n\n'
-    for f in "${corpus[@]}"; do
-      [ "$first" -eq 1 ] || printf '\n\n'
-      first=0
-      printf '### %s\n' "$f"
-      cat "$f"
-    done
+    perl -e '
+      binmode STDOUT;
+      for my $i (0 .. $#ARGV) {
+        print "\n\n" if $i;
+        print "### $ARGV[$i]\n";
+        open(my $fh, "<", $ARGV[$i]) or die "cat: $ARGV[$i]: $!\n";
+        binmode $fh;
+        local $/;
+        my $body = <$fh>;
+        print $body if defined $body;
+      }' "${corpus[@]}"
   fi
   if [ "${#overflow[@]}" -gt 0 ]; then
     printf '\n\n'
@@ -368,7 +386,7 @@ is_rule_file() {
 }
 
 fix_files() {
-  local findings="$1" i=0 f snap flagged=()
+  local findings="$1" i=0 f snap size flagged=()
   : >"$WORK/written"
   while IFS= read -r f; do
     is_rule_file "$f" && flagged+=("$f")
@@ -377,7 +395,7 @@ fix_files() {
   printf '%s\n' "${flagged[@]}" >"$WORK/allowed"
   for f in "${flagged[@]}"; do
     snap="$WORK/snapshot.$i"
-    if [ "$(wc -c <"$f" | tr -d ' ')" -le "$SNAPSHOT_MAX_BYTES" ]; then
+    if size="$(wc -c <"$f")" && [ "${size//[[:space:]]/}" -le "$SNAPSHOT_MAX_BYTES" ]; then
       cp "$f" "$snap"
     fi
     i=$((i + 1))

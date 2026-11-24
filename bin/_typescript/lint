@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-UNGATED_NAMES=(.gitignore .prettierignore .nvmrc package-lock.json .ci-timeout)
+UNGATED_NAMES=(.gitignore .nvmrc package-lock.json .ci-timeout)
 UNGATED_PATHS=()
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 root="$(cd "${APP_DIR:-$here/../..}" && pwd)"
@@ -65,7 +65,7 @@ fi
 
 is_ungated() {
   local path="$1" name entry
-  name="$(basename "$path")"
+  name="${path##*/}"
   for entry in "${UNGATED_NAMES[@]}"; do
     [ "$name" = "$entry" ] && return 0
   done
@@ -73,6 +73,12 @@ is_ungated() {
     [ "$path" = "$entry" ] && return 0
   done
   return 1
+}
+
+is_bash_script() {
+  local first="" shebang='^#!(.*[^[:alnum:]_])?bash([^[:alnum:]_]|$)'
+  IFS= read -r first <"$1" || true
+  [[ "$first" =~ $shebang ]]
 }
 
 gated=()
@@ -84,38 +90,71 @@ for path in "${files[@]}"; do
       continue
       ;;
   esac
-  if [ -L "$path" ] || is_ungated "$path" || head -n 1 "$path" | grep -qE '^#!.*\bbash\b'; then
+  if [ -L "$path" ] || is_ungated "$path" || is_bash_script "$path"; then
     continue
   fi
   gated+=("$path")
 done
 
+logs="$(mktemp -d)"
+trap 'rm -rf "$logs"' EXIT
+pids=()
+
+in_background() {
+  local log="$logs/${#pids[@]}"
+  "$@" >"$log.out" 2>"$log.err" 3>"$log.pre" &
+  pids+=("$!")
+}
+
 if [ "${#gated[@]}" -gt 0 ]; then
-  node --input-type=module -e '
-    import { ESLint } from "eslint";
-    import * as prettier from "prettier";
+  in_background node --input-type=module -e '
+    import module from "node:module";
+    import { readFileSync, writeSync } from "node:fs";
+    import { inspect } from "node:util";
+    module.enableCompileCache?.();
+    const { ESLint } = await import("eslint");
+    const prettier = await import("prettier");
+    const files = process.argv.slice(1);
     const eslint = new ESLint();
     let failed = false;
-    for (const file of process.argv.slice(1)) {
-      const info = await prettier.getFileInfo(file, { resolveConfig: true });
-      if (info.ignored || info.inferredParser === null) {
-        console.error(file + ": no formatter (Prettier)");
-        failed = true;
+    try {
+      for (const file of files) {
+        const info = await prettier.getFileInfo(file, { resolveConfig: true });
+        const options = await prettier.resolveConfig(file);
+        if (info.ignored || info.inferredParser === null || options?.requirePragma) {
+          writeSync(3, file + ": no formatter (Prettier)\n");
+          failed = true;
+        }
+        const ignored = await eslint.isPathIgnored(file);
+        const config = ignored ? undefined : await eslint.calculateConfigForFile(file);
+        if (Object.keys(config?.rules ?? {}).length === 0) {
+          writeSync(3, file + ": no linter (no ESLint rules apply)\n");
+          failed = true;
+        }
       }
-      const ignored = await eslint.isPathIgnored(file);
-      const config = ignored ? undefined : await eslint.calculateConfigForFile(file);
-      if (Object.keys(config?.rules ?? {}).length === 0) {
-        console.error(file + ": no linter (no ESLint rules apply)");
-        failed = true;
-      }
+    } catch (error) {
+      writeSync(3, inspect(error) + "\n");
+      failed = true;
     }
-    process.exit(failed ? 1 : 0);
+    process.on("exit", () => {
+      if (failed && !process.exitCode) process.exitCode = 1;
+    });
+    const manifest = new URL(import.meta.resolve("eslint/package.json"));
+    const { bin } = JSON.parse(readFileSync(manifest, "utf8"));
+    process.argv = [process.argv[0], "eslint", "--max-warnings=0", ...files];
+    await import(new URL(typeof bin === "string" ? bin : bin.eslint, manifest));
   ' "${gated[@]}"
-  "$root/node_modules/.bin/eslint" --max-warnings=0 "${gated[@]}"
+fi
+if [ "${#md_files[@]}" -gt 0 ]; then
+  in_background markdownlint-cli2 "${md_files[@]}"
 fi
 
-if [ "${#md_files[@]}" -eq 0 ]; then
-  echo "  ✓ markdownlint (no dirty Markdown files)"
-else
-  markdownlint-cli2 "${md_files[@]}"
-fi
+status=0
+for i in ${pids[@]+"${!pids[@]}"}; do
+  wait "${pids[$i]}" || status=1
+  cat "$logs/$i.pre" >&2
+  cat "$logs/$i.out"
+  cat "$logs/$i.err" >&2
+done
+[ "${#md_files[@]}" -gt 0 ] || echo "  ✓ markdownlint (no dirty Markdown files)"
+exit "$status"

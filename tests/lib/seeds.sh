@@ -7,11 +7,11 @@ leaf() {
 }
 
 fixed_picomatch() {
-  local dir="$WORK/picomatch"
+  local dir="${PICOMATCH_DIR:-$WORK/picomatch}"
   if [ ! -d "$dir" ]; then
     mkdir -p "$dir"
-    (cd "$WORK" && npm pack picomatch@4.0.7 --silent >/dev/null)
-    tar -xzf "$WORK/picomatch-4.0.7.tgz" -C "$dir" --strip-components=1
+    (cd "$dir/.." && npm pack picomatch@4.0.7 --silent >/dev/null)
+    tar -xzf "$dir/../picomatch-4.0.7.tgz" -C "$dir" --strip-components=1
     patch -s -p1 -d "$dir" -i "$HERE/picomatch-ghsa-fc5q-39xc-vjpf.patch"
   fi
   printf '%s\n' "$dir"
@@ -76,9 +76,9 @@ EOF
     "moduleResolution": "bundler",
     "target": "esnext",
     "skipLibCheck": true,
+    "jsx": "react-jsx",
     "types": []
-  },
-  "include": ["src"]
+  }
 }
 EOF
   printf '# App\n' >"$app/README.md"
@@ -310,7 +310,7 @@ EOF
 seed_ios() {
   local app="$1"
   mkdir -p "$app"
-  xcodebuild -version | head -n 1 | cut -d' ' -f2 >"$app/.xcode-version"
+  xcodebuild -version | awk 'NR == 1 { print $2 }' >"$app/.xcode-version"
   mkdir -p "$app/Sources/App" "$app/Tests/AppTests"
   cat >"$app/Package.swift" <<'EOF'
 // swift-tools-version: 6.0
@@ -579,19 +579,57 @@ source_rules() {
   esac
 }
 
-branch_gap() {
-  local app="$1" lang="$2"
+coverage_gap() {
+  local app="$1" lang="$2" file body report args=()
   case "$lang" in
     typescript)
-      printf '%s\n' 'export function add(a: number, b: number): number {' \
-        '  return a > 0 ? a + b : b;' '}' >"$app/src/add.ts"
+      args=(--all)
+      file=src/add.ts
+      body=$'export function add(a: number, b: number): number {\n  return a > 0 ? a + b : b;\n}'
+      report='at 100\.00 functions, 100\.00 lines, [0-9]{1,2}\.[0-9]{2} branches'
       ;;
     javascript)
-      printf '%s\n' 'export function add(a, b) {' '  return a > 0 ? a + b : b;' '}' \
-        >"$app/src/index.js"
+      args=(--all)
+      file=src/index.js
+      body=$'export function add(a, b) {\n  return a > 0 ? a + b : b;\n}'
+      report='at 100\.00 functions, 100\.00 lines, [0-9]{1,2}\.[0-9]{2} branches'
       ;;
-    *) return 1 ;;
+    python)
+      args=(--all)
+      file=src/add.py
+      body=$'def add(a: int, b: int) -> int:\n    if a > 0:\n        return a + b\n    return b'
+      report='bin/test: src/add\.py at 3/4 stmts 1/2 branches \(need 100/100\)'
+      ;;
+    rails)
+      file=app/models/add.rb
+      body=$'# frozen_string_literal: true\n\nmodule Add\n  module_function\n\n  def call(left, right)\n'
+      body+=$'    return right if left.negative?\n\n    left + right\n  end\nend'
+      report='Branch coverage \(50\.00%\) is below the expected minimum coverage \(100\.00%\)'
+      ;;
+    rust)
+      file=src/lib.rs
+      body=$'pub fn add(a: i32, b: i32) -> i32 {\n    a + b\n}\n\npub fn untested() -> i32 {\n    1\n}\n\n'
+      body+=$'#[cfg(test)]\nmod tests {\n    use super::add;\n\n    #[test]\n    fn adds() {\n'
+      body+=$'        assert_eq!(add(1, 2), 3);\n    }\n}'
+      report='test result: ok'
+      ;;
+    ios)
+      file=Sources/App/Add.swift
+      body=$'public func add(_ a: Int, _ b: Int) -> Int { a + b }\n\npublic func untested() -> Int { 1 }'
+      report='FAIL: line coverage is under 100%'
+      ;;
+    shell) return 0 ;;
+    *) die "$lang has no coverage gap plant" ;;
   esac
+  expect_ok leaf "$app" "$lang" test ${args[@]+"${args[@]}"}
+  grep -qxF "bin/test: coverage bar held on 1 source(s)" "${LAST_LOG}" ||
+    die "$lang bin/test did not report holding its one source to the coverage bar"
+  cp "$app/$file" "$WORK/gap.keep"
+  printf '%s\n' "$body" >"$app/$file"
+  expect_fail leaf "$app" "$lang" ci --force
+  grep -q "step 'test' failed" "${LAST_LOG}" || die "$lang passed a source below its coverage bar"
+  grep -qE "$report" "${LAST_LOG}" || die "$lang did not report the source below its coverage bar"
+  mv "$WORK/gap.keep" "$app/$file"
 }
 
 pin_file_of() {

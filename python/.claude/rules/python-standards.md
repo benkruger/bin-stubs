@@ -15,11 +15,14 @@ The Python app is held by Ruff and pytest at full strength.
 - Every source is at 100% coverage. `bin/ci` checks every source;
   `bin/changed` checks the changed ones, and a changed test holds its source
   to the same bar.
-- Ruff formats every file and lints it with every rule
+- Ruff formats every file and lints it with its default rules and any
+  the config adds through `extend-select`; `bin/lint` fails a finding, and
+  `tests/guards` fails a Ruff setting other than `target-version`,
+  `line-length`, `indent-width`, `src`, `format` or lint `extend-select`
   (`no-lint-exceptions.md`).
 - `bin/build` compiles every module and fails on any that does not
   compile.
 - `.python-version` pins Python; `bin/ci` fails unless uv finds an installed
   Python that matches it.
 - Trigger: any change to a Python `bin/` script.
-<!-- audited: b2a51f33a8db -->
+<!-- audited: a8eda23c9cc7 -->

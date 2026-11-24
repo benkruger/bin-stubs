@@ -13,8 +13,11 @@ because the gate runs it unattended.
   `bin/format` writes it that way.
 - `tests/guards` fails an entry point that is not executable or does not
   start with `set -euo pipefail`, a shellcheck finding and a shfmt diff.
-  Trigger: any new or edited bash script.
-- A sourced helper (`lib/*.sh`, `_run_quiet`, `tests/lib.sh`) is never run
-  directly and uses only what it defines or receives as arguments; review
-  holds it there. Trigger: any new file under `lib/`.
-<!-- audited: 2383b4d9fa60 -->
+  It skips shellcheck when the same scripts, with the same contents,
+  `.shellcheckrc` files and shellcheck version, passed it before, which it
+  marks under `flow-guards/shellcheck` in `XDG_CACHE_HOME` or
+  `~/.cache`. Trigger: any new or edited bash script.
+- A sourced helper (`lib/*.sh`, `_run_quiet`, `tests/lib.sh`) is not an
+  entry point, so `tests/guards` skips its executable and
+  `set -euo pipefail` checks. Trigger: any new or edited sourced helper.
+<!-- audited: e0f06c8c8ce4 -->

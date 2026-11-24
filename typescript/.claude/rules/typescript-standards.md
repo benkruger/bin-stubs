@@ -15,14 +15,16 @@ strength.
   the changed ones, and a changed test holds its source to the same bar.
 - Every file has one formatter and linter pair: markdownlint (the one on
   PATH) for Markdown, shfmt and shellcheck for a bash script, and Prettier
-  and ESLint rules for every other file Prettier has a parser for.
-  `bin/lint` fails any other file unless `UNGATED_NAMES` or the exact paths
-  in `UNGATED_PATHS` name it; a new file type gets its `eslint.config.js`
-  block in the same change.
+  and ESLint rules for every other file Prettier has a parser for and
+  formats without a pragma. `bin/lint` fails any other file unless
+  `UNGATED_NAMES` or the exact paths in `UNGATED_PATHS` name it; a new file
+  type gets its `eslint.config.js` block in the same change.
 - ESLint passes with zero warnings on every file its config covers;
   `eslint.config.js` keeps every rule on (`no-lint-exceptions.md`).
-- `bin/build` runs the package's `build` script, or type-checks the whole
-  app with `tsc --noEmit` when there is none.
+- `bin/build` runs the package's `build` script, or, with none, runs
+  `tsc --noEmit` and fails unless `tsc --showConfig` shows `strict` true,
+  no `STRICT_FLAGS` entry false, no `noCheck` and every TypeScript file in
+  the app.
 - npm installs from `package-lock.json`; `.nvmrc` pins Node, and every
   `bin/` script activates it through nvm and fails unless it is active.
 - `packageManager` in `package.json` pins npm's exact version; every `bin/`
@@ -36,4 +38,4 @@ strength.
 - `bin/qa`, outside `bin/ci`, installs Chromium and runs `playwright test`;
   a failed test, or output matching those same warnings, fails it.
 - Trigger: any change to a TypeScript `bin/` script or `eslint.config.js`.
-<!-- audited: 02697a44e818 -->
+<!-- audited: e4f9ae277d8a -->

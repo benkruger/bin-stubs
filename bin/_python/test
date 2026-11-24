@@ -190,29 +190,12 @@ else
   done <<<"$listing"
 fi
 
-file_cov() {
-  local file="$1"
-  uv run python -c '
-import json, sys
-data = json.load(open(sys.argv[1]))
-want = sys.argv[2]
-files = data.get("files", {})
-info = files.get(want)
-if info is None:
-    for key, val in files.items():
-        if key.endswith("/" + want):
-            info = val
-            break
-if info is None:
-    print("missing")
-    raise SystemExit(0)
-s = info.get("summary", {})
-stmts = s.get("num_statements", 0)
-covered = s.get("covered_lines", 0)
-branches = s.get("num_branches", 0)
-b_cov = s.get("covered_branches", 0)
-print(f"{covered}/{stmts} {b_cov}/{branches}")
-' "$covjson" "$file"
+file_covs() {
+  jq -r '(.files // {}) as $files | $ARGS.positional[] as $want
+    | first(($files[$want] // empty), ($files | to_entries[] | select(.key | endswith("/" + $want)) | .value)) // null
+    | if . == null then "missing"
+      else (.summary // {}) | "\(.covered_lines // 0)/\(.num_statements // 0) \(.covered_branches // 0)/\(.num_branches // 0)"
+      end' "$covjson" --args "$@"
 }
 
 ratchet=0
@@ -225,13 +208,23 @@ for msg in "${orphans[@]+"${orphans[@]}"}"; do
   ratchet=1
 done
 
+covs=()
+if [ "${#required[@]}" -gt 0 ]; then
+  rows="$(file_covs "${required[@]}")"
+  while IFS= read -r row; do
+    covs+=("$row")
+  done <<<"$rows"
+fi
+
+i=0
 for src in "${required[@]+"${required[@]}"}"; do
+  cov="${covs[$i]:-}"
+  i=$((i + 1))
   if [ ! -f "$src" ]; then
     echo "bin/test: $src is required at 100/100 but is missing" >&2
     ratchet=1
     continue
   fi
-  cov="$(file_cov "$src")"
   if [ "$cov" = "missing" ]; then
     echo "bin/test: $src has no coverage row (need 100/100)" >&2
     ratchet=1
@@ -252,4 +245,9 @@ done
 if [ "$ratchet" -ne 0 ]; then
   exit 1
 fi
-exit "$rc"
+[ "$rc" -eq 0 ] || exit "$rc"
+if [ "$all" -eq 1 ] && [ "${#required[@]}" -eq 0 ]; then
+  echo "bin/test: --all found no source to hold at 100%" >&2
+  exit 1
+fi
+echo "bin/test: coverage bar held on ${#required[@]} source(s)"

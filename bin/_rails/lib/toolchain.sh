@@ -2,6 +2,7 @@
 
 toolchain_check() {
   local root="$1" pinned active
+  [ "${FLOW_CHECKED_APP:-}" != "$root" ] || return 0
   if [ ! -f "$root/.ruby-version" ]; then
     echo "toolchain: .ruby-version is missing; pin Ruby with: ruby -e 'print RUBY_VERSION' > .ruby-version" >&2
     return 1
@@ -20,6 +21,7 @@ toolchain_check() {
 
 packages_check() {
   local root="$1"
+  [ "${FLOW_CHECKED_APP:-}" != "$root" ] || return 0
   if ! (cd "$root" && bundle check >/dev/null 2>&1); then
     echo "packages: gems are missing; run bin/dependencies" >&2
     return 1

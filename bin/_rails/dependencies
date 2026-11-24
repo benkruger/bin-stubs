@@ -9,8 +9,19 @@ bundle update --all
 echo "  → rails (bundle check)"
 bundle check
 
+logs="$(mktemp -d)"
+trap 'rm -rf "$logs"' EXIT
+bundle exec bundler-audit check --update >"$logs/audit" 2>&1 &
+audit=$!
+bundle exec brakeman --quiet --no-pager --exit-on-warn --exit-on-error >"$logs/brakeman" 2>&1 &
+brakeman=$!
+status=0
+
 echo "  → rails (bundler-audit)"
-bundle exec bundler-audit check --update
+wait "$audit" || status=$?
+cat "$logs/audit"
 
 echo "  → rails (brakeman)"
-exec bundle exec brakeman --quiet --no-pager --exit-on-warn --exit-on-error
+wait "$brakeman" || status=$?
+cat "$logs/brakeman"
+exit "$status"

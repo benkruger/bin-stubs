@@ -7,6 +7,6 @@ cd "$root"
 if [ -L .venv ]; then
   rm .venv
 fi
-uv sync --upgrade
+uv sync --upgrade --compile-bytecode
 
 exec uv lock --check

@@ -65,7 +65,7 @@ fi
 
 is_ungated() {
   local path="$1" name entry
-  name="$(basename "$path")"
+  name="${path##*/}"
   for entry in "${UNGATED_NAMES[@]}"; do
     [ "$name" = "$entry" ] && return 0
   done
@@ -73,6 +73,12 @@ is_ungated() {
     [ "$path" = "$entry" ] && return 0
   done
   return 1
+}
+
+is_bash_script() {
+  local first="" shebang='^#!(.*[^[:alnum:]_])?bash([^[:alnum:]_]|$)'
+  IFS= read -r first <"$1" || true
+  [[ "$first" =~ $shebang ]]
 }
 
 biome_files=()
@@ -83,7 +89,7 @@ for path in "${files[@]}"; do
     *.md) md_files+=("$path") ;;
     *.js | *.mjs | *.cjs | *.jsx | *.json | *.jsonc | *.css) biome_files+=("$path") ;;
     *)
-      if [ -L "$path" ] || is_ungated "$path" || head -n 1 "$path" | grep -qE '^#!.*\bbash\b'; then
+      if [ -L "$path" ] || is_ungated "$path" || is_bash_script "$path"; then
         continue
       fi
       echo "$path: no formatter or linter (Biome)" >&2
@@ -91,16 +97,28 @@ for path in "${files[@]}"; do
       ;;
   esac
 done
-if [ "$ungated" -ne 0 ]; then
-  exit 1
-fi
+logs="$(mktemp -d)"
+trap 'rm -rf "$logs"' EXIT
+pids=()
+
+in_background() {
+  local log="$logs/${#pids[@]}"
+  "$@" >"$log.out" 2>"$log.err" &
+  pids+=("$!")
+}
 
 if [ "${#biome_files[@]}" -gt 0 ]; then
-  "$root/node_modules/.bin/biome" check "${biome_files[@]}"
+  in_background "$root/node_modules/.bin/biome" check --error-on-warnings "${biome_files[@]}"
+fi
+if [ "${#md_files[@]}" -gt 0 ]; then
+  in_background markdownlint-cli2 "${md_files[@]}"
 fi
 
-if [ "${#md_files[@]}" -eq 0 ]; then
-  echo "  ✓ markdownlint (no dirty Markdown files)"
-else
-  markdownlint-cli2 "${md_files[@]}"
-fi
+status="$ungated"
+for i in ${pids[@]+"${!pids[@]}"}; do
+  wait "${pids[$i]}" || status=1
+  cat "$logs/$i.out"
+  cat "$logs/$i.err" >&2
+done
+[ "${#md_files[@]}" -gt 0 ] || echo "  ✓ markdownlint (no dirty Markdown files)"
+exit "$status"

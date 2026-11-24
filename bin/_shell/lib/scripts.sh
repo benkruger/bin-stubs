@@ -30,7 +30,8 @@ shell_scripts() {
         continue
         ;;
     esac
-    first="$(head -n 1 "$path")"
+    first=""
+    IFS= read -r first <"$path" || true
     if [[ "$first" =~ $shebang ]]; then
       printf '%s\n' "$path"
     fi

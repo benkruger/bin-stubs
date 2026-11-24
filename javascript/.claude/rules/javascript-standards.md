@@ -20,7 +20,7 @@ strength.
 - Biome formats and lints every file except Markdown (markdownlint, the one
   on PATH) and bash scripts (shfmt and shellcheck). `bin/lint` fails any
   other file type unless `UNGATED_NAMES` or the exact paths in
-  `UNGATED_PATHS` name it.
+  `UNGATED_PATHS` name it. Biome passes with zero warnings.
 - `biome.json` keeps every rule on (`no-lint-exceptions.md`).
 - `.nvmrc` pins Node; every `bin/` script activates it through nvm and
   fails unless it is active.
@@ -38,4 +38,4 @@ strength.
 - `bin/qa`, outside `bin/ci`, installs Chromium and runs `playwright test`;
   a failed test, or output matching those same warnings, fails it.
 - Trigger: any change to a JavaScript `bin/` script.
-<!-- audited: cb5fb6d9914c -->
+<!-- audited: 2d21b61d34a4 -->

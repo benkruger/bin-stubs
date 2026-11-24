@@ -51,7 +51,12 @@ die() {
 }
 
 run_log() {
-  LAST_LOG="$(mktemp)"
+  if [ -n "${WORK:-}" ] && [ -n "${BASHPID:-}" ]; then
+    RUN_LOGS=$((${RUN_LOGS:-0} + 1))
+    LAST_LOG="$WORK/run-log.$BASHPID.$RUN_LOGS"
+  else
+    LAST_LOG="$(mktemp)"
+  fi
   if "$@" >"${LAST_LOG}" 2>&1; then
     LAST_RC=0
   else
@@ -73,7 +78,7 @@ row_of() {
 
 copy_dir() {
   mkdir -p "$2"
-  cp -R "$1/." "$2/"
+  cp -cR "$1/." "$2/" 2>/dev/null || cp -R "$1/." "$2/"
 }
 
 sentinel_file() {
@@ -82,6 +87,7 @@ sentinel_file() {
 
 start_work() {
   WORK="$(mktemp -d "${TMPDIR:-/tmp}/bin-stubs-tests.XXXXXX")"
+  export NODE_COMPILE_CACHE="$WORK/node-compile-cache"
   trap 'stop_spin; rm -rf "$WORK"' EXIT
   set -o errtrace
   trap 'echo "FAIL: ${SAY:-suite}: line $LINENO exited $?: $BASH_COMMAND" >&2' ERR
@@ -91,8 +97,7 @@ new_repo() {
   local d
   d="$(mktemp -d "$WORK/repo.XXXXXX")"
   git -C "$d" init -q -b main
-  git -C "$d" config user.email "bin-stubs@example.com"
-  git -C "$d" config user.name "bin-stubs"
+  printf '[user]\n\temail = bin-stubs@example.com\n\tname = bin-stubs\n' >>"$d/.git/config"
   cat >"$d/.gitignore" <<'EOF'
 .flow-states/
 node_modules/
@@ -121,3 +126,21 @@ expect_fail() {
 }
 
 summary() { tail -n 20 "${LAST_LOG}"; }
+
+run_all() {
+  local logs="$1" runner="$2" name rc failed=0 i=0 pids=()
+  shift 2
+  mkdir -p "$logs"
+  for name in "$@"; do
+    "$runner" "$name" >"$logs/$name" 2>&1 &
+    pids+=("$!")
+  done
+  for name in "$@"; do
+    rc=0
+    wait "${pids[$i]}" || rc=$?
+    i=$((i + 1))
+    cat "$logs/$name"
+    [ "$rc" -eq 0 ] || failed=1
+  done
+  return "$failed"
+}

@@ -21,7 +21,7 @@ if [ -z "${CI:-}" ]; then
 fi
 packages_check "$PWD" || exit 1
 
-if node -e 'const p = require("./package.json"); process.exit(p.scripts && p.scripts.build ? 0 : 1)'; then
+if jq -e '(.scripts.build // "") != ""' package.json >/dev/null; then
   exec "$pm" run build
 fi
 
@@ -40,6 +40,29 @@ while IFS= read -r path; do
   esac
 done <<<"$listing"
 
-for f in "${files[@]+"${files[@]}"}"; do
-  node --check "$f"
+[ "${#files[@]}" -gt 0 ] || exit 0
+checked="$(mktemp -d)"
+trap 'rm -rf "$checked"' EXIT
+jobs="$(getconf _NPROCESSORS_ONLN)"
+check_every() {
+  local i rc
+  for ((i = $1; i < ${#files[@]}; i += jobs)); do
+    rc=0
+    node --check "${files[$i]}" >"$checked/$i.out" 2>"$checked/$i.err" || rc=$?
+    printf '%s\n' "$rc" >"$checked/$i.rc"
+  done
+}
+pids=()
+for ((j = 0; j < jobs && j < ${#files[@]}; j++)); do
+  check_every "$j" &
+  pids+=("$!")
+done
+for pid in "${pids[@]}"; do
+  wait "$pid"
+done
+for i in "${!files[@]}"; do
+  read -r rc <"$checked/$i.rc"
+  [ ! -s "$checked/$i.out" ] || cat "$checked/$i.out"
+  [ ! -s "$checked/$i.err" ] || cat "$checked/$i.err" >&2
+  [ "$rc" -eq 0 ] || exit "$rc"
 done
