@@ -15,10 +15,12 @@ for arg in "$@"; do
       ;;
   esac
 done
-args=()
-[ -d Sources ] && args+=(Sources)
-[ -d Tests ] && args+=(Tests)
-if [ "${#args[@]}" -eq 0 ]; then
+# shellcheck source=../lib/apps.sh
+. "$here/../lib/apps.sh"
+# shellcheck source=lib/files.sh
+. "$here/lib/files.sh"
+app_files '*.swift'
+if [ "${#APP_FILES[@]}" -eq 0 ]; then
   exit 0
 fi
-xcrun swift-format lint --strict --recursive "${args[@]}"
+xcrun swift-format lint --strict "${APP_FILES[@]}"

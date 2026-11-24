@@ -4,10 +4,11 @@ The iOS app is held by swift-format and its tests at full strength.
 
 ## The Rule
 
-- `bin/format` rewrites `Sources` and `Tests` with swift-format, and
-  `bin/lint` fails on any swift-format finding there; every finding is
-  fixed in the code (`no-lint-exceptions.md`). Trigger: any edit under
-  `Sources` or `Tests`.
+- `bin/format` rewrites with swift-format every tracked or
+  unignored untracked Swift file in the app, bar symlinks and files under
+  `.build` or `.flow-states`, and `bin/lint` fails on any swift-format
+  finding in them; every finding is fixed in the code
+  (`no-lint-exceptions.md`). Trigger: any edit to a Swift file.
 - A Swift package builds and tests with `-warnings-as-errors`. An Xcode
   workspace or project, used first when one sits in the folder, builds
   and tests with `xcodebuild` on `IOS_DESTINATION` or else the first iOS
@@ -31,4 +32,4 @@ The iOS app is held by swift-format and its tests at full strength.
   Trigger: every edit.
 - `.xcode-version` pins Xcode; outside CI, `bin/ci` fails unless that
   Xcode is selected. Trigger: an Xcode upgrade.
-<!-- audited: 04bf698236f5 -->
+<!-- audited: 5c7825be5597 -->

@@ -17,15 +17,18 @@ for arg in "$@"; do
       ;;
   esac
 done
-args=()
-[ -d Sources ] && args+=(Sources)
-[ -d Tests ] && args+=(Tests)
-if [ "${#args[@]}" -eq 0 ]; then
+# shellcheck source=../lib/apps.sh
+. "$here/../lib/apps.sh"
+# shellcheck source=lib/files.sh
+. "$here/lib/files.sh"
+app_files '*.swift'
+if [ "${#APP_FILES[@]}" -eq 0 ]; then
   exit 0
 fi
+files=("${APP_FILES[@]}")
 
 mirror_check() {
-  local real copy dir rc differ="" file unformatted=0
+  local real copy dir differ file unformatted=0
   real="$(pwd -P)"
   copy="$mirror$real"
   mkdir -p "$copy" || return 2
@@ -37,35 +40,27 @@ mirror_check() {
     [ -n "$dir" ] || break
     dir="${dir%/*}"
   done
-  {
-    printf '%s\0' "${files[@]}"
-    find "${args[@]}" -name .swift-format -print0
-  } |
+  app_files '*.swift-format'
+  printf '%s\0' "${files[@]}" ${APP_FILES[@]+"${APP_FILES[@]}"} |
     tar -chf - --null -T - | tar -xf - -C "$copy" || return 2
   (cd "$copy" && xcrun swift-format format --in-place --parallel "${files[@]}") 2>"$mirror/err" || return 2
-  for dir in "${args[@]}"; do
-    rc=0
-    differ+="$(diff -rq "$dir" "$copy/$dir")"$'\n' || rc=$?
-    [ "$rc" -le 1 ] || return 2
-  done
+  differ="$(COPY="$copy" perl -e '
+    for my $file (@ARGV) {
+      open my $real, "<", $file or exit 2;
+      open my $formatted, "<", "$ENV{COPY}/$file" or exit 2;
+      local $/;
+      print "$file\n" if <$real> ne <$formatted>;
+    }' "${files[@]}")" || return 2
   cat "$mirror/err" >&2
-  for file in "${files[@]}"; do
-    case $'\n'"$differ" in
-      *$'\n'"Files $file and $copy/$file differ"$'\n'*)
-        echo "bin/format: $file is not formatted (bin/format rewrites it)" >&2
-        unformatted=1
-        ;;
-    esac
-  done
+  while IFS= read -r file; do
+    [ -n "$file" ] || continue
+    echo "bin/format: $file is not formatted (bin/format rewrites it)" >&2
+    unformatted=1
+  done <<<"$differ"
   return "$unformatted"
 }
 
 if [ "$check" -eq 1 ]; then
-  files=()
-  while IFS= read -r -d '' file; do
-    files+=("$file")
-  done < <(find "${args[@]}" -name '*.swift' -type f -print0)
-  [ "${#files[@]}" -gt 0 ] || exit 0
   mirror="$(mktemp -d)"
   trap 'rm -rf "$mirror"' EXIT
   rc=0
@@ -80,4 +75,4 @@ if [ "$check" -eq 1 ]; then
   done
   exit "$unformatted"
 fi
-xcrun swift-format format --in-place --recursive "${args[@]}"
+xcrun swift-format format --in-place --parallel "${files[@]}"

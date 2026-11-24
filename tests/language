@@ -284,10 +284,18 @@ EOF
       rm "$app/src/warn.js"
       ;;
     ios)
-      printf 'let Bad_Name = 1\n' >"$app/Sources/App/Bad.swift"
+      mkdir -p "$app/App"
+      printf 'let Bad_Name = 1\n' >"$app/App/Bad.swift"
       expect_fail leaf "$app" "$lang" lint --all
-      grep -q "AlwaysUseLowerCamelCase" "${LAST_LOG}" || die "$lang let a swift-format finding through"
-      rm "$app/Sources/App/Bad.swift"
+      grep -q "App/Bad.swift:1:5: error: \[AlwaysUseLowerCamelCase\]" "${LAST_LOG}" ||
+        die "$lang let a swift-format finding outside Sources through"
+      rm "$app/App/Bad.swift"
+      printf 'let  spaced=1\n' >"$app/App/Spaced.swift"
+      expect_fail leaf "$app" "$lang" format --check --all
+      grep -q "App/Spaced.swift is not formatted" "${LAST_LOG}" || die "$lang format --check skipped a file outside Sources"
+      expect_ok leaf "$app" "$lang" format --all
+      [ "$(cat "$app/App/Spaced.swift")" = "let spaced = 1" ] || die "$lang format skipped a file outside Sources"
+      rm -r "$app/App"
       printf 'public func warned() -> Int {\n  var unused = 1\n  return 2\n}\n' >"$app/Sources/App/Warned.swift"
       expect_fail leaf "$app" "$lang" build
       grep -q "was never used" "${LAST_LOG}" || die "$lang let a compiler warning through"
@@ -344,7 +352,11 @@ EOF
     expect_fail leaf "$app" "$lang" format --check --all
     grep -qF "bin/format: Tests/AppTests/AddTests.swift is not formatted" "${LAST_LOG}" ||
       die "ios format --check ignored the repo's .swift-format"
-    rm "$repo/.swift-format"
+    mv "$repo/.swift-format" "$app/Tests/.swift-format"
+    expect_fail leaf "$app" "$lang" format --check --all
+    grep -qF "bin/format: Tests/AppTests/AddTests.swift is not formatted" "${LAST_LOG}" ||
+      die "ios format --check ignored a .swift-format inside the app"
+    rm "$app/Tests/.swift-format"
     printf 'public func broken( {\n' >"$app/Sources/App/Broken.swift"
     expect_fail leaf "$app" "$lang" format --check --all
     grep -qF "bin/format: Sources/App/Broken.swift is not formatted" "${LAST_LOG}" ||
