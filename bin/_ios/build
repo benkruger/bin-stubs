@@ -6,4 +6,19 @@ cd "$root"
 # shellcheck source=lib/toolchain.sh
 . "$here/lib/toolchain.sh"
 packages_check "$PWD" || exit 1
-swift build -Xswiftc -warnings-as-errors
+# shellcheck source=lib/xcode.sh
+. "$here/lib/xcode.sh"
+if ! xcode_container; then
+  exec swift build -Xswiftc -warnings-as-errors
+fi
+loose="$(xcode_loose_targets)"
+status=0
+while IFS= read -r target; do
+  [ -n "$target" ] || continue
+  echo "bin/build: $target does not set SWIFT_TREAT_WARNINGS_AS_ERRORS and GCC_TREAT_WARNINGS_AS_ERRORS to YES" >&2
+  status=1
+done <<<"$loose"
+destination="$(xcode_destination)"
+xcodebuild build -quiet "${XCODE_ARGS[@]}" -disableAutomaticPackageResolution -destination "$destination" \
+  -derivedDataPath "$root/.build/xcode-build" || status=1
+exit "$status"

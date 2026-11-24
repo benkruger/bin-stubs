@@ -24,6 +24,11 @@ toolchain_check() {
 packages_check() {
   local root="$1"
   [ "${FLOW_CHECKED_APP:-}" != "$root" ] || return 0
+  if grep -qs XCRemoteSwiftPackageReference "$root"/*.xcodeproj/project.pbxproj &&
+    [ ! -d "$root/.build/xcode-packages/checkouts" ]; then
+    echo "packages: Swift packages are not fetched; run bin/dependencies" >&2
+    return 1
+  fi
   [ -f "$root/Package.resolved" ] || return 0
   if [ ! -f "$root/.build/workspace-state.json" ] || [ "$root/Package.resolved" -nt "$root/.build/workspace-state.json" ]; then
     echo "packages: Swift packages are not fetched; run bin/dependencies" >&2

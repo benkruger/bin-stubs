@@ -3,4 +3,11 @@ set -euo pipefail
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 root="$(cd "${APP_DIR:-$here/../..}" && pwd)"
 cd "$root"
+# shellcheck source=lib/xcode.sh
+. "$here/lib/xcode.sh"
+if xcode_container; then
+  find "${XCODE_ARGS[1]}" -path '*/xcshareddata/swiftpm/Package.resolved' -delete
+  rm -f "$root/.build/xcode-packages/workspace-state.json"
+  exec xcodebuild -resolvePackageDependencies "${XCODE_ARGS[@]}"
+fi
 swift package update

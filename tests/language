@@ -6,6 +6,8 @@ REPO="$(cd "$HERE/.." && pwd)"
 . "$HERE/lib.sh"
 # shellcheck source=lib/seeds.sh
 . "$HERE/lib/seeds.sh"
+# shellcheck source=lib/xcode.sh
+. "$HERE/lib/xcode.sh"
 start_work
 
 fresh_app() {
@@ -50,6 +52,7 @@ section_installed() {
     typescript | javascript) run_all "$WORK/logs" run_section changed whole plants audit ;;
     python) run_all "$WORK/logs" run_section changed whole plants ;;
     rails) run_all "$WORK/logs" run_section changed plants audit ;;
+    ios) run_all "$WORK/logs" run_section changed plants xcode ;;
     *) run_all "$WORK/logs" run_section changed plants ;;
   esac
 }
@@ -378,6 +381,45 @@ section_audit() {
   expect_fail leaf "$app" "$lang" ci --force
   grep -q "npm audit found a moderate or worse advisory" "${LAST_LOG}" ||
     die "$lang let a package with an advisory through"
+}
+
+section_xcode() {
+  local repo app
+  repo="$(new_repo)"
+  KEEP="$repo"
+  app="$repo/$lang"
+  copy_dir "$REPO/bin" "$repo/bin"
+  seed_xcode "$app" "$(xcode_dependency "$WORK/Dep")"
+  expect_fail leaf "$app" "$lang" build
+  grep -q "run bin/dependencies" "${LAST_LOG}" || die "ios built an Xcode project without its packages"
+  expect_ok leaf "$app" "$lang" dependencies
+  expect_ok leaf "$app" "$lang" format --all
+  git -C "$repo" add -A
+  git -C "$repo" commit -q -m "xcode app"
+  expect_ok leaf "$app" "$lang" ci
+  IOS_DESTINATION="platform=macOS,arch=$(uname -m)"
+  export IOS_DESTINATION
+  printf 'public func warned() -> Int {\n  var unused = 1\n  return 2\n}\n' >"$app/Sources/App/Warned.swift"
+  expect_fail leaf "$app" "$lang" build
+  grep -q "was never used" "${LAST_LOG}" || die "ios let a compiler warning through an Xcode project build"
+  rm "$app/Sources/App/Warned.swift"
+  printf '\n' >>"$WORK/Dep/Package.swift"
+  git -C "$WORK/Dep" -c user.email=dep@example.com -c user.name=dep commit -q -am "dep 1.1.0"
+  git -C "$WORK/Dep" tag 1.1.0
+  expect_ok leaf "$app" "$lang" dependencies
+  grep -q '"version" : "1.1.0"' "$app/App.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved" ||
+    die "ios dependencies left an Xcode project's package on an older version"
+  mkdir -p "$app/App.xcworkspace"
+  printf '%s\n' '<?xml version="1.0" encoding="UTF-8"?>' '<Workspace version = "1.0">' \
+    '   <FileRef location = "group:App.xcodeproj"></FileRef>' '</Workspace>' >"$app/App.xcworkspace/contents.xcworkspacedata"
+  expect_ok leaf "$app" "$lang" dependencies
+  grep -q '"version" : "1.1.0"' "$app/App.xcworkspace/xcshareddata/swiftpm/Package.resolved" ||
+    die "ios dependencies did not resolve an Xcode workspace's packages"
+  rm -r "$app/App.xcworkspace"
+  perl -pi -e 's/ (SWIFT|GCC)_TREAT_WARNINGS_AS_ERRORS = YES;//g' "$app/App.xcodeproj/project.pbxproj"
+  expect_fail leaf "$app" "$lang" build
+  grep -q "bin/build: AppTests does not set SWIFT_TREAT_WARNINGS_AS_ERRORS" "${LAST_LOG}" ||
+    die "ios let an Xcode project build without treating warnings as errors"
 }
 
 run_section() {

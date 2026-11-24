@@ -56,26 +56,19 @@ PY
 }
 
 xcode_test() {
-  local project="$1" scheme dest bundle
-  scheme="$(basename "$project" .xcodeproj)"
-  scheme="${scheme%.xcworkspace}"
-  dest="${IOS_DESTINATION:-platform=iOS Simulator,name=iPhone 16}"
+  local destination bundle
+  destination="$(xcode_destination)"
   bundle="$(mktemp -d)/Result.xcresult"
-  xcodebuild test \
-    -project "$project" \
-    -scheme "$scheme" \
-    -destination "$dest" \
-    -enableCodeCoverage YES \
-    -resultBundlePath "$bundle" \
-    "$@"
+  xcodebuild test "${XCODE_ARGS[@]}" -disableAutomaticPackageResolution -destination "$destination" \
+    -derivedDataPath "$root/.build/xcode-test" -enableCodeCoverage YES -resultBundlePath "$bundle" "$@"
   xcrun xccov view --report --json "$bundle" >"$bundle.json"
   coverage_ok "$bundle.json"
 }
 
-if compgen -G "*.xcodeproj" >/dev/null || compgen -G "*.xcworkspace" >/dev/null; then
-  project="$(echo ./*.xcodeproj ./*.xcworkspace)"
-  project="${project%% *}"
-  xcode_test "$project" "$@"
+# shellcheck source=lib/xcode.sh
+. "$here/lib/xcode.sh"
+if xcode_container; then
+  xcode_test "$@"
   exit 0
 fi
 
