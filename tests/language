@@ -51,8 +51,9 @@ section_installed() {
   case "$lang" in
     typescript | javascript) run_all "$WORK/logs" run_section changed whole plants audit ;;
     python) run_all "$WORK/logs" run_section changed whole plants ;;
-    rails) run_all "$WORK/logs" run_section changed plants audit ;;
+    rails) run_all "$WORK/logs" run_section changed whole plants audit ;;
     ios) run_all "$WORK/logs" run_section changed plants xcode ;;
+    shell) run_all "$WORK/logs" run_section changed whole plants ;;
     *) run_all "$WORK/logs" run_section changed plants ;;
   esac
 }
@@ -138,8 +139,10 @@ EOF
   grep -q "sentinel written" "${LAST_LOG}" || die "$lang saved a pass for a file its own run changed"
   cat "$WORK/test.keep" >"$repo/bin/_$lang/test"
   chmod -x "$app/$mode"
+  compgen -G "${sent%/*}/ci-*-sentinel" >/dev/null || die "$lang wrote no step sentinels"
   expect_ok leaf "$app" "$lang" ci --clean
   [ ! -f "$sent" ] || die "$lang --clean left the sentinel"
+  ! compgen -G "${sent%/*}/ci-*-sentinel" >/dev/null || die "$lang --clean left a step's sentinel"
   git -C "$repo" symbolic-ref HEAD refs/heads/unborn
   expect_ok leaf "$app" "$lang" ci --clean
   grep -qx "bin/ci: cleaned sentinel for unborn" "${LAST_LOG}" || die "$lang ci did not run on a branch with no commits"
@@ -157,6 +160,7 @@ section_changed() {
   unformat "$app" "$lang"
   expect_ok leaf "$app" "$lang" changed
   formatted "$app" "$lang" || die "$lang changed did not format the edited file"
+  twinless "$app" "$lang"
   unformat "$app" "$lang"
   git -C "$repo" commit -q -a -m "$lang unformatted"
   expect_fail leaf "$app" "$lang" ci --force
@@ -194,8 +198,13 @@ section_plants() {
           expect_fail leaf "$app" "$lang" "$script"
           grep -q "toolchain: " "${LAST_LOG}" || die "$lang bin/$script did not enforce its toolchain pin"
         done
+        nvm_stub "$WORK/nvm"
+        NVM_DIR="$WORK/nvm" expect_ok leaf "$app" "$lang" build
         ;;
     esac
+    rm "$pin"
+    expect_fail leaf "$app" "$lang" ci --force
+    grep -q "toolchain: ${pin##*/} is missing" "${LAST_LOG}" || die "$lang ran with no toolchain pin"
     mv "$pin.keep" "$pin"
   fi
 
@@ -225,6 +234,12 @@ EOF
     expect_fail leaf "$app" "$lang" build
     grep -q "broken: line [0-9]*: syntax error" "${LAST_LOG}" || die "shell build let a script bash cannot parse through"
     rm "$app/broken"
+    mv "$app/test/run" "$WORK/run.keep"
+    expect_fail leaf "$app" "$lang" build
+    grep -qxF "bin/build: no executable test/run" "${LAST_LOG}" || die "shell build passed an app with no test/run"
+    expect_fail leaf "$app" "$lang" test
+    grep -qxF "bin/test: no executable test/run" "${LAST_LOG}" || die "shell test passed an app with no test/run"
+    mv "$WORK/run.keep" "$app/test/run"
   fi
 
   case "$lang" in
@@ -236,6 +251,9 @@ EOF
       (cd "$app" && npm pkg set packageManager=pnpm@10.0.0)
       expect_fail leaf "$app" "$lang" ci --force
       grep -q "package.json pins pnpm@10.0.0; pin npm" "${LAST_LOG}" || die "$lang let a package manager other than npm through"
+      (cd "$app" && npm pkg delete packageManager)
+      expect_fail leaf "$app" "$lang" ci --force
+      grep -q "package.json pins no packageManager; pin npm" "${LAST_LOG}" || die "$lang ran with no package manager pinned"
       mv "$app/package.json.keep" "$app/package.json"
       ;;
   esac
@@ -313,6 +331,18 @@ EOF
       grep -q "tests/add.test.ts is outside tsconfig's files" "${LAST_LOG}" || die "$lang let tsconfig leave a file unchecked"
       mv "$WORK/tsconfig.keep" "$app/tsconfig.json"
       mv "$WORK/package.keep" "$app/package.json"
+      printf 'export const typed: number = "text";\n' >"$app/src/typed.ts"
+      expect_fail leaf "$app" "$lang" build
+      grep -q "src/typed.ts([0-9,]*): error TS2322" "${LAST_LOG}" || die "$lang build let a type error through"
+      rm "$app/src/typed.ts"
+      cp "$app/eslint.config.js" "$WORK/eslint.config.keep"
+      perl -0pi -e 's/\]\);\n\z/  { files: ["src\/**\/*.ts"], rules: { "no-console": "warn" } },\n]);\n/' "$app/eslint.config.js"
+      grep -q '"no-console": "warn"' "$app/eslint.config.js" || die "$lang ESLint warning plant did not land"
+      printf '%s\n' 'export function shout(): void {' '  console.log("hi");' '}' >"$app/src/shout.ts"
+      expect_fail leaf "$app" "$lang" lint src/shout.ts
+      grep -q "ESLint found too many warnings (maximum: 0)" "${LAST_LOG}" || die "$lang lint let an ESLint warning through"
+      mv "$WORK/eslint.config.keep" "$app/eslint.config.js"
+      rm "$app/src/shout.ts"
       ln -s package.json "$app/link.json"
       expect_ok leaf "$app" "$lang" format --check --all
       expect_ok leaf "$app" "$lang" format --all
@@ -343,6 +373,10 @@ EOF
       grep -q "noUnusedVariables" "${LAST_LOG}" || die "$lang let a Biome warning through"
       rm "$app/src/warn.js"
       decoy_coverage "$app" js
+      printf '{ bad json\n' >"$app/.c8rc.json"
+      expect_fail leaf "$app" "$lang" test --all
+      grep -qxF "bin/test: missing coverage-summary.json" "${LAST_LOG}" || die "$lang passed a run c8 wrote no coverage for"
+      rm "$app/.c8rc.json"
       ;;
     ios)
       mkdir -p "$app/App"
@@ -377,6 +411,11 @@ EOF
       grep -q "untyped.py:1: error: Function is missing a type annotation" "${LAST_LOG}" ||
         die "$lang let an untyped function through"
       rm "$app/src/untyped.py"
+      printf 'value = 0\n\n\ndef late() -> int:\n    value = 1\n    global value\n    return value\n' >"$app/src/late.py"
+      expect_fail leaf "$app" "$lang" build
+      grep -q "name 'value' is assigned to before global declaration" "${LAST_LOG}" ||
+        die "$lang build let a file Python cannot compile through"
+      rm "$app/src/late.py"
       mv "$app/src" "$app/lib"
       mkdir -p "$app/build/x"
       printf 'def (\n' >"$app/build/x/broken.py"
@@ -401,6 +440,13 @@ EOF
       expect_fail leaf "$app" "$lang" test --all
       grep -q "no mirrored test for src/test_helpers.py" "${LAST_LOG}" || die "$lang let a source named like a test go untested"
       rm "$app/src/test_helpers.py"
+      mkdir -p "$app/src/loose" "$app/tests/loose"
+      printf 'def helper() -> int:\n    return 1\n' >"$app/src/loose/helper.py"
+      printf 'def test_helper() -> None:\n    assert str(1) == "1"\n' >"$app/tests/loose/test_helper.py"
+      expect_fail leaf "$app" "$lang" test --all
+      grep -qxF "bin/test: src/loose/helper.py has no coverage row (need 100/100)" "${LAST_LOG}" ||
+        die "$lang passed a source its coverage report never listed"
+      rm -r "$app/src/loose" "$app/tests/loose"
       ;;
     rust)
       cp "$app/Cargo.toml" "$WORK/cargo.keep"
@@ -442,6 +488,27 @@ EOF
       expect_fail leaf "$app" "$lang" test
       grep -q "app/models/add.rb has no coverage row" "${LAST_LOG}" || die "$lang let a SimpleCov filter hide a source"
       mv "$WORK/helper.keep" "$app/test/test_helper.rb"
+      brakeman_plant "$app"
+      expect_fail leaf "$app" "$lang" lint app/controllers/run_controller.rb
+      grep -q "✓ rails (rubocop)" "${LAST_LOG}" || die "$lang Brakeman plant tripped RuboCop"
+      grep -q "Command Injection" "${LAST_LOG}" || die "$lang lint let a Brakeman warning through"
+      rm -r "$app/app/controllers"
+      printf '%s\n' '# frozen_string_literal: true' '' 'class Wrong' 'end' >"$app/app/models/misnamed.rb"
+      expect_fail leaf "$app" "$lang" build
+      grep -q "misnamed.rb to define constant Misnamed" "${LAST_LOG}" || die "$lang build let a file Zeitwerk cannot load through"
+      rm "$app/app/models/misnamed.rb"
+      printf '%s\n' '# frozen_string_literal: true' '' 'module Warned' '  def self.call' '    unused = 1' '    2' '  end' 'end' \
+        >"$app/app/models/warned.rb"
+      printf '%s\n' '# frozen_string_literal: true' '' "require 'test_helper'" '' 'class WarnedTest < ActiveSupport::TestCase' \
+        "  test 'returns two' do" '    assert_equal 2, Warned.call' '  end' 'end' >"$app/test/models/warned_test.rb"
+      expect_fail leaf "$app" "$lang" test
+      grep -q "Ruby warning (no-warnings gate)" "${LAST_LOG}" || die "$lang test let a Ruby warning through"
+      rm "$app/app/models/warned.rb" "$app/test/models/warned_test.rb"
+      cp "$app/Gemfile" "$WORK/gemfile.keep"
+      echo "gem 'bin-stubs-absent', '0.0.1'" >>"$app/Gemfile"
+      expect_fail leaf "$app" "$lang" ci --force
+      grep -q "packages: gems are missing; run bin/dependencies" "${LAST_LOG}" || die "$lang ran without a gem its Gemfile names"
+      mv "$WORK/gemfile.keep" "$app/Gemfile"
       ;;
   esac
 
@@ -460,6 +527,7 @@ EOF
       ;;
   esac
 
+  sourceless "$app" "$lang"
   coverage_gap "$app" "$lang"
 
   if [ "$lang" = "ios" ]; then
@@ -515,6 +583,10 @@ section_audit() {
   local repo app
   if [ "$lang" = rails ]; then
     fresh_app
+    brakeman_plant "$app"
+    expect_fail leaf "$app" "$lang" dependencies
+    grep -q "Command Injection" "${LAST_LOG}" || die "rails bin/dependencies let a Brakeman warning through"
+    rm -r "$app/app/controllers"
     echo "gem 'rake', '12.3.2'" >>"$app/Gemfile"
     expect_fail leaf "$app" "$lang" dependencies
     grep -q "Name: rake" "${LAST_LOG}" || die "rails bin/dependencies let a gem with an advisory through"
@@ -551,6 +623,16 @@ section_xcode() {
   expect_fail leaf "$app" "$lang" build
   grep -q "was never used" "${LAST_LOG}" || die "ios let a compiler warning through an Xcode project build"
   rm "$app/Sources/App/Warned.swift"
+  printf 'public func untested() -> Int {\n  1\n}\n' >"$app/Sources/App/Untested.swift"
+  expect_fail leaf "$app" "$lang" test
+  grep -q "FAIL: line coverage is under 100%" "${LAST_LOG}" || die "ios passed an Xcode project source below its coverage bar"
+  grep -q "Untested.swift: 0%" "${LAST_LOG}" || die "ios did not name the Xcode project source below its coverage bar"
+  rm "$app/Sources/App/Untested.swift"
+  printf '%s\n' 'import Testing' '' '@Test func warned() {' '  var unused = 1' '  #expect(true)' '}' \
+    >"$app/Tests/AppTests/WarnedTests.swift"
+  expect_fail leaf "$app" "$lang" test
+  grep -q "was never used" "${LAST_LOG}" || die "ios let a compiler warning in an Xcode project's test through"
+  rm "$app/Tests/AppTests/WarnedTests.swift"
   printf '\n' >>"$WORK/Dep/Package.swift"
   git -C "$WORK/Dep" -c user.email=dep@example.com -c user.name=dep commit -q -am "dep 1.1.0"
   git -C "$WORK/Dep" tag 1.1.0

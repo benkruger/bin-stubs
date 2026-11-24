@@ -351,7 +351,7 @@ test_ci_time() {
 
 test_root_app() {
   say "root app excludes sibling folders"
-  local repo sent hash
+  local repo sent hash sum
   repo="$(new_repo)"
   keep "$repo"
   copy_dir "$HERE/../bin" "$repo/bin"
@@ -371,6 +371,13 @@ test_root_app() {
   printf '\n\ndef test_add_zero() -> None:\n    assert add(0, 0) == 0\n' >>"$repo/tests/test_add.py"
   expect_ok "$repo/bin/_python/ci"
   grep -q "sentinel written" "${LAST_LOG}" || die "the root app kept its pass after its own test changed"
+  run_log "$repo/bin/_dispatch" bogus
+  assert_rc 2 "an unknown phase"
+  grep -qx "bin/_dispatch: unknown phase: bogus" "${LAST_LOG}" || die "the dispatcher ran an unknown phase"
+  expect_ok "$repo/bin/ci" --root --force
+  sum="$(summary)"
+  assert_eq "$(row_of root "$sum")" "PASS" "--root runs the root app"
+  assert_eq "$(row_of ios "$sum")" "SKIP" "--root leaves the sibling app"
 }
 
 test_root_js() {

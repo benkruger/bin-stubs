@@ -10,16 +10,31 @@ REPO="$(cd "$HERE/.." && pwd)"
 . "$HERE/lib/configs.sh"
 # shellcheck source=lib/dispatch.sh
 . "$HERE/lib/dispatch.sh"
+# shellcheck source=lib/guards.sh
+. "$HERE/lib/guards.sh"
 start_work
+
+settings_findings() {
+  local root="$1"
+  local gate='["Edit(/bin/**)","Edit(/tests/guards)","Edit(/tests/run)","Edit(/.claude/settings.json)","Edit(/.claude/hooks/**)","Edit(/.githooks/**)"]'
+  jq -e --argjson gate "$gate" '$gate - .permissions.deny == []' "$root/starter/.claude/settings.json" >/dev/null ||
+    echo "the starter's settings do not deny editing the gate"
+  jq -e --argjson gate "$gate" --slurpfile mine "$root/.claude/settings.json" \
+    '(.permissions.deny -= $gate) == $mine[0]' "$root/starter/.claude/settings.json" >/dev/null ||
+    echo "this repo's settings are not the starter's less the gate-edit denies"
+}
 
 test_settings() {
   say "settings"
-  local gate='["Edit(/bin/**)","Edit(/tests/guards)","Edit(/tests/run)","Edit(/.claude/settings.json)","Edit(/.claude/hooks/**)","Edit(/.githooks/**)"]'
-  jq -e --argjson gate "$gate" '$gate - .permissions.deny == []' "$REPO/starter/.claude/settings.json" >/dev/null ||
-    die "the starter's settings do not deny editing the gate"
-  jq -e --argjson gate "$gate" --slurpfile mine "$REPO/.claude/settings.json" \
-    '(.permissions.deny -= $gate) == $mine[0]' "$REPO/starter/.claude/settings.json" >/dev/null ||
-    die "this repo's settings are not the starter's less the gate-edit denies"
+  local found want plant="$WORK/settings"
+  found="$(settings_findings "$REPO")"
+  [ -z "$found" ] || die "$found"
+  mkdir -p "$plant/starter/.claude" "$plant/.claude"
+  jq '.permissions.deny -= ["Edit(/tests/guards)"]' "$REPO/starter/.claude/settings.json" >"$plant/starter/.claude/settings.json"
+  jq '.permissions.allow += ["Bash(extra)"]' "$REPO/.claude/settings.json" >"$plant/.claude/settings.json"
+  want=$(printf '%s\n' "the starter's settings do not deny editing the gate" \
+    "this repo's settings are not the starter's less the gate-edit denies")
+  assert_eq "$(settings_findings "$plant")" "$want" "planted settings"
 }
 
 test_scan() {
@@ -127,7 +142,14 @@ test_qa() {
   home="$repo/.home"
   log="$repo/stub.log"
   mkdir -p "$stubs" "$home"
-  make_stub "$stubs" bundle
+  cat >"$stubs/bundle" <<'EOF'
+#!/usr/bin/env bash
+printf 'bundle %s\n' "$*" >>"$STUB_LOG"
+[ "$1" = exec ] || exit 0
+[ -z "${QA_WARN:-}" ] || echo "DEPRECATION WARNING: an old call"
+[ -z "${QA_FAIL:-}" ] || exit 1
+EOF
+  chmod +x "$stubs/bundle"
   copy_dir "$REPO/bin" "$repo/bin"
   for lang in typescript javascript; do
     mkdir -p "$repo/$lang/node_modules/.bin"
@@ -136,6 +158,7 @@ test_qa() {
 #!/usr/bin/env bash
 printf 'playwright %s\n' "$*" >>"$STUB_LOG"
 [ -z "${QA_WARN:-}" ] || echo "Warning: a slow page"
+[ -z "${QA_FAIL:-}" ] || [ "$1" != test ] || exit 1
 EOF
     chmod +x "$playwright"
   done
@@ -152,9 +175,14 @@ EOF
     grep -qx "playwright install chromium" "$log" || die "$lang bin/qa did not install Chromium"
     grep -qx "playwright test e2e/home.spec.ts" "$log" || die "$lang bin/qa did not run Playwright on the spec"
   done
-  run_log env CI=1 QA_WARN=1 PATH="$stubs:$PATH" HOME="$home" STUB_LOG="$log" "$repo/bin/qa" javascript
-  assert_rc 1 "a run that printed a warning"
-  grep -q "bin/qa: the run printed a warning" "${LAST_LOG}" || die "bin/qa passed a warning"
+  for lang in typescript javascript; do
+    run_log env CI=1 QA_WARN=1 PATH="$stubs:$PATH" HOME="$home" STUB_LOG="$log" "$repo/bin/qa" "$lang"
+    assert_rc 1 "$lang bin/qa on a run that printed a warning"
+    grep -q "bin/qa: the run printed a warning" "${LAST_LOG}" || die "$lang bin/qa passed a warning"
+    run_log env CI=1 QA_FAIL=1 PATH="$stubs:$PATH" HOME="$home" STUB_LOG="$log" "$repo/bin/qa" "$lang"
+    assert_rc 1 "$lang bin/qa on a failing end-to-end test"
+    grep -q "bin/qa: an end-to-end test failed" "${LAST_LOG}" || die "$lang bin/qa passed a failing end-to-end test"
+  done
   rm "$repo/typescript/node_modules/.bin/playwright"
   run_log env CI=1 PATH="$stubs:$PATH" HOME="$home" STUB_LOG="$log" "$repo/bin/qa" typescript
   assert_rc 1 "an app with no Playwright"
@@ -164,6 +192,12 @@ EOF
   run_log env PATH="$stubs:$PATH" HOME="$home" STUB_LOG="$log" "$repo/bin/qa" rails test/system/home_test.rb
   assert_rc 0 "rails bin/qa"
   grep -qx "bundle exec rails test:system test/system/home_test.rb" "$log" || die "rails bin/qa did not run the system tests"
+  run_log env QA_FAIL=1 PATH="$stubs:$PATH" HOME="$home" STUB_LOG="$log" "$repo/bin/qa" rails
+  assert_rc 1 "rails bin/qa on a failing system test"
+  grep -q "bin/qa: a system test failed" "${LAST_LOG}" || die "rails bin/qa passed a failing system test"
+  run_log env QA_WARN=1 PATH="$stubs:$PATH" HOME="$home" STUB_LOG="$log" "$repo/bin/qa" rails
+  assert_rc 1 "rails bin/qa on a run that printed a warning"
+  grep -q "bin/qa: the run printed a warning" "${LAST_LOG}" || die "rails bin/qa passed a warning"
   run_log "$repo/bin/qa"
   assert_rc 2 "bin/qa with no app"
 }
@@ -355,6 +389,7 @@ EOF
   printf 'x = 1\n' >"$repo/rails/vendor/bundle/ruby/gem.rb"
   git -C "$repo" add -f rails/vendor/bundle/ruby/gem.rb
   printf 'TN:\n' >"$repo/web/lcov.info"
+  printf '{}\n' >"$repo/web/app.tsbuildinfo"
   cp "$repo/.gitignore" "$repo/gitignore.keep"
   grep -vx 'coverage/' "$repo/gitignore.keep" >"$repo/.gitignore"
   rm "$repo/gitignore.keep"
@@ -428,6 +463,8 @@ EOF
   } >"$repo/.claude/rules/long.md"
   printf '# Unstamped\n\nAn unstamped rule.\n' >"$repo/.claude/rules/unstamped.md"
   perl -pi -e 's/A probe rule/A changed rule/' "$repo/.claude/rules/probe.md"
+  plant_bad_rules "$repo"
+  plant_bad_claude "$repo"
 
   printf '%s\n' '#!/usr/bin/env bash' 'echo "loose"' >"$repo/bin/loose"
   printf '%s\n' '#!/usr/bin/env bash' 'set -euo pipefail' 'if true;then' 'echo   "messy"' 'fi' >"$repo/bin/messy"
@@ -436,9 +473,11 @@ EOF
 
   cp "$repo/.claude/settings.json" "$repo/settings.json.keep"
   jq '.permissions.deny -= ["Bash(git reset *)", "Bash(git push * -f)"]
-    | .permissions.allow += ["Bash(*/bin/*)", "Bash"] | del(.hooks.SessionStart)' \
+    | .permissions.allow += ["Bash(*/bin/*)", "Bash"] | .permissions.allow -= ["Bash(bin/*)"]
+    | del(.hooks.SessionStart, .hooks.PreToolUse)' \
     "$repo/settings.json.keep" >"$repo/.claude/settings.json"
   rm "$repo/settings.json.keep"
+  chmod -x "$repo/.claude/hooks/session-start"
 
   expect_fail "$repo/tests/run"
   grep -q "big.md: 70010 bytes, over the 65536-byte cap" "${LAST_LOG}" || die "size cap not enforced"
@@ -467,6 +506,7 @@ EOF
   done
   grep -qF "web/dist/app.js: build or coverage output" "${LAST_LOG}" || die "tracked build output was not caught"
   grep -qF "web/lcov.info: build or coverage output" "${LAST_LOG}" || die "a coverage report was not caught"
+  grep -qF "web/app.tsbuildinfo: build or coverage output" "${LAST_LOG}" || die "a TypeScript build info file was not caught"
   grep -qF "rails/vendor/bundle/ruby/gem.rb: build or coverage output" "${LAST_LOG}" || die "an installed gem was not caught"
   grep -qF ".gitignore does not ignore coverage/" "${LAST_LOG}" || die "a missing ignore line was not caught"
   grep -qF "web/bin/ci: a gate script inside an app" "${LAST_LOG}" || die "a gate script inside an app was not caught"
@@ -486,6 +526,9 @@ EOF
   grep -q "long.md: 47 lines (cap 40)" "${LAST_LOG}" || die "rule cap not enforced"
   grep -q "unstamped.md: no audit stamp" "${LAST_LOG}" || die "missing stamp not caught"
   grep -q "probe.md: audit stamp does not match its body" "${LAST_LOG}" || die "stale stamp not caught"
+  check_bad_rules
+  check_bad_claude
+  check_bad_settings
   grep -q "bin/loose: first command is not set -euo pipefail" "${LAST_LOG}" || die "strict mode not enforced"
   grep -q "shfmt would reformat" "${LAST_LOG}" || die "script formatting not enforced"
   grep -q "notes.md:3.*MD018" "${LAST_LOG}" || die "markdownlint not enforced"
@@ -548,6 +591,8 @@ case "$prompt" in
         else
           echo '{"type":"result","is_error":false,"structured_output":{"findings":[]}}'
         fi
+      elif [ "${FAKE_VERIFY:-}" = none ]; then
+        echo '{"type":"result","is_error":false}'
       else
         printf '{"type":"result","is_error":false,"structured_output":{"findings":%s}}\n' "${FAKE_VERIFY:-[]}"
       fi
@@ -832,6 +877,43 @@ test_commit_rounds() {
   rm -f "$msg"
 }
 
+test_commit_stops() {
+  say "commit names why its rule review stopped"
+  local repo origin rule msg finding missed=""
+  commit_setup
+
+  commit_case
+  printf '# Probe\n\nA BAD rule.\n' >"$rule"
+  commit FAKE_AUDIT="$finding" FAKE_FIX=good FAKE_VERIFY_SEQ="1 2 3 4 5 6 7 8 9 10" -- main "$msg"
+  commit_json .detail | grep -qx "stopped: ran 10 rounds" || missed+=" [ran out of rounds]"
+
+  commit_case
+  printf '# Probe\n\nA BAD rule.\n' >"$rule"
+  commit FAKE_AUDIT='[{"file":"notes.md","requirement":"r","offending":"BAD","fix":"f"}]' -- main "$msg"
+  commit_json .detail | grep -qx "stopped: the fix in round 1 failed or named no file it may change" ||
+    missed+=" [fix named no rule]"
+
+  commit_case
+  printf '# Probe\n\nA BAD rule.\n' >"$rule"
+  commit FAKE_AUDIT="$finding" FAKE_FIX=good FAKE_VERIFY=none -- main "$msg"
+  commit_json .detail | grep -qx "stopped: the review in round 1 submitted no verdict" || missed+=" [no recheck verdict]"
+
+  commit_case
+  printf '# Probe\n\nA probe rule.\n' >"$rule"
+  printf '%s\n' '#!/usr/bin/env bash' 'exit 1' >"$repo/bin/stamp-rules"
+  commit -- main "$msg"
+  [ "$(commit_json .detail)" = "rule audit: clean, but minting the audit stamp failed" ] || missed+=" [stamp failed]"
+
+  commit_case
+  printf '# Probe\n\nA probe rule.\n' >"$rule"
+  printf 'junk' >"$repo/.git/index"
+  commit -- main "$msg"
+  [ "$(tail -n 1 "${LAST_LOG}" | jq -r .detail)" = "rule audit: could not read the working tree's rule edits" ] ||
+    missed+=" [unreadable tree]"
+  rm -f "$msg"
+  [ -z "$missed" ] || die "a stopped review did not say why:$missed"
+}
+
 test_commit_gate() {
   say "commit bounds the gate, pushes and commits from a worktree"
   local repo origin rule msg finding before pidfile tries=0 hurry
@@ -894,19 +976,31 @@ EOF
   rm -f "$msg"
 }
 
-test_copies_match() {
-  say "every language ships its scripts"
-  local lang script
+copies_findings() {
+  local bin="$1" lang script
   for lang in ios rails typescript javascript python rust shell; do
     for script in ci changed format lint build test dependencies; do
-      [ -x "$REPO/bin/_$lang/$script" ] || die "$lang bin/$script is not executable"
+      [ -x "$bin/_$lang/$script" ] || echo "$lang bin/$script is not executable"
     done
-    grep -q '^finish_steps || ' "$REPO/bin/_$lang/ci" || die "$lang ci does not run its steps through bin/lib/steps.sh"
+    grep -q '^finish_steps || ' "$bin/_$lang/ci" || echo "$lang ci does not run its steps through bin/lib/steps.sh"
   done
   for lang in typescript javascript rails; do
-    [ -x "$REPO/bin/_$lang/open" ] || die "$lang bin/open is not executable"
-    [ -x "$REPO/bin/_$lang/qa" ] || die "$lang bin/qa is not executable"
+    [ -x "$bin/_$lang/open" ] || echo "$lang bin/open is not executable"
+    [ -x "$bin/_$lang/qa" ] || echo "$lang bin/qa is not executable"
   done
+}
+
+test_copies_match() {
+  say "every language ships its scripts"
+  local found want plant="$WORK/bin"
+  found="$(copies_findings "$REPO/bin")"
+  [ -z "$found" ] || die "$found"
+  copy_dir "$REPO/bin" "$plant"
+  chmod -x "$plant/_rust/lint" "$plant/_rails/qa" "$plant/_typescript/open"
+  grep -v '^finish_steps || ' "$REPO/bin/_shell/ci" >"$plant/_shell/ci"
+  want=$(printf '%s\n' "rust bin/lint is not executable" "shell ci does not run its steps through bin/lib/steps.sh" \
+    "typescript bin/open is not executable" "rails bin/qa is not executable")
+  assert_eq "$(copies_findings "$plant")" "$want" "planted copies"
 }
 
 test_changed_empty() {
@@ -971,6 +1065,9 @@ test_parts() {
   : >"$log"
   expect_ok "$repo/tests/run"
   assert_eq "$(sort "$log" | tr '\n' ' ')" "guards rust " "a rerun after one part failed"
+  printf '#!/bin/sh\necho posix\n' >"$repo/bin/posix"
+  expect_fail "$repo/tests/run"
+  grep -qF "bin/posix: shebang is #!/bin/sh" "${LAST_LOG}" || die "tests/run passed a kit script that is not bash"
 }
 
 test_shellcheck_cache() {
@@ -1050,6 +1147,9 @@ test_start() {
   run_log "$repo/bin/start" a/b
   assert_rc 1 "a branch with a slash"
   grep -q "unsafe branch name" "${LAST_LOG}" || die "a slashed branch was not refused"
+  run_log "$repo/bin/start" 'bad..name'
+  assert_rc 1 "a branch name git refuses"
+  grep -q "unsafe branch name: 'bad..name'" "${LAST_LOG}" || die "a branch name git refuses was not refused"
   run_log "$repo/bin/start" feature
   assert_rc 1 "worktrees not ignored"
   grep -q "does not ignore .worktrees/" "${LAST_LOG}" || die "an unignored .worktrees/ was not refused"
@@ -1066,6 +1166,11 @@ test_start() {
   run_log "$repo/bin/start" side
   assert_rc 1 "an existing branch"
   grep -q "branch side already exists" "${LAST_LOG}" || die "an existing branch was not refused"
+  mkdir -p "$repo/.worktrees/stray"
+  run_log "$repo/bin/start" stray
+  assert_rc 1 "a worktree folder already there"
+  grep -q "\.worktrees/stray already exists" "${LAST_LOG}" || die "an existing worktree folder was not refused"
+  rmdir "$repo/.worktrees/stray"
   expect_ok "$repo/bin/ci"
   mkdir -p "$repo/web/node_modules/pkg"
   echo "module.exports = 1;" >"$repo/web/node_modules/pkg/index.js"
@@ -1121,6 +1226,9 @@ test_merge() {
 
   run_log "$repo/bin/merge"
   assert_rc 2 "bin/merge with no arguments"
+  run_log "$repo/bin/merge" a/b "$(minted 'Land nothing')"
+  assert_rc 1 "a branch with a slash"
+  grep -q "unsafe branch name: 'a/b'" "${LAST_LOG}" || die "bin/merge took an unsafe branch name"
   run_log "$repo/bin/merge" nosuch "$(minted 'Land nothing')"
   assert_rc 1 "a missing branch"
   grep -q "no branch nosuch" "${LAST_LOG}" || die "a missing branch was not refused"
@@ -1220,8 +1328,11 @@ test_cleanup() {
     git -C "$repo" commit -q -m "squash $branch"
   done
   echo "edit" >>"$wts/dirty/dirty.txt"
+  git -C "$repo" switch -q -c here
 
   expect_ok "$repo/bin/cleanup"
+  grep -qx "bin/cleanup: kept here: checked out at the repo root" "${LAST_LOG}" ||
+    die "bin/cleanup did not keep the branch the root has checked out"
   for branch in merged squashed plain; do
     grep -qx "bin/cleanup: removed $branch" "${LAST_LOG}" || die "bin/cleanup kept $branch"
     git -C "$repo" rev-parse -q --verify "refs/heads/$branch" >/dev/null && die "bin/cleanup left the $branch branch"
@@ -1290,7 +1401,7 @@ run_test() {
 }
 
 run_all "$WORK/logs" run_test test_settings test_scan test_root_format test_open test_qa test_query \
-  test_hooks test_starter test_commit test_commit_review test_commit_fix test_commit_rounds test_commit_gate test_copies_match test_changed_empty test_parts \
+  test_hooks test_starter test_bare_guards test_guards_scans test_commit test_commit_review test_commit_fix test_commit_rounds test_commit_stops test_commit_gate test_copies_match test_changed_empty test_parts \
   test_dispatch test_dispatch_select test_dispatch_paths test_suite_seal test_unborn \
   test_shellcheck_cache test_checked_once test_steps test_jobs test_interrupt test_start test_merge test_cleanup test_complete test_ci_time test_root_app test_root_js \
   test_dependencies

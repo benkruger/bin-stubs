@@ -1,0 +1,96 @@
+#!/usr/bin/env bash
+
+plant_bad_rules() {
+  local rules="$1/.claude/rules"
+  {
+    printf '# Wide\n\n'
+    head -c 8100 /dev/zero | tr '\0' 'a'
+    printf '\n'
+  } >"$rules/wide.md"
+  printf '## Lead\n\n# Late\n' >"$rules/late.md"
+  printf '# One\n\n# Two\n' >"$rules/twice.md"
+  printf '# Old\n\nThis rule %s apply.\n' "used to" >"$rules/old.md"
+  printf -- '---\nname: front\n---\n\n# Front\n' >"$rules/front.md"
+  printf '# Story\n\n## %s\n\nText.\n' Why >"$rules/story.md"
+  printf '# Cite\n\nSee \x60%s\x60.\n' nowhere.md >"$rules/cite.md"
+}
+
+check_bad_rules() {
+  local msg missed=""
+  for msg in "wide.md: 8109 characters (cap 8000)" "late.md: does not lead with an H1" "twice.md: 2 H1 headings (want 1)" \
+    "old.md: backward-facing wording" "front.md: frontmatter" "story.md: narrative heading" \
+    "cite.md: cites missing nowhere.md"; do
+    grep -qxF "guards: .claude/rules/$msg" "${LAST_LOG}" || missed+=" [$msg]"
+  done
+  [ -z "$missed" ] || die "a rule's shape was not checked:$missed"
+}
+
+plant_bad_claude() {
+  {
+    printf 'Read .claude/rules/probe.md first.\n'
+    for _ in $(seq 1 401); do printf -- '- a line padded out to thirty-one\n'; done
+  } >"$1/CLAUDE.md"
+}
+
+check_bad_claude() {
+  local msg missed=""
+  for msg in "402 lines (cap 400)" "13669 characters (cap 12000)" "does not lead with an H1" "0 H1 headings (want 1)" \
+    "points at the rules directory" "names the rule probe.md"; do
+    grep -qxF "guards: CLAUDE.md: $msg" "${LAST_LOG}" || missed+=" [$msg]"
+  done
+  [ -z "$missed" ] || die "CLAUDE.md was not checked:$missed"
+}
+
+bare_guards() {
+  local repo
+  repo="$(new_repo)"
+  mkdir -p "$repo/tests"
+  cp "$HERE/../starter/tests/guards" "$repo/tests/guards"
+  printf '%s\n' "$repo"
+}
+
+check_bad_settings() {
+  local msg missed=""
+  for msg in ".claude/settings.json: does not allow Bash(bin/*)" \
+    ".claude/settings.json: no PreToolUse hook runs .claude/hooks/require-bin" \
+    ".claude/hooks/session-start is missing or not executable"; do
+    grep -qxF "guards: $msg" "${LAST_LOG}" || missed+=" [$msg]"
+  done
+  [ -z "$missed" ] || die "the settings were not checked:$missed"
+}
+
+test_bare_guards() {
+  say "guards on a repo with no rules, CLAUDE.md or settings"
+  local repo missed=""
+  repo="$(bare_guards)"
+  keep "$repo"
+  expect_fail "$repo/tests/guards"
+  grep -qx "guards: .claude/rules holds no rules" "${LAST_LOG}" || missed+=" [no rules]"
+  grep -qx "guards: CLAUDE.md is missing" "${LAST_LOG}" || missed+=" [no CLAUDE.md]"
+  grep -qx "guards: .claude/settings.json is missing" "${LAST_LOG}" || missed+=" [no settings]"
+  mkdir -p "$repo/.claude"
+  printf '{ bad\n' >"$repo/.claude/settings.json"
+  expect_fail "$repo/tests/guards"
+  grep -qx "guards: .claude/settings.json is not valid JSON" "${LAST_LOG}" || missed+=" [settings not JSON]"
+  printf '{ "permissions": { "allow": "Bash(bin/*)" } }\n' >"$repo/.claude/settings.json"
+  expect_fail "$repo/tests/guards"
+  grep -qx "guards: .claude/settings.json: has a permissions.allow that is not a list" "${LAST_LOG}" ||
+    missed+=" [allow not a list]"
+  [ -z "$missed" ] || die "the guards passed a repo missing what they require:$missed"
+}
+
+test_guards_scans() {
+  say "guards fail a scan that does not finish"
+  local repo stubs="$WORK/broken-perl" missed=""
+  repo="$(bare_guards)"
+  keep "$repo"
+  printf 'fn main() {}\n' >"$repo/main.rs"
+  mkdir -p "$stubs"
+  printf '%s\n' '#!/usr/bin/env bash' 'exit 1' >"$stubs/perl"
+  chmod +x "$stubs/perl"
+  run_log env PATH="$stubs:$PATH" "$repo/tests/guards"
+  assert_rc 1 "guards whose perl scans die"
+  grep -qx "guards: the comment scan did not finish" "${LAST_LOG}" || missed+=" [comment scan]"
+  grep -qx "guards: the Rust attribute scan did not finish" "${LAST_LOG}" || missed+=" [Rust attribute scan]"
+  [ -z "$missed" ] || die "the guards passed a scan that did not finish:$missed"
+}

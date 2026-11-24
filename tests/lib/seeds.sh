@@ -490,6 +490,61 @@ orphan_file() {
   esac
 }
 
+twinless() {
+  local app="$1" lang="$2" src twin body
+  case "$lang" in
+    typescript)
+      src=src/extra.ts twin=tests/extra.test.ts
+      body=$'export function extra(): number {\n  return 1;\n}'
+      ;;
+    javascript)
+      src=src/extra.js twin=tests/extra.test.js
+      body=$'export function extra() {\n  return 1;\n}'
+      ;;
+    python)
+      src=src/extra.py twin=tests/test_extra.py
+      body=$'def extra() -> int:\n    return 1'
+      ;;
+    rails)
+      src=app/models/extra.rb twin=test/models/extra_test.rb
+      body=$'# frozen_string_literal: true\n\nmodule Extra\n  def self.call\n    1\n  end\nend'
+      ;;
+    *) return 0 ;;
+  esac
+  printf '%s\n' "$body" >"$app/$src"
+  expect_fail leaf "$app" "$lang" changed
+  grep -qxF "bin/changed: no mirrored test for $src → $twin" "${LAST_LOG}" || die "$lang changed let a source with no test through"
+  rm "$app/$src"
+}
+
+sourceless() {
+  local app="$1" lang="$2" src spec check body
+  src="$(source_of "$lang")"
+  case "$lang" in
+    typescript)
+      spec=tests/add.test.ts check=check.spec.ts
+      body=$'import { expect, test } from "vitest";\n\ntest("check", () => {\n  expect(1).toBe(1);\n});'
+      ;;
+    javascript)
+      spec=tests/index.test.js check=check_test.js
+      body=$'import assert from "node:assert/strict";\nimport test from "node:test";\n\ntest("check", () => {\n  assert.equal(1, 1);\n});'
+      ;;
+    python)
+      spec=tests/test_add.py check=tests/check_test.py
+      body=$'def test_check() -> None:\n    assert str(1) == "1"'
+      ;;
+    *) return 0 ;;
+  esac
+  mv "$app/$src" "$WORK/sourceless.src"
+  mv "$app/$spec" "$WORK/sourceless.spec"
+  printf '%s\n' "$body" >"$app/$check"
+  expect_fail leaf "$app" "$lang" test --all
+  grep -qxF "bin/test: --all found no source to hold at 100%" "${LAST_LOG}" || die "$lang bin/test --all passed measuring no source"
+  rm "$app/$check"
+  mv "$WORK/sourceless.src" "$app/$src"
+  mv "$WORK/sourceless.spec" "$app/$spec"
+}
+
 whole_app() {
   local app="$1" lang="$2" lint_plant lint_body lint_find source_plant source_body
   case "$lang" in
@@ -514,15 +569,27 @@ whole_app() {
       source_plant=src/extra.py
       source_body=$'def extra() -> int:\n    return 1'
       ;;
+    rails)
+      lint_plant=app/models/unused.rb
+      lint_body=$'# frozen_string_literal: true\n\nmodule Unused\n  def self.call\n    unused = 1\n    2\n  end\nend'
+      lint_find="Lint/UselessAssignment"
+      ;;
+    shell)
+      lint_plant=loose
+      lint_body="#!/usr/bin/env bash"$'\n'"set -euo pipefail"$'\n'"echo \$1"
+      lint_find="SC2086"
+      ;;
     *) return 0 ;;
   esac
   printf '%s\n' "$lint_body" >"$app/$lint_plant"
+  [ "$lang" != shell ] || chmod +x "$app/$lint_plant"
   git -C "$app" add -- "$lint_plant"
   git -C "$app" commit -q -m "lint plant"
   expect_fail leaf "$app" "$lang" ci --force
   grep -qF "$lint_find" "${LAST_LOG}" || die "$lang ci did not lint a committed file"
   git -C "$app" rm -qf -- "$lint_plant"
   git -C "$app" commit -q -m "lint plant gone"
+  [ -n "${source_plant:-}" ] || return 0
   printf '%s\n' "$source_body" >"$app/$source_plant"
   git -C "$app" add -- "$source_plant"
   git -C "$app" commit -q -m "source plant"
@@ -654,6 +721,32 @@ pin_file_of() {
     ios) printf '%s\n' .xcode-version ;;
     *) return 1 ;;
   esac
+}
+
+brakeman_plant() {
+  mkdir -p "$1/app/controllers"
+  printf '%s\n' '# frozen_string_literal: true' '' 'class RunController < ActionController::Base' '  def index' \
+    '    system("echo #{params[:name]}")' '  end' 'end' >"$1/app/controllers/run_controller.rb"
+}
+
+nvm_stub() {
+  local dir="$1" node
+  node="$(command -v node)"
+  mkdir -p "$dir/bin"
+  cat >"$dir/bin/node" <<EOF
+#!/usr/bin/env bash
+if [ "\${1:-}" = --version ]; then
+  echo v1.0.0
+  exit 0
+fi
+exec "$node" "\$@"
+EOF
+  chmod +x "$dir/bin/node"
+  cat >"$dir/nvm.sh" <<EOF
+nvm() {
+  [ "\$*" = "use 1.0.0" ] && PATH="$dir/bin:\$PATH"
+}
+EOF
 }
 
 mode_file_of() {
