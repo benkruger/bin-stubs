@@ -18,7 +18,7 @@ for arg in "$@"; do
   esac
 done
 
-branch="$(git rev-parse --abbrev-ref HEAD)"
+branch="$(git symbolic-ref -q --short HEAD || git rev-parse --abbrev-ref HEAD)"
 case "$branch" in
   "" | "." | "..")
     echo "bin/ci: refusing to build a sentinel path for unsafe branch: '$branch'" >&2
@@ -76,5 +76,5 @@ start_step test "$here/test"
 finish_steps || exit 1
 
 mkdir -p "$(dirname "$sentinel")"
-tree_hash >"$sentinel"
+printf '%s\n' "$pre_hash" >"$sentinel"
 echo "bin/ci: gate green ($branch) — sentinel written."

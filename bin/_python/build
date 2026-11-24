@@ -11,11 +11,6 @@ packages_check "$PWD" || exit 1
 PYTHONPYCACHEPREFIX="$(mktemp -d)"
 export PYTHONPYCACHEPREFIX
 trap 'rm -rf "$PYTHONPYCACHEPREFIX"' EXIT
-if [ -d src ]; then
-  uv run python -m compileall -q src
-else
-  uv run python -m compileall -q -x '/\.venv/' .
-fi
 
 # shellcheck source=../lib/apps.sh
 . "$here/../lib/apps.sh"
@@ -36,5 +31,6 @@ while IFS= read -r -d '' path; do
   files+=("$path")
 done < <(git ls-files -z --cached --others --exclude-standard -- '*.py' '*.pyi')
 if [ "${#files[@]}" -gt 0 ]; then
+  uv run python -m compileall -q "${files[@]}"
   uv run mypy --strict "${files[@]}"
 fi

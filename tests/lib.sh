@@ -50,6 +50,8 @@ die() {
   exit 1
 }
 
+keep() { KEEP="$1"; }
+
 run_log() {
   if [ -n "${WORK:-}" ] && [ -n "${BASHPID:-}" ]; then
     RUN_LOGS=$((${RUN_LOGS:-0} + 1))

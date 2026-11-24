@@ -24,11 +24,26 @@ packages_check "$PWD" || exit 1
 covdir="$(mktemp -d)"
 trap 'rm -rf "$covdir"' EXIT
 
+# shellcheck source=lib/sources.sh
+. "$here/lib/sources.sh"
+
 filtered=0
+targets=()
 for arg in "$@"; do
   case "$arg" in
-    -*) ;;
-    *) filtered=1 ;;
+    -*) targets+=("$arg") ;;
+    *)
+      filtered=1
+      if is_source "${arg#./}"; then
+        twin="$(test_for_source "${arg#./}")"
+        if [ ! -f "$twin" ]; then
+          echo "bin/test: no mirrored test for ${arg#./} → $twin" >&2
+          exit 1
+        fi
+        arg="$twin"
+      fi
+      targets+=("$arg")
+      ;;
   esac
 done
 
@@ -39,7 +54,7 @@ if [ "$filtered" -eq 1 ]; then
     --coverage.thresholds.functions=0 --coverage.thresholds.statements=0)
 fi
 rc=0
-"${run[@]}" "$@" || rc=$?
+"${run[@]}" ${targets[@]+"${targets[@]}"} || rc=$?
 if [ "$rc" -ne 0 ]; then
   exit "$rc"
 fi
@@ -66,9 +81,6 @@ owned_change() {
   fi
   return 0
 }
-
-# shellcheck source=lib/sources.sh
-. "$here/lib/sources.sh"
 
 file_covs() {
   jq -r --arg real "$(pwd -P)" --arg logical "$PWD" '. as $summary | $ARGS.positional[] as $want

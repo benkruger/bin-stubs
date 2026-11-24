@@ -65,3 +65,4 @@ while IFS= read -r -d '' modules; do
 done < <(find . \( -path ./.worktrees -o -name .venv \) -prune -o -type d -name node_modules -print0 -prune)
 
 echo "bin/start: $branch at $worktree from main ${base:0:12}, with main's saved passes from $copied folder(s), $linked .venv link(s) and $cloned node_modules clone(s)"
+echo "bin/start: next, run 'cd $worktree' on its own and make every edit and run every script there"

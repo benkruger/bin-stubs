@@ -4,16 +4,6 @@ here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 root="$(cd "${APP_DIR:-$here/../..}" && pwd)"
 cd "$root"
 
-pm=npm
-if [ -f pnpm-lock.yaml ]; then
-  pm=pnpm
-elif [ -f yarn.lock ]; then
-  pm=yarn
-elif [ -f bun.lock ] || [ -f bun.lockb ]; then
-  pm=bun
-  export PATH="${HOME}/.bun/bin:${PATH}"
-fi
-
 # shellcheck source=lib/toolchain.sh
 . "$here/lib/toolchain.sh"
 if [ -z "${CI:-}" ]; then
@@ -34,12 +24,6 @@ for arg in "$@"; do
     *) paths+=("$arg") ;;
   esac
 done
-run=("$pm" run test)
-if [ "${#paths[@]}" -gt 0 ]; then
-  run+=(-- "${paths[@]}")
-fi
-"$root/node_modules/.bin/c8" --reporter=json-summary --reports-dir="$covdir" "${run[@]}" || rc=$?
-covjson="$covdir/coverage-summary.json"
 
 # shellcheck source=../lib/apps.sh
 . "$here/../lib/apps.sh"
@@ -162,6 +146,26 @@ already() {
   done
   return 1
 }
+
+run=(npm run test)
+targets=()
+for arg in "${paths[@]+"${paths[@]}"}"; do
+  arg="${arg#./}"
+  if is_source "$arg"; then
+    twin="$(test_for_source "$arg")"
+    if [ ! -f "$twin" ]; then
+      echo "bin/test: no mirrored test for $arg → $twin" >&2
+      exit 1
+    fi
+    arg="$twin"
+  fi
+  targets+=("$arg")
+done
+if [ "${#targets[@]}" -gt 0 ]; then
+  run+=(-- "${targets[@]}")
+fi
+"$root/node_modules/.bin/c8" --reporter=json-summary --reports-dir="$covdir" "${run[@]}" || rc=$?
+covjson="$covdir/coverage-summary.json"
 
 required=()
 missing_mirror=()

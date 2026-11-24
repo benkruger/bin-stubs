@@ -55,29 +55,19 @@ toolchain_check() {
   fi
 
   manager="$(jq -r '.packageManager // ""' "$root/package.json" 2>/dev/null || true)"
-  if [ -z "$manager" ]; then
-    echo "toolchain: package.json pins no packageManager; pin npm with: npm pkg set packageManager=npm@\$(npm --version)" >&2
-    return 1
-  fi
   name="${manager%%@*}"
   version="${manager#*@}"
   version="${version%%+*}"
-  case "$name" in
-    npm | pnpm | yarn | bun) ;;
-    *)
-      echo "toolchain: package.json pins an unknown packageManager: $manager" >&2
-      return 1
-      ;;
-  esac
-  if [ "$name" = bun ]; then
-    PATH="${HOME}/.bun/bin:${PATH}"
+  if [ "$name" != npm ] || [ "$version" = "$manager" ]; then
+    echo "toolchain: package.json pins ${manager:-no packageManager}; pin npm with: npm pkg set packageManager=npm@\$(npm --version)" >&2
+    return 1
   fi
-  if ! current="$(pm_version "$name")"; then
-    echo "toolchain: $name is not installed; package.json pins $name@$version" >&2
+  if ! current="$(pm_version npm)"; then
+    echo "toolchain: npm is not installed; package.json pins npm@$version" >&2
     return 1
   fi
   if [ "$current" != "$version" ]; then
-    echo "toolchain: $name $current is active but package.json pins $version; install it with: npm install -g $name@$version" >&2
+    echo "toolchain: npm $current is active but package.json pins $version; install it with: npm install -g npm@$version" >&2
     return 1
   fi
 }
@@ -89,7 +79,7 @@ packages_check() {
     echo "packages: node_modules is missing; run bin/dependencies" >&2
     return 1
   fi
-  if [ -f "$root/package-lock.json" ] && ! (cd "$root" && npm ls --depth=0 >/dev/null 2>&1); then
+  if ! (cd "$root" && npm ls --depth=0 >/dev/null 2>&1); then
     echo "packages: node_modules does not match package.json; run bin/dependencies" >&2
     return 1
   fi

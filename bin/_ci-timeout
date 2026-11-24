@@ -17,16 +17,15 @@ if [ -z "$host" ]; then
   exit 2
 fi
 
-limit=""
+line=""
 if [ -f "$file" ]; then
-  limit="$(awk -v h="$host" '$1 == h { print $2; exit }' "$file")"
+  line="$(awk -v h="$host" '$1 == h { print "@" $2; exit }' "$file")"
 fi
-case "$limit" in
-  *[!0-9]*)
-    echo "bin/_ci-timeout: $file line for $host is not a whole number of seconds: '$limit'" >&2
-    exit 2
-    ;;
-esac
+limit="${line#@}"
+if [ -n "$line" ] && ! [[ "$limit" =~ ^[0-9]+$ ]]; then
+  echo "bin/_ci-timeout: $file line for $host is not a whole number of seconds: '$limit'" >&2
+  exit 2
+fi
 
 if [ -n "$limit" ] && [ $((took * 5)) -gt $((limit * 6)) ] && [ $((took - limit)) -ge 5 ]; then
   echo "bin/ci: $app took ${took}s, more than 20% and at least 5s over its ${limit}s for $host in $file" >&2

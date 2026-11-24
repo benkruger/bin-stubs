@@ -58,7 +58,7 @@ section_installed() {
 }
 
 section_sentinels() {
-  local repo app sent hash step
+  local repo app sent hash step mode
   fresh_app
   case "$lang" in
     rails | ios | shell) ;;
@@ -126,10 +126,24 @@ EOF
     rm -f "$app/tests/orphan.test.ts" "$app/tests/orphan.test.js" "$app/tests/test_orphan.py" \
       "$app/test/orphan_test.rb"
   fi
+  mode="$(mode_file_of "$lang")"
+  [ -f "$app/$mode" ] || printf 'notes\n' >"$app/$mode"
+  cp "$repo/bin/_$lang/test" "$WORK/test.keep"
+  awk -v m="$mode" '{ print } !done && $0 == "cd \"$root\"" { print "chmod +x " m; done = 1 }' \
+    "$WORK/test.keep" >"$repo/bin/_$lang/test"
   expect_ok leaf "$app" "$lang" ci --force
   grep -q "sentinel written" "${LAST_LOG}" || die "$lang --force did not write"
+  [ -x "$app/$mode" ] || die "$lang test step did not change $mode during the run"
+  expect_ok leaf "$app" "$lang" ci
+  grep -q "sentinel written" "${LAST_LOG}" || die "$lang saved a pass for a file its own run changed"
+  cat "$WORK/test.keep" >"$repo/bin/_$lang/test"
+  chmod -x "$app/$mode"
   expect_ok leaf "$app" "$lang" ci --clean
   [ ! -f "$sent" ] || die "$lang --clean left the sentinel"
+  git -C "$repo" symbolic-ref HEAD refs/heads/unborn
+  expect_ok leaf "$app" "$lang" ci --clean
+  grep -qx "bin/ci: cleaned sentinel for unborn" "${LAST_LOG}" || die "$lang ci did not run on a branch with no commits"
+  git -C "$repo" symbolic-ref HEAD refs/heads/main
 }
 
 section_changed() {
@@ -202,6 +216,10 @@ EOF
     expect_fail leaf "$app" "$lang" ci --force
     grep -q "loose has a shebang but is not executable" "${LAST_LOG}" || die "shell let a script that cannot run through"
     rm "$app/loose"
+    mkdir -p "$app/lib"
+    printf '%s\n' '#!/usr/bin/env bash' 'helper() { echo hi; }' >"$app/lib/helper.sh"
+    expect_ok leaf "$app" "$lang" build
+    rm -r "${app:?}/lib"
     printf '%s\n' '#!/usr/bin/env bash' 'if true; then' '  echo x' >"$app/broken"
     chmod +x "$app/broken"
     expect_fail leaf "$app" "$lang" build
@@ -215,6 +233,9 @@ EOF
       (cd "$app" && npm pkg set packageManager=npm@1.0.0)
       expect_fail leaf "$app" "$lang" ci --force
       grep -q "but package.json pins 1.0.0" "${LAST_LOG}" || die "$lang did not enforce its npm pin"
+      (cd "$app" && npm pkg set packageManager=pnpm@10.0.0)
+      expect_fail leaf "$app" "$lang" ci --force
+      grep -q "package.json pins pnpm@10.0.0; pin npm" "${LAST_LOG}" || die "$lang let a package manager other than npm through"
       mv "$app/package.json.keep" "$app/package.json"
       ;;
   esac
@@ -292,6 +313,10 @@ EOF
       grep -q "tests/add.test.ts is outside tsconfig's files" "${LAST_LOG}" || die "$lang let tsconfig leave a file unchecked"
       mv "$WORK/tsconfig.keep" "$app/tsconfig.json"
       mv "$WORK/package.keep" "$app/package.json"
+      ln -s package.json "$app/link.json"
+      expect_ok leaf "$app" "$lang" format --check --all
+      expect_ok leaf "$app" "$lang" format --all
+      rm "$app/link.json"
       ;;
     javascript)
       echo "plain text" >"$app/notes.txt"
@@ -302,10 +327,16 @@ EOF
       grep -q "NOTES.md:3:1 error MD018" "${LAST_LOG}" || die "$lang lint stopped at its first failing tool"
       ! grep -q "deploy: no" "${LAST_LOG}" || die "$lang held a bash script to Biome"
       rm "$app/notes.txt" "$app/NOTES.md" "$app/deploy"
+      cp "$app/package.json" "$WORK/package.keep"
+      (cd "$app" && npm pkg set "scripts.build=echo the-build-script-ran")
       printf '%s\n' 'export const broken = (;' >"$app/src/broken.js"
       expect_fail leaf "$app" "$lang" build --all
+      grep -qx "the-build-script-ran" "${LAST_LOG}" || die "$lang build skipped the package's build script"
       grep -q "src/broken.js:1" "${LAST_LOG}" || die "$lang build did not name the file node cannot parse"
-      grep -q "SyntaxError" "${LAST_LOG}" || die "$lang build let a file node cannot parse through"
+      grep -q "SyntaxError" "${LAST_LOG}" || die "$lang build let a build script stand in for node --check"
+      mv "$WORK/package.keep" "$app/package.json"
+      expect_fail leaf "$app" "$lang" format src/broken.js
+      grep -q "src/broken.js" "${LAST_LOG}" || die "$lang format passed a file Biome cannot parse"
       rm "$app/src/broken.js"
       printf 'const unused = 1;\nexport const kept = 2;\n' >"$app/src/warn.js"
       expect_fail leaf "$app" "$lang" lint src/warn.js
@@ -346,6 +377,18 @@ EOF
       grep -q "untyped.py:1: error: Function is missing a type annotation" "${LAST_LOG}" ||
         die "$lang let an untyped function through"
       rm "$app/src/untyped.py"
+      mv "$app/src" "$app/lib"
+      mkdir -p "$app/build/x"
+      printf 'def (\n' >"$app/build/x/broken.py"
+      expect_ok leaf "$app" "$lang" build
+      rm -r "$app/build"
+      mv "$app/lib" "$app/src"
+      cp "$app/pyproject.toml" "$WORK/pyproject.keep"
+      perl -0pi -e 's/(dev = \[)/$1"six", /' "$app/pyproject.toml"
+      grep -q 'dev = \["six", ' "$app/pyproject.toml" || die "$lang dependency plant did not land"
+      expect_fail leaf "$app" "$lang" build
+      grep -q "does not match pyproject.toml" "${LAST_LOG}" || die "$lang ran on a lockfile its manifest has moved past"
+      mv "$WORK/pyproject.keep" "$app/pyproject.toml"
       PYTEST_ADDOPTS=--no-cov expect_fail leaf "$app" "$lang" test --all
       grep -q "pytest wrote no coverage report" "${LAST_LOG}" || die "$lang passed a run that measured nothing"
       cp "$app/pyproject.toml" "$WORK/pyproject.keep"
@@ -412,6 +455,8 @@ EOF
       expect_fail leaf "$app" "$lang" ci --force
       grep -q "step 'test' printed a warning" "${LAST_LOG}" || die "$lang passed a step that printed a warning"
       mv "$WORK/spec.keep" "$spec"
+      expect_ok leaf "$app" "$lang" test "$(source_of "$lang")"
+      grep -qxF "bin/test: coverage bar held on 1 source(s)" "${LAST_LOG}" || die "$lang bin/test on a source did not run its test"
       ;;
   esac
 
@@ -432,6 +477,26 @@ EOF
     grep -qF "bin/format: Sources/App/Broken.swift is not formatted" "${LAST_LOG}" ||
       die "ios format --check passed a file swift-format cannot parse"
     rm "$app/Sources/App/Broken.swift"
+    swift_dependency "$WORK/SwiftDep"
+    cp "$app/Package.swift" "$WORK/package.keep"
+    perl -0pi -e "s|( *name: \"App\",\n)|\$1  dependencies: [.package(url: \"file://$WORK/SwiftDep\", from: \"1.0.0\")],\n|" "$app/Package.swift"
+    grep -q 'dependencies: \[.package(url:' "$app/Package.swift" || die "ios dependency plant did not land"
+    expect_fail leaf "$app" "$lang" build
+    grep -q "Package.resolved is missing" "${LAST_LOG}" || die "ios built a package whose remote packages were never resolved"
+    expect_ok leaf "$app" "$lang" dependencies
+    cp "$app/Package.resolved" "$WORK/resolved.keep"
+    perl -pi -e 's/("revision"\s*:\s*")[0-9a-f]+/${1}0000000000000000000000000000000000000000/' "$app/Package.resolved"
+    expect_fail leaf "$app" "$lang" build
+    grep -q "not fetched at the versions Package.resolved pins" "${LAST_LOG}" ||
+      die "ios built on checkouts Package.resolved does not pin"
+    mv "$WORK/resolved.keep" "$app/Package.resolved"
+    printf 'public func dep() -> Int { 1 }\n' >"$WORK/SwiftDep/Sources/Dep/Dep.swift"
+    git -C "$WORK/SwiftDep" -c user.email=dep@example.com -c user.name=dep commit -q -am "dep 1.1.0"
+    git -C "$WORK/SwiftDep" tag 1.1.0
+    perl -pi -e 's/from: "1\.0\.0"/from: "1.1.0"/' "$app/Package.swift"
+    expect_fail leaf "$app" "$lang" build
+    grep -qi "resolved file" "${LAST_LOG}" || die "ios resolved packages itself during a build"
+    mv "$WORK/package.keep" "$app/Package.swift"
   fi
 
   if [ "$lang" = "rails" ]; then
@@ -457,6 +522,7 @@ section_audit() {
   fi
   committed_app
   (cd "$app" && npm pkg set dependencies.lodash=4.17.20)
+  rm "$app/package-lock.json"
   expect_fail leaf "$app" "$lang" ci --force
   grep -q "run bin/dependencies" "${LAST_LOG}" || die "$lang ci ran with a package missing"
   expect_ok leaf "$app" "$lang" dependencies

@@ -4,16 +4,6 @@ here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 root="$(cd "${APP_DIR:-$here/../..}" && pwd)"
 cd "$root"
 
-pm=npm
-if [ -f pnpm-lock.yaml ]; then
-  pm=pnpm
-elif [ -f yarn.lock ]; then
-  pm=yarn
-elif [ -f bun.lock ] || [ -f bun.lockb ]; then
-  pm=bun
-  export PATH="${HOME}/.bun/bin:${PATH}"
-fi
-
 # shellcheck source=lib/toolchain.sh
 . "$here/lib/toolchain.sh"
 if [ -z "${CI:-}" ]; then
@@ -21,7 +11,4 @@ if [ -z "${CI:-}" ]; then
 fi
 
 packages_check "$root" || exit 1
-if [ "$pm" = npm ]; then
-  exec npm run dev -- --host 127.0.0.1 --open "$@"
-fi
-exec "$pm" run dev --host 127.0.0.1 --open "$@"
+exec npm run dev -- --host 127.0.0.1 --open "$@"

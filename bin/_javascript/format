@@ -67,4 +67,5 @@ fi
 if [ "$check" -eq 1 ]; then
   exec "$root/node_modules/.bin/biome" format "${files[@]}"
 fi
+"$root/node_modules/.bin/biome" format --write "${files[@]}"
 "$root/node_modules/.bin/biome" check --write "${files[@]}" || true

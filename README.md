@@ -126,12 +126,15 @@ alone does not explain.
 
 ### The sentinel
 
-- **Remembers** the last commit, every change since that commit, files
-  not committed yet, and the scripts that check the app: its language's
-  folder and `bin/lib/`.
-- **Ignores** `.flow-states/`, `.venv/`, `node_modules/`, `vendor/`,
-  `target/`, `.build/`, `.ci-timeout`, and symlinks.
-- **Is written** after the four steps pass.
+- **Remembers** the content of the app's files as they are on disk,
+  committed or not, with each file's mode and each symlink's target, and
+  the scripts that check the app: its language's folder and `bin/lib/`.
+  Committing changes nothing it remembers, so a commit keeps the pass.
+- **Ignores** files git ignores, untracked files under `.flow-states/`,
+  `.venv/`, `node_modules/`, `vendor/`, `target/` and `.build/`, and
+  `.ci-timeout`.
+- **Is written** after the four steps pass, holding the files as they were
+  when the run started, so a file changed during the run is checked again.
 - **A match** exits 0, and the app prints nothing.
 - **`--force`** runs the four steps, then writes the sentinel.
 - **`--clean`** deletes the sentinel and exits.
@@ -141,7 +144,9 @@ alone does not explain.
   `--force` ignores those, and `--clean` deletes them too.
 
 A root app (a project file at the repo root) leaves the other apps,
-`CLAUDE.md`, `.claude/`, `checks/`, and `tests/` out of its sentinel.
+`CLAUDE.md`, `.claude/` and `checks/` out of its sentinel; its own tests
+live in `tests/`, so a change there runs it along with the repo-level
+suite.
 
 ### `bin/changed`
 
@@ -194,7 +199,8 @@ out of the sentinel and of what counts as dirty.
 comes from `mktemp /tmp/flow-commit-msg.XXXXXX`; any other file is refused.
 The branch has no `/`.
 
-1. Work in `.worktrees/<branch>` when it exists, otherwise the repo root.
+1. Work in `.worktrees/<branch>` when it exists, otherwise the repo root,
+   and refuse unless that checkout is on `<branch>`.
 2. When rule files changed, a separate Claude session reviews them against
    `rule-authoring.md`; a file that passed before is judged only on its
    changed lines. Claude fixes only the files a finding names, never a new
@@ -227,7 +233,9 @@ matches. It also gives each app its packages with no install: a link to
 the root's `.venv/`, kept out of git through the worktree's exclude file,
 and a copy-on-write clone (`cp -c`) of `node_modules/`, a real folder so
 Node never reaches into the root's. `bin/dependencies` in the worktree
-replaces the `.venv/` link with its own, leaving the root's alone.
+replaces the `.venv/` link with its own, leaving the root's alone. A script
+cannot move the shell that ran it, so its last line names the `cd` into the
+worktree that every edit and script after it runs from.
 
 ### `bin/merge`
 
@@ -238,8 +246,9 @@ branch is refused. It pulls `main` when it has an upstream, and
 refuses a branch that `main` has moved past, so `main` is merged into the
 branch and committed there first. It then runs `git merge --squash` and
 hands the result to `bin/commit main <msgfile>`, which reviews rules, runs
-`bin/ci`, commits and pushes. When that fails, it resets the root to
-`main`'s last commit, which drops only its own squash.
+`bin/ci`, commits and pushes. When that fails, even after the commit, as
+when the push is rejected, it resets the root to the commit `main` was on
+before the squash, which drops only its own squash.
 
 ### `bin/cleanup`
 
@@ -264,9 +273,13 @@ with `bin/complete`.
    root app, `--suite` for the repo-level check. Several combine, and
    `--force` still reruns them past their sentinels. The rules below apply
    when no such flag is given.
-2. A dirty path inside an app selects that app.
+2. A dirty path inside an app selects that app. Paths are read as git
+   writes them with `-z`, and every git call under the dispatcher runs with
+   `core.quotePath` off, so a name with non-ASCII letters is read as is.
 3. `CLAUDE.md`, `README.md`, `.claude/`, `tests/`, and `checks/` select
-   `bin/_root-tests` on `ci` and `test`.
+   `bin/_root-tests` on `ci` and `test`, and a `tests/` path also selects the
+   root app. On a command with no repo-level check and nothing else
+   selected, it prints `bin/<phase>: nothing it checks changed` and exits 0.
 4. On `ci` and `test`, a selected app also selects `bin/_root-tests`, and that
    check runs first.
 5. A `bin/` path selects every app. Any other path outside every app selects
@@ -323,15 +336,26 @@ runs one check. A check is a bash script for something the repo must revisit,
 such as a dated dependency pin. `bin/_root-format` rewrites every
 bash script with `shfmt -i 2 -ci` and fixes every Markdown file with
 markdownlint, so a formatting finding from the guards is fixed by
-`bin/format`. `bin/scan` takes `refs <string>`
+`bin/format`; it fails when markdownlint cannot run, not on the findings
+it leaves for the guards. `bin/format --check` passes `--check` on to it,
+and it then prints the shfmt diff of every unformatted script, fails, and
+rewrites nothing. `bin/ci --clean` passes `--clean` on to
+`bin/_root-tests`, which deletes its saved pass. `bin/scan` takes `refs <string>`
 (matches, and the commits that added or removed them), `log <git-log-args>`,
 `grep <rg-args>` (needs ripgrep) or `files <pathspec>`.
 
 `bin/query "<sql>"` runs one statement through `psql` with no `.psqlrc`,
 stopping on the first error, in read-only transactions: it adds
 `-c default_transaction_read_only=on` last to `PGOPTIONS`, so it wins over
-anything set before it. The connection comes from the standard `PG*`
-variables.
+anything set before it. A statement can still open a read-write
+transaction, so it first asks the server what the connected role may do
+and refuses a role that is a superuser, may create roles, databases or
+schemas, owns a table or sequence, or may insert, update, delete, truncate
+or take sequence values anywhere outside the system catalogs; it also
+refuses a statement that starts with a backslash, which `psql` would run
+as one of its own commands, such as `\!` running a shell. The connection
+comes from the standard `PG*` variables, so `PGUSER` names a role that can
+only read.
 
 ### Language scripts
 
@@ -368,11 +392,11 @@ In `bin/ci`, every step covers the whole app:
   the package build or `tsc`, then Vitest with 100% functions, lines,
   branches and statements on every source.
 - **JavaScript**: `biome format` without writing, a formatter and a linter
-  for every file, Biome check, the package build or `node --check`, then the
+  for every file, Biome check, the package build and `node --check`, then the
   package test under c8 with 100% functions, lines, branches and statements
   on every source.
-- **Python**: `ruff format --check`, Ruff check, `compileall`, then pytest
-  with 100/100 on every source.
+- **Python**: `ruff format --check`, Ruff check, `compileall` and mypy on the
+  Python files git lists, then pytest with 100/100 on every source.
 - **Rails**: RuboCop's Layout cops and markdownlint, without fixing;
   RuboCop, Brakeman and markdownlint; Zeitwerk; then `db:test:prepare` when
   the app has a database, and Minitest through `rails test`, where warnings
@@ -522,8 +546,8 @@ that version is the one running. The check is skipped when `CI` is set.
 
 - **TypeScript** and **JavaScript**: `.nvmrc`. Every `bin/` script, not
   only `bin/ci`, switches to it through nvm when nvm is installed, then
-  requires it. `packageManager` in `package.json` pins the package manager,
-  and its exact version must be active.
+  requires it. `packageManager` in `package.json` pins npm, the one package
+  manager the gate runs, and that exact version must be active.
 - **Python**: `.python-version`. uv must find an installed Python matching it.
 - **Rails**: `.ruby-version` must match the active Ruby.
 - **Rust**: `rust-toolchain.toml`. A numbered channel must match the active

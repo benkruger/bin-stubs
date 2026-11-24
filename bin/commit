@@ -584,6 +584,11 @@ if [ -e "$ROOT/.worktrees/$branch" ]; then
   cwd="$ROOT/.worktrees/$branch"
 fi
 cd "$cwd"
+current="$(git branch --show-current)"
+if [ "$current" != "$branch" ]; then
+  error_text branch "$cwd is on ${current:-a detached HEAD}, not $branch; nothing was committed"
+  exit 1
+fi
 
 if command -v claude >/dev/null 2>&1 && ! review_rules; then
   emit_error ci "$WORK/review"

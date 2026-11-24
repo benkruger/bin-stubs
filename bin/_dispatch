@@ -149,11 +149,15 @@ selected=()
 run_root_app=0
 run_suite=0
 
+git_config_count="${GIT_CONFIG_COUNT:-0}"
+export "GIT_CONFIG_KEY_$git_config_count=core.quotePath" "GIT_CONFIG_VALUE_$git_config_count=false"
+export GIT_CONFIG_COUNT=$((git_config_count + 1))
+
 collect_changed() {
   if git -C "$REPO_ROOT" rev-parse --verify HEAD >/dev/null 2>&1; then
-    git -C "$REPO_ROOT" diff --name-only HEAD
+    git -C "$REPO_ROOT" diff -z --name-only HEAD
   fi
-  git -C "$REPO_ROOT" ls-files --others --exclude-standard
+  git -C "$REPO_ROOT" ls-files -z --others --exclude-standard
 }
 
 if [ "${#picks[@]}" -gt 0 ]; then
@@ -171,20 +175,26 @@ if [ "${#picks[@]}" -gt 0 ]; then
 elif [ "$force" -eq 1 ] || [ "$PHASE" = "dependencies" ]; then
   select_all=1
 else
-  changed="$(
-    collect_changed | { grep -Ev '^\.flow-commit-msg$|(^|/)\.ci-timeout$' || true; } | sort -u
-  )"
-  if [ -z "$changed" ]; then
+  changed=()
+  while IFS= read -r -d '' path; do
+    case "$path" in
+      "" | .flow-commit-msg | .ci-timeout | */.ci-timeout) continue ;;
+    esac
+    changed+=("$path")
+  done < <(collect_changed | sort -zu)
+  if [ "${#changed[@]}" -eq 0 ]; then
     if [ "$PHASE" = "changed" ]; then
       echo "bin/changed: nothing dirty"
       exit 0
     fi
     select_all=1
   else
-    while IFS= read -r path; do
-      [ -z "$path" ] && continue
+    for path in "${changed[@]}"; do
       if is_corpus "$path"; then
-        run_suite=1
+        [ -z "$suite_leaf" ] || run_suite=1
+        case "$path" in
+          tests/*) run_root_app="$has_root_app" ;;
+        esac
         continue
       fi
       if [[ "$path" == bin/* ]]; then
@@ -202,7 +212,7 @@ else
         select_all=1
         break
       fi
-    done <<<"$changed"
+    done
   fi
 fi
 
@@ -228,11 +238,11 @@ if [ "${#picks[@]}" -eq 0 ]; then
 fi
 
 if [ "${#selected[@]}" -eq 0 ] && [ "$run_root_app" -eq 0 ] && [ "$run_suite" -eq 0 ]; then
-  echo "bin/$PHASE: no app or suite to run" >&2
-  exit 1
+  echo "bin/$PHASE: nothing it checks changed"
+  exit 0
 fi
 
-BRANCH="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")"
+BRANCH="$(git symbolic-ref -q --short HEAD 2>/dev/null || git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")"
 case "$BRANCH" in
   "." | "..") BRANCH="" ;;
 esac
@@ -296,7 +306,11 @@ run_one() {
   local sentinel="" mt_before="" rc=0 result args=() began
   FILTERED=()
   if [ "$display" = "suite" ]; then
-    :
+    for a in "${leaf_args[@]+"${leaf_args[@]}"}"; do
+      case "$PHASE $a" in
+        "ci --clean" | "format --check") FILTERED+=("$a") ;;
+      esac
+    done
   elif [ "$display" = "root" ]; then
     if ! consider_paths "__root__"; then
       NAMES+=("$display")

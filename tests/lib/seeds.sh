@@ -656,6 +656,17 @@ pin_file_of() {
   esac
 }
 
+mode_file_of() {
+  case "$1" in
+    typescript | javascript) printf '%s\n' package.json ;;
+    python) printf '%s\n' pyproject.toml ;;
+    rails) printf '%s\n' Gemfile ;;
+    rust) printf '%s\n' Cargo.toml ;;
+    ios) printf '%s\n' Package.swift ;;
+    shell) printf '%s\n' notes ;;
+  esac
+}
+
 decoy_coverage() {
   local app="$1" ext="$2"
   mkdir -p "$app/lib/src" "$app/tests/lib/src"

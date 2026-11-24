@@ -4,16 +4,6 @@ here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 root="$(cd "${APP_DIR:-$here/../..}" && pwd)"
 cd "$root"
 
-pm=npm
-if [ -f pnpm-lock.yaml ]; then
-  pm=pnpm
-elif [ -f yarn.lock ]; then
-  pm=yarn
-elif [ -f bun.lock ] || [ -f bun.lockb ]; then
-  pm=bun
-  export PATH="${HOME}/.bun/bin:${PATH}"
-fi
-
 # shellcheck source=lib/toolchain.sh
 . "$here/lib/toolchain.sh"
 if [ -z "${CI:-}" ]; then
@@ -21,8 +11,16 @@ if [ -z "${CI:-}" ]; then
 fi
 packages_check "$PWD" || exit 1
 
+status=0
 if jq -e '(.scripts.build // "") != ""' package.json >/dev/null; then
-  exec "$pm" run build
+  npm run build || status=1
+fi
+
+# shellcheck source=../lib/apps.sh
+. "$here/../lib/apps.sh"
+root_app=0
+if [ "$(pwd -P)" = "$(git rev-parse --show-toplevel)" ]; then
+  root_app=1
 fi
 
 if [ "${1:-}" = "--all" ]; then
@@ -34,13 +32,17 @@ files=()
 while IFS= read -r path; do
   [ -z "$path" ] && continue
   [ -f "$path" ] || continue
+  top="${path%%/*}"
+  if [ "$root_app" -eq 1 ] && [ "$top" != "$path" ] && is_app_dir "$root/$top"; then
+    continue
+  fi
   case "$path" in
     node_modules/* | dist/* | .flow-states/* | */node_modules/* | */.flow-states/*) continue ;;
     *.js | *.mjs | *.cjs) files+=("$path") ;;
   esac
 done <<<"$listing"
 
-[ "${#files[@]}" -gt 0 ] || exit 0
+[ "${#files[@]}" -gt 0 ] || exit "$status"
 checked="$(mktemp -d)"
 trap 'rm -rf "$checked"' EXIT
 jobs="$(getconf _NPROCESSORS_ONLN)"
@@ -64,5 +66,6 @@ for i in "${!files[@]}"; do
   read -r rc <"$checked/$i.rc"
   [ ! -s "$checked/$i.out" ] || cat "$checked/$i.out"
   [ ! -s "$checked/$i.err" ] || cat "$checked/$i.err" >&2
-  [ "$rc" -eq 0 ] || exit "$rc"
+  [ "$rc" -eq 0 ] || status=1
 done
+exit "$status"

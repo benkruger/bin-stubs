@@ -29,9 +29,19 @@ packages_check() {
     echo "packages: Swift packages are not fetched; run bin/dependencies" >&2
     return 1
   fi
-  [ -f "$root/Package.resolved" ] || return 0
-  if [ ! -f "$root/.build/workspace-state.json" ] || [ "$root/Package.resolved" -nt "$root/.build/workspace-state.json" ]; then
-    echo "packages: Swift packages are not fetched; run bin/dependencies" >&2
+  if [ ! -f "$root/Package.resolved" ]; then
+    if grep -qs '\.package(url:' "$root/Package.swift"; then
+      echo "packages: Package.swift names remote packages but Package.resolved is missing; run bin/dependencies" >&2
+      return 1
+    fi
+    return 0
+  fi
+  if ! jq -e -n --slurpfile resolved "$root/Package.resolved" --slurpfile state "$root/.build/workspace-state.json" '
+    ([$state[0].object.dependencies[]? | {key: .packageRef.identity, value: .state.checkoutState.revision}]
+      | from_entries) as $have
+    | all(($resolved[0].pins // $resolved[0].object.pins // [])[]; $have[.identity] == .state.revision)' \
+    >/dev/null 2>&1; then
+    echo "packages: Swift packages are not fetched at the versions Package.resolved pins; run bin/dependencies" >&2
     return 1
   fi
 }

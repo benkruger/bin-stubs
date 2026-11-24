@@ -5,16 +5,6 @@ here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 root="$(cd "${APP_DIR:-$here/../..}" && pwd)"
 cd "$root"
 
-pm=npm
-if [ -f pnpm-lock.yaml ]; then
-  pm=pnpm
-elif [ -f yarn.lock ]; then
-  pm=yarn
-elif [ -f bun.lock ] || [ -f bun.lockb ]; then
-  pm=bun
-  export PATH="${HOME}/.bun/bin:${PATH}"
-fi
-
 force=0
 clean=0
 for arg in "$@"; do
@@ -28,7 +18,7 @@ for arg in "$@"; do
   esac
 done
 
-branch="$(git rev-parse --abbrev-ref HEAD)"
+branch="$(git symbolic-ref -q --short HEAD || git rev-parse --abbrev-ref HEAD)"
 case "$branch" in
   "" | "." | "..")
     echo "bin/ci: refusing to build a sentinel path for unsafe branch: '$branch'" >&2
@@ -75,15 +65,9 @@ if ! packages_check "$root"; then
 fi
 export FLOW_CHECKED_APP="$root"
 
-case "$pm" in
-  pnpm) audit=(pnpm audit --audit-level moderate) ;;
-  yarn) audit=(yarn npm audit --severity moderate) ;;
-  bun) audit=(bun audit --audit-level=moderate) ;;
-  *) audit=(npm audit --audit-level=moderate) ;;
-esac
 audit_log="$(mktemp)"
 trap 'rm -f "$log" "$audit_log"' EXIT
-"${audit[@]}" >"$audit_log" 2>&1 &
+npm audit --audit-level=moderate >"$audit_log" 2>&1 &
 audit_pid=$!
 
 # shellcheck source=../lib/steps.sh
@@ -98,7 +82,7 @@ red=0
 finish_steps || red=1
 if ! wait "$audit_pid"; then
   cat "$audit_log" >&2
-  echo "bin/ci: gate RED ($branch) — $pm audit found a moderate or worse advisory (above)." >&2
+  echo "bin/ci: gate RED ($branch) — npm audit found a moderate or worse advisory (above)." >&2
   red=1
 fi
 [ "$red" -eq 0 ] || exit 1
@@ -106,5 +90,5 @@ fi
 tally="$(grep -E '^# pass [0-9]+|Suites: [0-9]+' "$log" | tail -n1 || true)"
 
 mkdir -p "$(dirname "$sentinel")"
-tree_hash >"$sentinel"
+printf '%s\n' "$pre_hash" >"$sentinel"
 echo "bin/ci: gate green ($branch)${tally:+ — $tally} — sentinel written."

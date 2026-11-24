@@ -751,7 +751,7 @@ OUTPUT_DIRS=(node_modules dist build coverage .venv target .build .flow-states)
 
 for path in "${files[@]}"; do
   case "/$path" in
-    */node_modules/* | */dist/* | */build/* | */coverage/* | */.venv/* | */target/* | */.build/* | */.flow-states/* | */lcov.info | *.tsbuildinfo)
+    */node_modules/* | */dist/* | */build/* | */coverage/* | */.venv/* | */target/* | */.build/* | */.flow-states/* | */vendor/bundle/* | */lcov.info | *.tsbuildinfo)
       fail "$path: build or coverage output; .gitignore keeps it out of git"
       ;;
   esac

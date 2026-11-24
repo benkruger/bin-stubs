@@ -26,6 +26,19 @@ EOF
   printf 'file://%s\n' "$dir"
 }
 
+swift_dependency() {
+  local dir="$1"
+  mkdir -p "$dir/Sources/Dep"
+  printf '%s\n' '// swift-tools-version: 6.0' 'import PackageDescription' '' 'let package = Package(' \
+    '  name: "Dep",' '  products: [.library(name: "Dep", targets: ["Dep"])],' '  targets: [.target(name: "Dep")]' \
+    ')' >"$dir/Package.swift"
+  printf 'public func dep() -> Int { 0 }\n' >"$dir/Sources/Dep/Dep.swift"
+  git -C "$dir" init -q -b main
+  git -C "$dir" add -A
+  git -C "$dir" -c user.email=dep@example.com -c user.name=dep commit -q -m dep
+  git -C "$dir" tag 1.0.0
+}
+
 seed_xcode() {
   local app="$1" dep_url="$2" project="$1/App.xcodeproj"
   mkdir -p "$app/Sources/App" "$app/Tests/AppTests" "$project/xcshareddata/xcschemes"

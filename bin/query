@@ -4,6 +4,25 @@ if [ "$#" -ne 1 ]; then
   echo 'usage: bin/query "<sql>"' >&2
   exit 2
 fi
+if [ "${1:0:1}" = "\\" ]; then
+  echo "bin/query: takes SQL, not a psql backslash command" >&2
+  exit 2
+fi
 PGOPTIONS="${PGOPTIONS:+$PGOPTIONS }-c default_transaction_read_only=on"
 export PGOPTIONS
+writes="SELECT r.rolsuper OR r.rolcreaterole OR r.rolcreatedb OR r.rolbypassrls OR r.rolreplication
+  OR has_database_privilege(current_database(), 'CREATE')
+  OR EXISTS (SELECT FROM pg_namespace n WHERE n.nspname NOT LIKE 'pg\\_temp\\_%'
+    AND n.nspname NOT LIKE 'pg\\_toast\\_temp\\_%' AND has_schema_privilege(n.oid, 'CREATE'))
+  OR EXISTS (SELECT FROM pg_class c WHERE c.relkind IN ('r', 'p', 'v', 'm', 'f')
+    AND c.relnamespace NOT IN ('pg_catalog'::regnamespace, 'information_schema'::regnamespace)
+    AND (pg_has_role(c.relowner, 'USAGE') OR has_table_privilege(c.oid, 'INSERT, UPDATE, DELETE, TRUNCATE')))
+  OR EXISTS (SELECT FROM pg_class c WHERE c.relkind = 'S'
+    AND (pg_has_role(c.relowner, 'USAGE') OR has_sequence_privilege(c.oid, 'USAGE, UPDATE')))
+  FROM pg_roles r WHERE r.rolname = current_user"
+can_write="$(psql --no-psqlrc --set=ON_ERROR_STOP=1 --tuples-only --no-align --command "$writes")"
+if [ "$can_write" != f ]; then
+  echo "bin/query: the role it connects as can change data or schema; set PGUSER to a role that can only read" >&2
+  exit 1
+fi
 exec psql --no-psqlrc --set=ON_ERROR_STOP=1 --command "$1"

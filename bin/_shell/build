@@ -38,7 +38,11 @@ for i in "${!scripts[@]}"; do
   path="${scripts[$i]}"
   first=""
   IFS= read -r first <"$path" || true
-  if [ "${first:0:2}" = '#!' ] && [ ! -x "$path" ]; then
+  case "/$path" in
+    */lib/*.sh | */tests/lib.sh | */_run_quiet) sourced=1 ;;
+    *) sourced=0 ;;
+  esac
+  if [ "${first:0:2}" = '#!' ] && [ ! -x "$path" ] && [ "$sourced" -eq 0 ]; then
     echo "bin/build: $path has a shebang but is not executable" >&2
     fail=1
   fi

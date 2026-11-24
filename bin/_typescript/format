@@ -45,7 +45,7 @@ fi
 files=()
 while IFS= read -r path; do
   [ -z "$path" ] && continue
-  [ -f "$path" ] || continue
+  [ -f "$path" ] && [ ! -L "$path" ] || continue
   case "$path" in
     node_modules/* | .venv/* | .flow-states/* | */node_modules/* | */.venv/* | */.flow-states/*)
       continue

@@ -9,7 +9,7 @@ packages_check "$PWD" || exit 1
 # shellcheck source=lib/xcode.sh
 . "$here/lib/xcode.sh"
 if ! xcode_container; then
-  exec swift build -Xswiftc -warnings-as-errors
+  exec swift build --disable-automatic-resolution -Xswiftc -warnings-as-errors
 fi
 loose="$(xcode_loose_targets)"
 status=0

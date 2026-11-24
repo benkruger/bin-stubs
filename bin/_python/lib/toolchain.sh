@@ -26,8 +26,8 @@ toolchain_check() {
 packages_check() {
   local root="$1"
   [ "${FLOW_CHECKED_APP:-}" != "$root" ] || return 0
-  if ! (cd "$root" && uv sync --frozen --offline --check >/dev/null 2>&1); then
-    echo "packages: .venv is missing or does not match uv.lock; run bin/dependencies" >&2
+  if ! (cd "$root" && uv sync --locked --offline --check >/dev/null 2>&1); then
+    echo "packages: .venv or uv.lock does not match pyproject.toml; run bin/dependencies" >&2
     return 1
   fi
 }

@@ -3,6 +3,17 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
+check=0
+for arg in "$@"; do
+  case "$arg" in
+    --check) check=1 ;;
+    *)
+      echo "bin/format: unknown argument: $arg" >&2
+      exit 2
+      ;;
+  esac
+done
+
 scripts=()
 markdown=()
 shebang='^#!(.*[^[:alnum:]_])?bash([^[:alnum:]_]|$)'
@@ -25,13 +36,24 @@ if [ "${#scripts[@]}" -gt 0 ]; then
     echo "bin/format: shfmt is not installed (brew install shfmt)" >&2
     exit 1
   fi
-  shfmt -i 2 -ci -l -w "${scripts[@]}"
+  if [ "$check" -eq 1 ]; then
+    shfmt -i 2 -ci -d "${scripts[@]}"
+  else
+    shfmt -i 2 -ci -l -w "${scripts[@]}"
+  fi
 fi
 
-if [ "${#markdown[@]}" -gt 0 ]; then
+if [ "${#markdown[@]}" -gt 0 ] && [ "$check" -eq 0 ]; then
   if ! command -v markdownlint-cli2 >/dev/null 2>&1; then
     echo "bin/format: markdownlint-cli2 is not installed (brew install markdownlint-cli2)" >&2
     exit 1
   fi
-  markdownlint-cli2 --fix "${markdown[@]}" >/dev/null 2>&1 || true
+  out="$(mktemp)"
+  trap 'rm -f "$out"' EXIT
+  rc=0
+  markdownlint-cli2 --fix "${markdown[@]}" >"$out" 2>&1 || rc=$?
+  if [ "$rc" -gt 1 ]; then
+    cat "$out" >&2
+    exit "$rc"
+  fi
 fi

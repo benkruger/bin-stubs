@@ -22,11 +22,14 @@ The Python app is held by Ruff and pytest at full strength.
   `tests/guards` fails a Ruff setting other than `target-version`,
   `line-length`, `indent-width`, `src`, `format` or lint `extend-select`
   (`no-lint-exceptions.md`).
-- `bin/build` compiles every module and fails on any that does not
-  compile, then type-checks every Python file in the app with
-  `mypy --strict` and fails on any error, or when mypy is not installed
-  in the app's environment.
+- `bin/build` compiles every Python file in the app that git lists,
+  tracked or untracked and not ignored, and fails on any that does not
+  compile, then type-checks those files with `mypy --strict` and fails on
+  any error, or when mypy is not installed in the app's environment.
 - `.python-version` pins Python; outside CI, `bin/ci` fails unless uv finds
   an installed Python that matches it.
+- `packages_check` fails, as `packages.md` states, when
+  `uv sync --locked --offline --check` fails: `uv.lock` does not
+  match `pyproject.toml` or `.venv` does not match `uv.lock`.
 - Trigger: any change to a Python `bin/` script.
-<!-- audited: 8ec1a63c308b -->
+<!-- audited: 6d9dd5144dba -->

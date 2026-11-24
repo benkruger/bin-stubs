@@ -33,10 +33,11 @@ if git diff --quiet main "$branch"; then
   refuse "$branch has nothing to merge into main"
 fi
 
+before="$(git rev-parse HEAD)"
 git merge -q --squash "$branch" >/dev/null
 if "$ROOT/bin/commit" main "$msgfile"; then
   exit 0
 fi
-git reset -q --hard HEAD
+git reset -q --hard "$before"
 echo "bin/merge: $branch did not land; main is back where it was" >&2
 exit 1

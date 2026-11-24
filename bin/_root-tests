@@ -22,7 +22,7 @@ if [ -n "$single" ]; then
   exec "$ROOT/$single"
 fi
 
-branch="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")"
+branch="$(git symbolic-ref -q --short HEAD 2>/dev/null || git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")"
 case "$branch" in
   "" | "." | "..")
     echo "root-suite: refusing to build a sentinel path for unsafe branch: '$branch'" >&2
@@ -69,4 +69,4 @@ else
 fi
 
 mkdir -p "$(dirname "$sentinel")"
-(cd "$ROOT" && tree_hash) >"$sentinel"
+printf '%s\n' "$pre_hash" >"$sentinel"
