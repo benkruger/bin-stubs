@@ -11,10 +11,6 @@ if [ -z "${CI:-}" ]; then
 fi
 packages_check "$PWD" || exit 1
 
-if jq -e '(.scripts.build // "") != ""' package.json >/dev/null; then
-  exec npm run build
-fi
-
 STRICT_FLAGS='["alwaysStrict", "noImplicitAny", "noImplicitThis", "strictBindCallApply", "strictBuiltinIteratorReturn", "strictFunctionTypes", "strictNullChecks", "strictPropertyInitialization", "useUnknownInCatchVariables"]'
 tsc="$root/node_modules/.bin/tsc"
 config="$(mktemp)"
@@ -22,6 +18,9 @@ trap 'rm -f "$config"' EXIT
 "$tsc" --showConfig >"$config" 2>&1 &
 shown=$!
 status=0
+if jq -e '(.scripts.build // "") != ""' package.json >/dev/null; then
+  npm run build || status=1
+fi
 "$tsc" --noEmit || status=1
 if ! wait "$shown"; then
   cat "$config" >&2

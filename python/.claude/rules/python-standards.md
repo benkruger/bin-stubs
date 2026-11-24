@@ -21,8 +21,10 @@ The Python app is held by Ruff and pytest at full strength.
   `line-length`, `indent-width`, `src`, `format` or lint `extend-select`
   (`no-lint-exceptions.md`).
 - `bin/build` compiles every module and fails on any that does not
-  compile.
+  compile, then type-checks every Python file in the app with
+  `mypy --strict` and fails on any error, or when mypy is not installed
+  in the app's environment.
 - `.python-version` pins Python; `bin/ci` fails unless uv finds an installed
   Python that matches it.
 - Trigger: any change to a Python `bin/` script.
-<!-- audited: a8eda23c9cc7 -->
+<!-- audited: 20dba3fb3f05 -->

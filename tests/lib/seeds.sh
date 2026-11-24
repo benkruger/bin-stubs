@@ -152,7 +152,7 @@ version = "0.1.0"
 requires-python = ">=3.12"
 
 [dependency-groups]
-dev = ["ruff>=0.8", "pytest>=8", "pytest-cov>=6"]
+dev = ["ruff>=0.8", "mypy>=2.4", "pytest>=8", "pytest-cov>=6"]
 
 [tool.uv]
 default-groups = ["dev"]

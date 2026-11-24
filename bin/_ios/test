@@ -84,7 +84,7 @@ if [ ! -f Package.swift ]; then
   exit 1
 fi
 
-swift test --enable-code-coverage "$@"
+swift test --enable-code-coverage -Xswiftc -warnings-as-errors "$@"
 prof="$(find .build -name 'default.profdata' | head -n 1)"
 binaries=()
 while IFS= read -r binary; do

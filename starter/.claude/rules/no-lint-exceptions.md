@@ -17,19 +17,21 @@ is fixed in the code it flags, never silenced.
   (NewCops enable; `require` and `plugins` only gem names; any other cop
   only `Enabled: true`, bar `Style/Documentation`, which may be
   `Enabled: false` since it asks for the comment `no-comments.md` bans),
-  Ruff (any `[format]` key) and `.shellcheckrc`; for ESLint, no
-  `linterOptions`, every `rules` entry at `error` in an object literal,
-  and no local file loaded; only warn, deny or forbid levels for Cargo,
-  and no `-A`, `--allow` or `--cap-lints` flag in a Cargo config's `rustflags`;
+  Ruff (any `[format]` key), mypy (`[tool.mypy]` only the keys in
+  `MYPY_KEYS`) and `.shellcheckrc`; for ESLint, no `linterOptions`, every
+  `rules` entry at `error` in an object literal, and imports only from
+  `ESLINT_PACKAGES`; only warn, deny or forbid levels for Cargo, and no
+  `-A`, `--allow` or `--cap-lints` flag in a Cargo config's `rustflags`;
   every swift-format rule true; rustfmt on for every file. `tests/guards`
-  fails the file that does not.
-  A markdownlint, Clippy or Brakeman config file, `brakeman.ignore` and a
-  `.rubocop` options file fail outright: those tools run on defaults and
-  the options `bin/lint` passes. A `.prettierignore` fails outright:
-  Prettier formats every file. Trigger: any new or edited lint or format
-  config file.
+  fails the file that does not. A markdownlint, Clippy or Brakeman config
+  file, `brakeman.ignore` and a `.rubocop` options file fail outright:
+  those tools run on defaults and the options `bin/lint` passes. So do
+  `mypy.ini`, `.mypy.ini` and any `[mypy` section in `setup.cfg`,
+  per-module ones included: mypy's settings live in `pyproject.toml`. A
+  `.prettierignore` fails outright: Prettier formats every file. Trigger:
+  any new or edited lint or format config file.
 - Code reaches every linter unsilenced. Suppression comments are free
   text, so `tests/guards` fails each one it names in `BANNED_SUPPRESSIONS`,
   and each Rust attribute matching `RUST_QUIET_ATTRS`, which allows or
   expects a lint or skips rustfmt. Trigger: any edit to a file it scans.
-<!-- audited: 3161f5498b8e -->
+<!-- audited: 5f39bcdeb6f8 -->

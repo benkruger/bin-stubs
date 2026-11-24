@@ -17,7 +17,7 @@ GENERATED_NAMES=(
 )
 EXEMPT_PATHS=()
 
-BANNED_SUPPRESSIONS='shellcheck[ ]disable|eslint[-](disable|enable)|@ts[-](ignore|expect-error|nocheck)|(istanbul|v8|c8)[ ]ignore|biome[-]ignore|rubocop[:](disable|todo)|:no[c]ov:|#[ ]*no[q]a|type[:][ ]*ignore|pragma[:] no cover|prettier[-]ignore|markdownlint[-](disable|configure[-]file)|#!?\[(al[l]ow|expec[t])\(|swift[-]format[-]ignore|swiftlint[:]disable'
+BANNED_SUPPRESSIONS='shellcheck[ ]disable|eslint[-](disable|enable)|@ts[-](ignore|expect-error|nocheck)|(istanbul|v8|c8)[ ]ignore|biome[-]ignore|rubocop[:](disable|todo)|:no[c]ov:|#[ ]*no[q]a|type[:][ ]*ignore|no[_]type[_]check|pragma[:] no cover|prettier[-]ignore|markdownlint[-](disable|configure[-]file)|#!?\[(al[l]ow|expec[t])\(|swift[-]format[-]ignore|swiftlint[:]disable'
 BACKWARD_FACING='\bwe hit\b|during PR #|after the fix|\bused to\b|\bno longer\b|\b(previously|formerly)\b|in the past|removed in PR|\bport(ed)? (of|from)\b'
 NARRATIVE_HEADING='^##[[:space:]]+(why|rationale|background|history|cross-references?|how to apply)\b'
 
@@ -297,7 +297,9 @@ RUBOCOP_KEYS='plugins require AllCops'
 RUBOCOP_ALLCOPS_KEYS='NewCops SuggestExtensions TargetRubyVersion'
 RUFF_KEYS=' target-version line-length indent-width src '
 RUFF_LINT_KEYS=' extend-select '
+MYPY_KEYS=' python_version plugins '
 LINT_LEVELS=' warn deny forbid '
+ESLINT_PACKAGES='@eslint/js @eslint/json @eslint/markdown @eslint/css eslint/config typescript-eslint globals'
 SHELLCHECKRC_KEYS='source-path|external-sources|enable'
 
 biome_ok() {
@@ -317,18 +319,21 @@ biome_ok() {
 }
 
 eslint_ok() {
-  perl - "$1" <<'PERL'
+  PACKAGES="$ESLINT_PACKAGES" perl - "$1" <<'PERL'
 use strict;
 use warnings;
 
 my $text = do { local $/; <> };
+my %packages = map { $_ => 1 } split ' ', $ENV{PACKAGES};
 my $quote = qr/["\x27]/;
 exit 1 if $text =~ /(?:\A|[^\w\$])$quote?linterOptions$quote?\s*:/;
 my $any = qr/["\x27`]/;
 exit 1 if $text =~ /(?:\A|[^\w\$])$quote?rules$quote?\s*:\s*+(?!\{)/;
 exit 1 if $text =~ /(?:\A|[^\w\$.])rules$quote?\s*[,}]/;
 exit 1 if $text =~ /\[\s*${any}rules$any\s*\]|\.\s*rules\b/;
-exit 1 if $text =~ /\b(?:from|import|require)\s*\(?\s*$any(?:\.{1,2})?\//;
+while ($text =~ /\b(?:from|import|require)\s*\(?\s*(["\x27`])(.*?)\1/g) {
+  exit 1 unless $packages{$2};
+}
 exit 1 if $text =~ /\b(?:import|require)\s*\(\s*[^"\x27`\s]/;
 my $error = qr/(?:${quote}error$quote|2)/;
 while ($text =~ /(?:\A|[^\w\$])$quote?rules$quote?\s*:\s*\{/g) {
@@ -395,6 +400,18 @@ cargo_ok() {
       if (!match(value, /"[a-z]+"/)) { bad = 1; next }
       level = substr(value, RSTART + 1, RLENGTH - 2)
       if (index(levels, " " level " ") == 0) bad = 1
+    }
+    END { exit bad }' "$1"
+}
+
+mypy_ok() {
+  awk -v allowed="$MYPY_KEYS" -v keyline="$TOML_KEY" '
+    /^[[:space:]]*\[/ { section = $0; gsub(/[][[:space:]]/, "", section); next }
+    $0 ~ keyline {
+      key = $0; sub(/[[:space:]]*=.*/, "", key); gsub(/[[:space:]"]/, "", key)
+      full = section == "" ? key : section "." key
+      if (index(full, "tool.mypy.") != 1) next
+      if (index(allowed, " " substr(full, 11) " ") == 0) bad = 1
     }
     END { exit bad }' "$1"
 }
@@ -497,7 +514,7 @@ for path in "${files[@]}"; do
       ;;
     eslint.config.js | eslint.config.mjs | eslint.config.cjs | eslint.config.ts | eslint.config.mts | eslint.config.cts)
       eslint_ok "$path" ||
-        fail "$path: sets an ESLint rule below error or linterOptions, sets rules other than in an object literal, or loads a local file; a rule may only be raised to error"
+        fail "$path: sets an ESLint rule below error or linterOptions, sets rules other than in an object literal, or imports outside ESLINT_PACKAGES ($ESLINT_PACKAGES); a rule may only be raised to error"
       ;;
     .rubocop)
       fail "$path: RuboCop takes its options from bin/lint, so it has no options file"
@@ -524,6 +541,16 @@ for path in "${files[@]}"; do
     pyproject.toml)
       ruff_ok "$path" tool.ruff ||
         fail "$path: Ruff settings outside its list (top:$RUFF_KEYS; lint:$RUFF_LINT_KEYS; format)"
+      mypy_ok "$path" ||
+        fail "$path: mypy settings outside its list ($MYPY_KEYS); bin/build runs mypy --strict"
+      ;;
+    mypy.ini | .mypy.ini)
+      fail "$path: mypy takes its settings from [tool.mypy] in pyproject.toml, so it has no config file"
+      ;;
+    setup.cfg)
+      if grep -q '^\[mypy' "$path"; then
+        fail "$path: mypy takes its settings from [tool.mypy] in pyproject.toml, so setup.cfg has no [mypy] section"
+      fi
       ;;
     ruff.toml | .ruff.toml)
       ruff_ok "$path" "" ||

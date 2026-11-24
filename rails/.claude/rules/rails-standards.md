@@ -17,9 +17,9 @@ strength.
   counts only those files; `bin/changed` sets it.
 - Ruby runs the suite with warnings on; a warning from the app's own code
   fails it.
-- RuboCop autocorrects, then any offense left fails `bin/lint`, and no cop
-  is turned off beyond what `no-lint-exceptions.md` allows. Brakeman fails
-  `bin/lint` on any warning.
+- RuboCop runs with `--enable-pending-cops` and autocorrects, then any
+  offense left fails `bin/lint`, and no cop is turned off beyond what
+  `no-lint-exceptions.md` allows. Brakeman fails `bin/lint` on any warning.
 - `bin/build` eager-loads the app with Zeitwerk.
 - `bin/dependencies` updates gems as `packages.md` states, then fails
   on any gem `bundler-audit` flags and on any Brakeman warning.
@@ -27,4 +27,4 @@ strength.
 - `bin/qa`, outside `bin/ci`, runs `rails test:system`; a failed test, or an
   output line matching `warn` or `deprecat` in any case, fails it.
 - Trigger: any change to a Rails `bin/` script or `test/test_helper.rb`.
-<!-- audited: 057c77fd5fcd -->
+<!-- audited: 7654109dddad -->

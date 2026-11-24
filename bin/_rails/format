@@ -40,9 +40,9 @@ done <<<"$listing"
 if [ "$check" -eq 1 ]; then
   rc=0
   if [ "$all" -eq 1 ]; then
-    bundle exec rubocop --no-parallel --only Layout --format quiet --display-cop-names || rc=1
+    bundle exec rubocop --no-parallel --enable-pending-cops --only Layout --format quiet --display-cop-names || rc=1
   elif [ "${#rb_files[@]}" -gt 0 ]; then
-    bundle exec rubocop --no-parallel --only Layout --force-exclusion --format quiet --display-cop-names "${rb_files[@]}" || rc=1
+    bundle exec rubocop --no-parallel --enable-pending-cops --only Layout --force-exclusion --format quiet --display-cop-names "${rb_files[@]}" || rc=1
   fi
   if [ "${#md_files[@]}" -gt 0 ]; then
     markdownlint-cli2 "${md_files[@]}" || rc=1
@@ -51,9 +51,9 @@ if [ "$check" -eq 1 ]; then
 fi
 
 if [ "$all" -eq 1 ]; then
-  bundle exec rubocop --no-parallel -A --format quiet --display-cop-names || true
+  bundle exec rubocop --no-parallel --enable-pending-cops -A --format quiet --display-cop-names || true
 elif [ "${#rb_files[@]}" -gt 0 ]; then
-  bundle exec rubocop --no-parallel -A --force-exclusion --format quiet --display-cop-names "${rb_files[@]}" || true
+  bundle exec rubocop --no-parallel --enable-pending-cops -A --force-exclusion --format quiet --display-cop-names "${rb_files[@]}" || true
 fi
 if [ "${#md_files[@]}" -gt 0 ]; then
   markdownlint-cli2 --fix "${md_files[@]}" || true

@@ -21,10 +21,10 @@ strength.
   type gets its `eslint.config.js` block in the same change.
 - ESLint passes with zero warnings on every file its config covers;
   `eslint.config.js` keeps every rule on (`no-lint-exceptions.md`).
-- `bin/build` runs the package's `build` script, or, with none, runs
-  `tsc --noEmit` and fails unless `tsc --showConfig` shows `strict` true,
-  no `STRICT_FLAGS` entry false, no `noCheck` and every TypeScript file in
-  the app.
+- `bin/build` runs the package's `build` script when it has one, then
+  `tsc --noEmit`, and fails when either fails or `tsc --showConfig` does
+  not show `strict` true, no `STRICT_FLAGS` entry false, no `noCheck` and
+  every TypeScript file in the app.
 - npm installs from `package-lock.json`; `.nvmrc` pins Node, and every
   `bin/` script activates it through nvm and fails unless it is active.
 - `packageManager` in `package.json` pins npm's exact version; every `bin/`
@@ -38,4 +38,4 @@ strength.
 - `bin/qa`, outside `bin/ci`, installs Chromium and runs `playwright test`;
   a failed test, or output matching those same warnings, fails it.
 - Trigger: any change to a TypeScript `bin/` script or `eslint.config.js`.
-<!-- audited: e4f9ae277d8a -->
+<!-- audited: 2bbbd70d6ae7 -->

@@ -245,6 +245,11 @@ EOF
       expect_fail leaf "$app" "$lang" lint src/add.ts
       grep -q "src/add.ts: no formatter (Prettier)" "${LAST_LOG}" || die "$lang let Prettier skip files without a pragma"
       rm "$app/.prettierrc"
+      cp "$app/package.json" "$WORK/package.keep"
+      (cd "$app" && npm pkg set "scripts.build=echo the-build-script-ran && false")
+      expect_fail leaf "$app" "$lang" build
+      grep -qx "the-build-script-ran" "${LAST_LOG}" || die "$lang build skipped the package's build script"
+      (cd "$app" && npm pkg set scripts.build=true)
       cp "$app/tsconfig.json" "$WORK/tsconfig.keep"
       jq '.compilerOptions += { strict: false, noImplicitAny: false, noCheck: true } | .exclude = ["tests"]' \
         "$WORK/tsconfig.keep" >"$app/tsconfig.json"
@@ -254,6 +259,7 @@ EOF
       done
       grep -q "tests/add.test.ts is outside tsconfig's files" "${LAST_LOG}" || die "$lang let tsconfig leave a file unchecked"
       mv "$WORK/tsconfig.keep" "$app/tsconfig.json"
+      mv "$WORK/package.keep" "$app/package.json"
       ;;
     javascript)
       echo "plain text" >"$app/notes.txt"
@@ -279,6 +285,39 @@ EOF
       expect_fail leaf "$app" "$lang" lint --all
       grep -q "AlwaysUseLowerCamelCase" "${LAST_LOG}" || die "$lang let a swift-format finding through"
       rm "$app/Sources/App/Bad.swift"
+      printf 'public func warned() -> Int {\n  var unused = 1\n  return 2\n}\n' >"$app/Sources/App/Warned.swift"
+      expect_fail leaf "$app" "$lang" build
+      grep -q "was never used" "${LAST_LOG}" || die "$lang let a compiler warning through"
+      rm "$app/Sources/App/Warned.swift"
+      printf '%s\n' 'import Testing' '' '@Test func warned() {' '  var unused = 1' '  #expect(true)' '}' \
+        >"$app/Tests/AppTests/WarnedTests.swift"
+      expect_fail leaf "$app" "$lang" test
+      grep -q "was never used" "${LAST_LOG}" || die "$lang let a compiler warning in a test through"
+      rm "$app/Tests/AppTests/WarnedTests.swift"
+      ;;
+    python)
+      printf 'def untyped(a):\n    return a\n' >"$app/src/untyped.py"
+      expect_fail leaf "$app" "$lang" build
+      grep -q "untyped.py:1: error: Function is missing a type annotation" "${LAST_LOG}" ||
+        die "$lang let an untyped function through"
+      rm "$app/src/untyped.py"
+      ;;
+    rails)
+      cp "$app/.rubocop.yml" "$WORK/rubocop.keep"
+      grep -v NewCops "$WORK/rubocop.keep" >"$app/.rubocop.yml"
+      printf '%s\n' '# frozen_string_literal: true' '' 'class Chars' '  def self.all' "    'abc'.split('')" '  end' 'end' \
+        >"$app/app/models/chars.rb"
+      expect_fail leaf "$app" "$lang" lint app/models/chars.rb
+      grep -q "Style/StringChars" "${LAST_LOG}" || die "$lang let a pending RuboCop cop stay off"
+      rm "$app/app/models/chars.rb"
+      printf '%s\n' '# frozen_string_literal: true' '' 'class Included' '  include Comparable' '  def self.all' '    1' \
+        '  end' 'end' >"$app/app/models/included.rb"
+      expect_fail leaf "$app" "$lang" format --check app/models/included.rb
+      grep -q "Layout/EmptyLinesAfterModuleInclusion" "${LAST_LOG}" || die "$lang format --check let a pending cop stay off"
+      expect_ok leaf "$app" "$lang" format app/models/included.rb
+      [ -z "$(sed -n 5p "$app/app/models/included.rb")" ] || die "$lang format left a pending cop's offense"
+      rm "$app/app/models/included.rb"
+      mv "$WORK/rubocop.keep" "$app/.rubocop.yml"
       ;;
   esac
 
