@@ -110,26 +110,65 @@ if [ "${#gated[@]}" -gt 0 ]; then
   in_background node --input-type=module -e '
     import module from "node:module";
     import { readFileSync, writeSync } from "node:fs";
+    import { extname } from "node:path";
     import { inspect } from "node:util";
     module.enableCompileCache?.();
     const { ESLint } = await import("eslint");
     const prettier = await import("prettier");
     const files = process.argv.slice(1);
     const eslint = new ESLint();
+    const kinds = [
+      { name: "@eslint/js", exts: ["js", "mjs", "cjs", "jsx", "ts", "tsx", "mts", "cts"], configs: (js) => [js.configs.recommended] },
+      { name: "typescript-eslint", exts: ["ts", "tsx", "mts", "cts"], configs: (ts) => ts.configs.recommended },
+      { name: "@eslint/json", exts: ["json", "jsonc", "json5"], family: true, configs: (json) => [{ ...json.configs.recommended, language: "json/json" }] },
+      { name: "@eslint/css", exts: ["css"], family: true, configs: (css) => [{ ...css.configs.recommended, language: "css/css" }] },
+    ];
+    for (const kind of kinds) {
+      kind.plugin = (await import(kind.name).catch(() => ({}))).default;
+    }
+    const baseline = new ESLint({
+      overrideConfigFile: true,
+      overrideConfig: kinds
+        .filter((kind) => kind.plugin)
+        .flatMap((kind) => kind.configs(kind.plugin).map((config) => ({ ...config, files: kind.exts.map((ext) => "**/*." + ext) }))),
+    });
     let failed = false;
+    const report = (line) => {
+      writeSync(3, line + "\n");
+      failed = true;
+    };
     try {
       for (const file of files) {
         const info = await prettier.getFileInfo(file, { resolveConfig: true });
         const options = await prettier.resolveConfig(file);
-        if (info.ignored || info.inferredParser === null || options?.requirePragma) {
-          writeSync(3, file + ": no formatter (Prettier)\n");
-          failed = true;
+        if (info.ignored || info.inferredParser === null || options?.requirePragma || options?.checkIgnorePragma) {
+          report(file + ": no formatter (Prettier)");
         }
         const ignored = await eslint.isPathIgnored(file);
         const config = ignored ? undefined : await eslint.calculateConfigForFile(file);
         if (Object.keys(config?.rules ?? {}).length === 0) {
-          writeSync(3, file + ": no linter (no ESLint rules apply)\n");
-          failed = true;
+          report(file + ": no linter (no ESLint rules apply)");
+        }
+        if (config?.processor) {
+          report(file + ": ESLint runs a processor on it");
+        }
+        const needs = kinds.filter((kind) => kind.exts.includes(extname(file).slice(1)));
+        for (const kind of needs.filter((need) => !need.plugin)) {
+          report(file + ": ESLint needs " + kind.name + " for its recommended rules");
+        }
+        if (config && needs.length > 0 && needs.every((need) => need.plugin)) {
+          const base = await baseline.calculateConfigForFile(file);
+          const rules = config.rules ?? {};
+          const off = Object.entries(base?.rules ?? {})
+            .filter(([id, [level]]) => level > 0 && !(rules[id]?.[0] > 0) && !(rules["@typescript-eslint/" + id]?.[0] > 0))
+            .map(([id]) => id);
+          if (off.length > 0) {
+            report(file + ": recommended ESLint rules not on: " + off.join(", "));
+          }
+          const languages = needs.flatMap((need) => (need.family ? Object.values(need.plugin.languages ?? {}) : []));
+          if (![base?.language, ...languages].includes(config.language)) {
+            report(file + ": ESLint parses it as another language");
+          }
         }
       }
     } catch (error) {

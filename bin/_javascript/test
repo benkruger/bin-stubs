@@ -228,8 +228,8 @@ if [ "${#required[@]}" -gt 0 ] && [ ! -f "$covjson" ]; then
 fi
 
 file_covs() {
-  jq -r '. as $summary | $ARGS.positional[] as $want
-    | first($summary | keys_unsorted[] | select(. == $want or endswith("/" + $want))) // null
+  jq -r --arg real "$(pwd -P)" --arg logical "$PWD" '. as $summary | $ARGS.positional[] as $want
+    | first($summary | keys_unsorted[] | select(. == $real + "/" + $want or . == $logical + "/" + $want)) // null
     | if . == null then "missing"
       else $summary[.] | [.functions, .lines, .branches, .statements]
         | map(.pct * 100 | round | "\(. / 100 | floor).\(. % 100 | tostring | if length < 2 then "0" + . else . end)")

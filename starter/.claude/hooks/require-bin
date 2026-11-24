@@ -1,9 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-TOOLS=" bun bunx biome tsc eslint prettier vitest jest c8 ruff pytest rubocop brakeman rspec cargo swift swift-format xcodebuild shellcheck shfmt markdownlint-cli2 "
+TOOLS=" bun bunx biome tsc eslint prettier vitest jest c8 ruff pytest mypy rubocop brakeman rspec cargo swift swift-format xcodebuild shellcheck shfmt markdownlint-cli2 "
 RUNNERS=" npx pnpm yarn npm bundle uv xcrun "
 SHELLS=" sh bash zsh dash "
+WRAPPERS=" env time command exec nohup nice builtin "
+PYTHONS=" python python3 "
 GIT_OPTS_WITH_ARG=" -C -c --git-dir --work-tree --namespace "
 
 if ! command -v jq >/dev/null 2>&1; then
@@ -14,9 +16,67 @@ fi
 command="$(jq -r '.tool_input.command // empty')"
 [ -n "$command" ] || exit 0
 
+segments() {
+  perl -e '
+    my ($text, $quote, $part) = ($ARGV[0], "", "");
+    my $i = 0;
+    while ($i < length $text) {
+      my $c = substr($text, $i, 1);
+      my $two = substr($text, $i, 2);
+      if ($quote eq "\x27") {
+        $quote = "" if $c eq "\x27";
+        $part .= $c;
+      } elsif ($two eq "\$(" || $c eq "`") {
+        print "$part\n";
+        $part = "";
+        $i += $two eq "\$(" ? 2 : 1;
+        next;
+      } elsif ($quote eq "\"") {
+        $quote = "" if $c eq "\"";
+        $part .= $c;
+      } elsif ($c eq "\x27" || $c eq "\"") {
+        $quote = $c;
+        $part .= $c;
+      } elsif ($c =~ /[;&|()\n]/) {
+        print "$part\n";
+        $part = "";
+      } else {
+        $part .= $c;
+      }
+      $i++;
+    }
+    print "$part\n";
+  ' "$1"
+}
+
 skip_assignments() {
   while [ "$i" -lt "${#words[@]}" ] && [[ "${words[$i]}" == [A-Za-z_]*=* ]]; do
+    case "${words[$i]}" in
+      CI=* | FLOW_CHECKED_APP=*) blocked="check-skip" ;;
+    esac
     i=$((i + 1))
+  done
+}
+
+skip_wrappers() {
+  while [ "$i" -lt "${#words[@]}" ]; do
+    skip_assignments
+    [ "$i" -lt "${#words[@]}" ] || return 0
+    case " ${words[$i]##*/} " in
+      " export " | " declare " | " readonly ")
+        i=$((i + 1))
+        skip_assignments
+        return 0
+        ;;
+    esac
+    [[ "$WRAPPERS" == *" ${words[$i]##*/} "* ]] || return 0
+    i=$((i + 1))
+    while [ "$i" -lt "${#words[@]}" ] && [[ "${words[$i]}" == -* ]]; do
+      case "${words[$i]}" in
+        -n | -u | -S) i=$((i + 2)) ;;
+        *) i=$((i + 1)) ;;
+      esac
+    done
   done
 }
 
@@ -40,20 +100,22 @@ git_commits() {
 
 blocked=""
 while IFS= read -r segment; do
-  read -r -a words <<<"$segment"
+  read -r -a words <<<"$segment" || true
   [ "${#words[@]}" -gt 0 ] || continue
   for k in "${!words[@]}"; do
     words[k]="${words[k]//\"/}"
     words[k]="${words[k]//\'/}"
   done
   i=0
-  skip_assignments
+  skip_wrappers
+  [ -z "$blocked" ] || break
   [ "$i" -lt "${#words[@]}" ] || continue
   if [[ "$SHELLS" == *" ${words[$i]##*/} "* ]]; then
     case "${words[$((i + 1))]:-}" in
       -c | -lc)
         i=$((i + 2))
-        skip_assignments
+        skip_wrappers
+        [ -z "$blocked" ] || break
         [ "$i" -lt "${#words[@]}" ] || continue
         ;;
     esac
@@ -74,6 +136,11 @@ while IFS= read -r segment; do
     esac
     word="${words[$i]:-}"
   fi
+  if [[ "$PYTHONS" == *" ${word%%[0-9.]*} "* ]] || [[ "$PYTHONS" == *" $word "* ]]; then
+    if [ "${words[$((i + 1))]:-}" = "-m" ]; then
+      word="${words[$((i + 2))]:-}"
+    fi
+  fi
   if [[ "$TOOLS" == *" $word "* ]]; then
     blocked="$word"
     break
@@ -82,8 +149,12 @@ while IFS= read -r segment; do
     blocked="rails test"
     break
   fi
-done < <(printf '%s\n' "$command" | awk '{ gsub(/&&|\|\||;|\|/, "\n"); print }')
+done < <(segments "$command")
 
+if [ "$blocked" = "check-skip" ]; then
+  echo "Blocked: CI and FLOW_CHECKED_APP make the bin/ scripts skip their toolchain and package checks; run the command without them." >&2
+  exit 2
+fi
 if [ "$blocked" = "stamp-rules" ]; then
   echo "Blocked: only bin/commit stamps rules, after its review passes; commit the rule with bin/commit." >&2
   exit 2

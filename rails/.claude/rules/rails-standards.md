@@ -13,8 +13,11 @@ strength.
 - `bin/test` runs the suite with `rails test`, after `db:test:prepare` when
   the app has `config/database.yml`.
 - `test/test_helper.rb` starts SimpleCov with 100% line and branch coverage
-  before the app loads. When `COVERAGE_DIRTY_FILES` names a file list, it
-  counts only those files; `bin/changed` sets it.
+  before the app loads. `bin/test` then reads SimpleCov's resultset and
+  fails any source below 100% lines or branches, or with no row: every
+  `app/` and `lib/` `.rb` file on a whole run, the files the list
+  `COVERAGE_DIRTY_FILES` names when `bin/changed` sets it, and the sources
+  of the tests `bin/test <file>` runs.
 - Ruby runs the suite with warnings on; a warning from the app's own code
   fails it.
 - RuboCop runs with `--enable-pending-cops` and autocorrects, then any
@@ -23,8 +26,9 @@ strength.
 - `bin/build` eager-loads the app with Zeitwerk.
 - `bin/dependencies` updates gems as `packages.md` states, then fails
   on any gem `bundler-audit` flags and on any Brakeman warning.
-- `.ruby-version` pins Ruby; `bin/ci` fails unless that version is active.
+- `.ruby-version` pins Ruby; outside CI, `bin/ci` fails unless that version
+  is active.
 - `bin/qa`, outside `bin/ci`, runs `rails test:system`; a failed test, or an
   output line matching `warn` or `deprecat` in any case, fails it.
 - Trigger: any change to a Rails `bin/` script or `test/test_helper.rb`.
-<!-- audited: 7654109dddad -->
+<!-- audited: 654bdcbb4cdc -->

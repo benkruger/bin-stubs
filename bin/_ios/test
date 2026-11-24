@@ -12,7 +12,7 @@ whole=0
 
 coverage_ok() {
   local report="$1"
-  python3 - "$report" "$whole" <<'PY'
+  python3 - "$report" "$whole" "$(pwd -P)" "$PWD" <<'PY'
 import json, sys
 report = json.load(open(sys.argv[1]))
 whole = sys.argv[2] == "1"
@@ -21,16 +21,18 @@ files = []
 if "targets" in report:
     for target in report["targets"]:
         name = target.get("name", "")
-        if name.endswith(".xctest") or "Tests" in name:
+        if name.endswith(".xctest"):
             continue
         files.extend(target.get("files", []))
 else:
     data = report["data"][0] if "data" in report else report
     files = data.get("files", [])
+roots = [r.rstrip("/") + "/" for r in sys.argv[3:5]]
 bad = []
 for f in files:
-    name = f.get("filename") or f.get("name") or ""
-    if "/Tests/" in name or name.startswith("Tests/"):
+    name = f.get("path") or f.get("filename") or f.get("name") or ""
+    rel = next((name[len(r):] for r in roots if name.startswith(r)), None)
+    if rel is None or rel.startswith(("Tests/", ".build/")):
         continue
     summary = f.get("summary", {})
     lines = summary.get("lines", {})
@@ -95,8 +97,9 @@ for binary in "${binaries[@]}"; do
   [ ! -d "$binary.dSYM" ] || mv "$binary.dSYM" "$binary.dSYM.aside"
 done
 cov_rc=0
+roots="$(perl -e 'print join "|", map { quotemeta } @ARGV' "$(pwd -P)" "$PWD")"
 xcrun llvm-cov export "${binaries[0]}" ${objects[@]+"${objects[@]}"} -instr-profile "$prof" -format=text \
-  -ignore-filename-regex='Tests|\.build' >"$root/.coverage.json" || cov_rc=$?
+  "-ignore-filename-regex=^($roots)/(Tests|\.build)/" >"$root/.coverage.json" || cov_rc=$?
 for binary in "${binaries[@]}"; do
   [ ! -d "$binary.dSYM.aside" ] || mv "$binary.dSYM.aside" "$binary.dSYM"
 done

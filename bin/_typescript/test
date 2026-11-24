@@ -67,58 +67,12 @@ owned_change() {
   return 0
 }
 
-is_source() {
-  local rest="${1#src/}"
-  [ "$rest" != "$1" ] || return 1
-  case "$1" in
-    *.test.ts | *.test.tsx | *.test.mts | *.test.cts) return 1 ;;
-    *.d.ts | *.d.mts | *.d.cts) return 1 ;;
-    *.ts | *.tsx | *.mts | *.cts) return 0 ;;
-    *) return 1 ;;
-  esac
-}
-
-is_test() {
-  local rest="${1#tests/}"
-  [ "$rest" != "$1" ] || return 1
-  case "$1" in
-    *.test.ts | *.test.tsx | *.test.mts | *.test.cts) return 0 ;;
-    *) return 1 ;;
-  esac
-}
-
-test_for_source() {
-  local rel="${1#src/}" ext
-  rel="${rel%.*}"
-  for ext in ts tsx mts cts; do
-    if [ -f "tests/${rel}.test.${ext}" ]; then
-      echo "tests/${rel}.test.${ext}"
-      return
-    fi
-  done
-  echo "tests/${rel}.test.${1##*.}"
-}
-
-source_for_test() {
-  local rel="${1#tests/}"
-  rel="${rel%.test.ts}"
-  rel="${rel%.test.tsx}"
-  rel="${rel%.test.mts}"
-  rel="${rel%.test.cts}"
-  if [ -f "src/${rel}.tsx" ]; then
-    echo "src/${rel}.tsx"
-  elif [ -f "src/${rel}.mts" ]; then
-    echo "src/${rel}.mts"
-  elif [ -f "src/${rel}.cts" ]; then
-    echo "src/${rel}.cts"
-  else
-    echo "src/${rel}.ts"
-  fi
-}
+# shellcheck source=lib/sources.sh
+. "$here/lib/sources.sh"
 
 file_covs() {
-  jq -r '. as $summary | $ARGS.positional[] as $want
-    | first($summary | keys_unsorted[] | select(. == $want or endswith("/" + $want))) // null
+  jq -r --arg real "$(pwd -P)" --arg logical "$PWD" '. as $summary | $ARGS.positional[] as $want
+    | first($summary | keys_unsorted[] | select(. == $real + "/" + $want or . == $logical + "/" + $want)) // null
     | if . == null then "missing"
       else $summary[.] | [.functions, .lines, .branches, .statements]
         | map(.pct * 100 | round | "\(. / 100 | floor).\(. % 100 | tostring | if length < 2 then "0" + . else . end)")

@@ -364,8 +364,9 @@ in the output fails it. The app brings its own Playwright config and specs.
 In `bin/ci`, every step covers the whole app:
 
 - **TypeScript**: Prettier `--check`, a formatter and a linter for every
-  file, ESLint with zero warnings, the package build or `tsc`, then Vitest
-  with 100% functions, lines, branches and statements on every source.
+  file, ESLint with zero warnings and every rule of its recommended set on,
+  the package build or `tsc`, then Vitest with 100% functions, lines,
+  branches and statements on every source.
 - **JavaScript**: `biome format` without writing, a formatter and a linter
   for every file, Biome check, the package build or `node --check`, then the
   package test under c8 with 100% functions, lines, branches and statements
@@ -376,8 +377,8 @@ In `bin/ci`, every step covers the whole app:
   RuboCop, Brakeman and markdownlint; Zeitwerk; then `db:test:prepare` when
   the app has a database, and Minitest through `rails test`, where warnings
   fail.
-- **Rust**: `cargo fmt --check`, Clippy, `cargo build`, then `cargo llvm-cov`
-  with a 100% line bar.
+- **Rust**: `cargo fmt --check`, then Clippy, `cargo build` and
+  `cargo llvm-cov` with a 100% line bar, each over every workspace member.
 - **iOS**: each Swift file compared with `swift-format`'s output,
   `swift-format` lint, `swift build` or `xcodebuild`, then `swift test` or
   `xcodebuild` with a 100% line bar.
@@ -422,20 +423,23 @@ guards, so a broken standard fails the gate like a failing test.
   swift-format's rules and `.shellcheckrc` each have a list of allowed
   settings, which only turn rules on or up (Biome's `preset` `all` and
   groups at `error`, a RuboCop cop `Enabled: true`); an ESLint config may
-  set a rule only to `error`; markdownlint and Brakeman take no config file
-  at all.
+  set a rule only to a bare `error`, with no options; markdownlint and
+  Brakeman take no config file at all.
 - A code file holds a comment, outside strings, regexes and heredocs. Only
-  a line-1 shebang, a Ruby magic comment, a `# shellcheck source=` line and
-  Swift's line-1 `// swift-tools-version:` stay.
+  a line-1 shebang, a Ruby magic comment in the leading comment block, a
+  `# shellcheck source=` line and line 1 `// swift-tools-version:` of a
+  `Package.swift` stay.
 - A test is skipped, focused, left as todo or marked as expected to fail,
-  in any of the six languages' test runners.
+  in any of the six languages' test runners, or a test file is left out of
+  pytest's collection.
 - A flag, config or call raises the test time limit for a whole suite, or a
   single test's limit is anything but a plain number.
 - A build or coverage output file is tracked or visible to git, or
   `.gitignore` lacks one of `node_modules/`, `dist/`, `build/`,
   `coverage/`, `.venv/`, `target/`, `.build/` and `.flow-states/`.
 - SimpleCov starts without `minimum_coverage line: 100, branch: 100` or
-  with an `add_filter`, or an Xcode test plan or scheme turns coverage off
+  with `add_filter`, `skip` or `filters`, a `.simplecov` file exists, or an
+  Xcode test plan or scheme turns coverage off
   or limits it to some targets.
 - A bash script has a shellcheck finding or is not formatted by
   `shfmt -i 2 -ci`, or an entry point is not executable or does not start
@@ -447,8 +451,8 @@ guards, so a broken standard fails the gate like a failing test.
 - A script in a `bin/_<language>/` folder other than `dependencies` runs a
   package manager's install, update or add command.
 - `.claude/settings.json` is missing or invalid, does not allow `Bash(bin/*)`,
-  allows a pattern that starts with a wildcard, does not deny destructive
-  git, or does not wire both hooks.
+  allows every command (`Bash` or a pattern that starts with a wildcard),
+  does not deny destructive git, or does not wire both hooks.
 
 When you add a check:
 
@@ -479,7 +483,7 @@ The starter's `.claude/settings.json` sets what the agent may run:
   approval prompts. Both match only the relative form, so scripts are always
   run as `bin/ci`, and one app's scripts as `bin/ci --<app>`. A pattern that
   starts with a wildcard would also match `/usr/bin/git`, so the guards
-  reject one.
+  reject one, and a bare `Bash` too.
 - **Denies** destructive git: `commit` (commits go through `bin/commit`),
   `rebase`, `checkout`, `reset`, `restore`, `stash`, `clean`, and a force-push
   (`--force`, `--force-with-lease`, `-f` or a `+` refspec, wherever it sits
@@ -494,9 +498,12 @@ The starter's `.claude/settings.json` sets what the agent may run:
 - **`require-bin`** (`PreToolUse`) blocks a command that calls the toolchain
   directly (bun, Biome, Ruff, RuboCop, cargo, swift, `rails test` and the
   rest), and a raw `git commit`, anywhere in a compound command, in quotes,
-  inside `sh -c`, after git options like `-C`, and through runners like
-  `npx`, `bundle exec` and `uv run`. The agent is told to use the `bin/`
-  script. It also blocks running `bin/stamp-rules` directly, so only
+  inside `sh -c`, `$(...)` or backticks, after git options like `-C`, and
+  through runners like `npx`, `bundle exec`, `uv run`, `python -m`, `env`,
+  `time`, `command`, `exec`, `nohup` and `nice`. The agent is told to use
+  the `bin/` script. It blocks a command that sets `CI` or
+  `FLOW_CHECKED_APP`, which make the `bin/` scripts skip their toolchain and
+  package checks. It also blocks running `bin/stamp-rules` directly, so only
   `bin/commit` stamps a rule, after its review passes.
 - **`session-start`** (`SessionStart`) runs `bin/ci` once in a cloud session,
   so the session starts from a known state. A local session is left alone.

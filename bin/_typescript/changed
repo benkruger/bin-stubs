@@ -58,37 +58,8 @@ fi
 packages_check "$PWD" || exit 1
 export FLOW_CHECKED_APP="$PWD"
 
-is_source() {
-  local rest="${1#src/}"
-  [ "$rest" != "$1" ] || return 1
-  case "$1" in
-    *.test.ts | *.test.tsx | *.test.mts | *.test.cts) return 1 ;;
-    *.d.ts | *.d.mts | *.d.cts) return 1 ;;
-    *.ts | *.tsx | *.mts | *.cts) return 0 ;;
-    *) return 1 ;;
-  esac
-}
-
-is_test() {
-  local rest="${1#tests/}"
-  [ "$rest" != "$1" ] || return 1
-  case "$1" in
-    *.test.ts | *.test.tsx | *.test.mts | *.test.cts) return 0 ;;
-    *) return 1 ;;
-  esac
-}
-
-test_for_source() {
-  local rel="${1#src/}" ext
-  rel="${rel%.*}"
-  for ext in ts tsx mts cts; do
-    if [ -f "tests/${rel}.test.${ext}" ]; then
-      echo "tests/${rel}.test.${ext}"
-      return
-    fi
-  done
-  echo "tests/${rel}.test.${1##*.}"
-}
+# shellcheck source=lib/sources.sh
+. "$here/lib/sources.sh"
 
 already() {
   local n="$1" t

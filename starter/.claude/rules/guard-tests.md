@@ -8,11 +8,12 @@ review `bin/commit` runs.
 
 - `tests/run` is the repo-level suite `bin/ci` runs, and it runs
   `tests/guards`; a failing suite fails `bin/ci` as
-  `every-test-runs.md` states. Trigger: any change to `tests/run` or
-  `tests/guards`.
+  `every-test-runs.md` states. `tests/guards` fails when a scan cannot
+  read a file or does not finish, so no file escapes a check unread.
+  Trigger: any change to `tests/run` or `tests/guards`.
 - `tests/run` fails when a cap in `tests/guards` differs from the value it
-  pins. A change to a cap edits both files together. Trigger: any change
-  to a cap.
+  pins or is assigned more than once. A change to a cap edits both files
+  together. Trigger: any change to a cap.
 - The review `bin/commit` runs checks a rule's text, as `rule-authoring.md`
   states. Trigger: any change to a file under `.claude/rules/`.
 - A rule that states a standard on code names the check `bin/ci` runs
@@ -20,4 +21,4 @@ review `bin/commit` runs.
   change as that check; the review `rule-authoring.md` describes refuses
   a rule that does not describe its check exactly as it works. Trigger: a
   new or edited rule under `.claude/rules/`.
-<!-- audited: eedf1fac2dd3 -->
+<!-- audited: b69efbc29905 -->

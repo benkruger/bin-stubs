@@ -7,4 +7,4 @@ export CARGO_NET_OFFLINE=true
 # shellcheck source=lib/toolchain.sh
 . "$here/lib/toolchain.sh"
 packages_check "$PWD" || exit 1
-cargo build
+cargo build --workspace

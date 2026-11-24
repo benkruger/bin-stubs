@@ -22,10 +22,9 @@ strength.
   other file type unless `UNGATED_NAMES` or the exact paths in
   `UNGATED_PATHS` name it. Biome passes with zero warnings.
 - `biome.json` keeps every rule on (`no-lint-exceptions.md`).
-- `.nvmrc` pins Node; every `bin/` script activates it through nvm and
-  fails unless it is active.
-- `packageManager` in `package.json` pins the package manager's exact
-  version; every `bin/` script fails unless that version is active.
+- `.nvmrc` pins Node and `packageManager` in `package.json` the package
+  manager's exact version; outside CI, every `bin/` script activates Node
+  through nvm and fails unless both are active.
 - The lockfile's package manager audits with no moderate or worse advisory;
   `bin/ci` fails otherwise. A vulnerable transitive package is
   lifted through the package manager's overrides.
@@ -38,4 +37,4 @@ strength.
 - `bin/qa`, outside `bin/ci`, installs Chromium and runs `playwright test`;
   a failed test, or output matching those same warnings, fails it.
 - Trigger: any change to a JavaScript `bin/` script.
-<!-- audited: 2d21b61d34a4 -->
+<!-- audited: 589ef09d7d98 -->

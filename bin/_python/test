@@ -37,7 +37,7 @@ omit =
     tests/*
 EOF
 
-pytest_args=(--cov-branch --cov-report=term-missing:skip-covered "--cov-report=json:$covjson" "--cov-config=$covrc")
+pytest_args=(-o addopts= --cov-branch --cov-report=term-missing:skip-covered "--cov-report=json:$covjson" "--cov-config=$covrc")
 if [ -d src ]; then
   pytest_args+=(--cov=src)
 else
@@ -76,59 +76,8 @@ owned_change() {
   return 0
 }
 
-is_source() {
-  case "$1" in
-    tests/* | .venv/* | test_*.py | */test_*.py | conftest.py | */conftest.py) return 1 ;;
-    *.py) ;;
-    *) return 1 ;;
-  esac
-  [ ! -d src ] || [ "${1#src/}" != "$1" ]
-}
-
-needs_twin() {
-  [ "$(basename "$1")" != "__init__.py" ]
-}
-
-is_test() {
-  case "$1" in
-    tests/test_*.py | tests/*/test_*.py) return 0 ;;
-    *) return 1 ;;
-  esac
-}
-
-test_for_source() {
-  local rel="$1" dir base
-  if [[ "$rel" == src/* ]]; then
-    rel="${rel#src/}"
-  fi
-  dir="$(dirname "$rel")"
-  base="$(basename "$rel" .py)"
-  if [ "$dir" = "." ]; then
-    echo "tests/test_${base}.py"
-  else
-    echo "tests/${dir}/test_${base}.py"
-  fi
-}
-
-source_for_test() {
-  local rel="${1#tests/}" dir base
-  base="$(basename "$rel")"
-  base="${base#test_}"
-  dir="$(dirname "$rel")"
-  if [ "$dir" = "." ]; then
-    if [ -f "src/${base}" ]; then
-      echo "src/${base}"
-    else
-      echo "${base}"
-    fi
-  else
-    if [ -f "src/${dir}/${base}" ]; then
-      echo "src/${dir}/${base}"
-    else
-      echo "${dir}/${base}"
-    fi
-  fi
-}
+# shellcheck source=lib/sources.sh
+. "$here/lib/sources.sh"
 
 already() {
   local n="$1" t
@@ -191,8 +140,8 @@ else
 fi
 
 file_covs() {
-  jq -r '(.files // {}) as $files | $ARGS.positional[] as $want
-    | first(($files[$want] // empty), ($files | to_entries[] | select(.key | endswith("/" + $want)) | .value)) // null
+  jq -r '.files as $files | $ARGS.positional[] as $want
+    | $files[$want]
     | if . == null then "missing"
       else (.summary // {}) | "\(.covered_lines // 0)/\(.num_statements // 0) \(.covered_branches // 0)/\(.num_branches // 0)"
       end' "$covjson" --args "$@"
@@ -210,6 +159,10 @@ done
 
 covs=()
 if [ "${#required[@]}" -gt 0 ]; then
+  if ! jq -e '.files | type == "object"' "$covjson" >/dev/null 2>&1; then
+    echo "bin/test: pytest wrote no coverage report, so it measured nothing" >&2
+    exit 1
+  fi
   rows="$(file_covs "${required[@]}")"
   while IFS= read -r row; do
     covs+=("$row")

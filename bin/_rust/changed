@@ -31,9 +31,6 @@ fi
 if [ -z "$(changed_files)" ]; then
   exit 0
 fi
-if [ -x "$here/ensure-deps" ]; then
-  "$here/ensure-deps"
-fi
 "$here/format"
 "$here/lint"
 "$here/test"

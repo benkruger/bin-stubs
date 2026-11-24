@@ -43,12 +43,47 @@ if [ ! -f "$resultset" ]; then
   exit 1
 fi
 whole=0
-[ "$#" -gt 0 ] || [ -n "${COVERAGE_DIRTY_FILES:-}" ] || whole=1
-measured="$(jq '[.[].coverage | keys[]] | unique | length' "$resultset")"
-if [ "$whole" -eq 1 ] && [ "$measured" -eq 0 ]; then
+sources=()
+if [ -n "${COVERAGE_DIRTY_FILES:-}" ]; then
+  while IFS= read -r src; do
+    [ -n "$src" ] && sources+=("$src")
+  done <"$COVERAGE_DIRTY_FILES"
+elif [ "$#" -gt 0 ]; then
+  for t in "$@"; do
+    src="$(source_for_test "${t#./}")"
+    [ ! -f "$src" ] || sources+=("$src")
+  done
+else
+  whole=1
+  while IFS= read -r -d '' src; do
+    [ -f "$src" ] && sources+=("$src")
+  done < <(git ls-files -z --cached --others --exclude-standard -- 'app/*.rb' 'lib/*.rb')
+fi
+if [ "$whole" -eq 1 ] && [ "${#sources[@]}" -eq 0 ]; then
   echo "bin/test: SimpleCov measured no source" >&2
   exit 1
 fi
+short=0
+if [ "${#sources[@]}" -gt 0 ]; then
+  while IFS=$'\t' read -r src lines branches; do
+    if [ "$lines" = "missing" ]; then
+      echo "bin/test: $src has no coverage row (need 100/100)" >&2
+      short=1
+    elif [ "${lines%/*}" != "${lines#*/}" ] || [ "${branches%/*}" != "${branches#*/}" ]; then
+      echo "bin/test: $src at $lines lines $branches branches (need 100/100)" >&2
+      short=1
+    fi
+  done < <(jq -r --arg real "$(pwd -P)" --arg logical "$PWD" '[.[].coverage] | add as $cov
+    | $ARGS.positional[] as $src
+    | ($cov[$real + "/" + $src] // $cov[$logical + "/" + $src]) as $row
+    | if $row == null then "\($src)\tmissing\t" else
+        ([$row.lines[]? | select(type == "number")]) as $l
+        | ([($row.branches // {})[] | .[]]) as $b
+        | "\($src)\t\([$l[] | select(. > 0)] | length)/\($l | length)\t\([$b[] | select(. > 0)] | length)/\($b | length)"
+      end' "$resultset" --args "${sources[@]}")
+fi
+[ "$short" -eq 0 ] || exit 1
+measured="${#sources[@]}"
 
 orphan=0
 while IFS= read -r t; do

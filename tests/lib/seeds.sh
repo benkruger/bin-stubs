@@ -262,7 +262,6 @@ require 'simplecov'
 SimpleCov.start do
   enable_coverage :branch
   minimum_coverage line: 100, branch: 100
-  skip %w[/config/ /test/]
 end
 
 require_relative '../config/environment'
@@ -538,12 +537,25 @@ source_rules() {
   case "$lang" in
     typescript)
       printf 'export type Version = string;\n' >"$app/src/version.d.ts"
+      expect_fail leaf "$app" "$lang" build
+      grep -q "skipLibCheck skips the app's own src/version.d.ts" "${LAST_LOG}" ||
+        die "$lang let skipLibCheck skip the app's own declarations"
+      cp "$app/tsconfig.json" "$WORK/tsconfig.keep"
+      jq 'del(.compilerOptions.skipLibCheck)' "$WORK/tsconfig.keep" >"$app/tsconfig.json"
       printf '%s\n' 'export function button(): string {' '  return "b";' '}' >"$app/src/Button.tsx"
       printf '%s\n' 'import { expect, test } from "vitest";' 'import { button } from "../src/Button";' '' \
         'test("button", () => {' '  expect(button()).toBe("b");' '});' >"$app/tests/Button.test.tsx"
+      mkdir -p "$app/lib" "$app/tests/lib"
+      printf '%s\n' 'export function twice(n: number): number {' '  return n * 2;' '}' >"$app/lib/twice.ts"
+      printf '%s\n' 'import { expect, test } from "vitest";' 'import { twice } from "../../lib/twice";' '' \
+        'test("twice", () => {' '  expect(twice(2)).toBe(4);' '});' >"$app/tests/lib/twice.test.ts"
       expect_ok leaf "$app" "$lang" changed
       expect_ok leaf "$app" "$lang" ci --force
-      rm "$app/src/version.d.ts" "$app/src/Button.tsx" "$app/tests/Button.test.tsx"
+      rm "$app/tests/lib/twice.test.ts"
+      expect_fail leaf "$app" "$lang" ci --force
+      grep -q "no mirrored test for lib/twice.ts" "${LAST_LOG}" || die "$lang let a source outside src/ go untested"
+      rm -r "${app:?}/lib" "$app/tests/lib" "$app/src/version.d.ts" "$app/src/Button.tsx" "$app/tests/Button.test.tsx"
+      mv "$WORK/tsconfig.keep" "$app/tsconfig.json"
       ;;
     javascript)
       printf '%s\n' 'export function mul(a, b) {' '  return a * b;' '}' >"$app/src/mul.js"
@@ -642,4 +654,28 @@ pin_file_of() {
     ios) printf '%s\n' .xcode-version ;;
     *) return 1 ;;
   esac
+}
+
+decoy_coverage() {
+  local app="$1" ext="$2"
+  mkdir -p "$app/lib/src" "$app/tests/lib/src"
+  if [ "$ext" = ts ]; then
+    printf '%s\n' 'export function orphan(): number {' '  return 1;' '}' >"$app/src/orphan.ts"
+    cp "$app/src/orphan.ts" "$app/lib/src/orphan.ts"
+    printf '%s\n' 'import { expect, test } from "vitest";' '' 'test("orphan", () => {' '  expect(1).toBe(1);' '});' \
+      >"$app/tests/orphan.test.ts"
+    printf '%s\n' 'import { expect, test } from "vitest";' 'import { orphan } from "../../../lib/src/orphan";' '' \
+      'test("lib orphan", () => {' '  expect(orphan()).toBe(1);' '});' >"$app/tests/lib/src/orphan.test.ts"
+  else
+    printf '%s\n' 'export function orphan() {' '  return 1;' '}' >"$app/src/orphan.js"
+    cp "$app/src/orphan.js" "$app/lib/src/orphan.js"
+    printf '%s\n' 'import assert from "node:assert/strict";' 'import test from "node:test";' '' 'test("orphan", () => {' \
+      '  assert.equal(1, 1);' '});' >"$app/tests/orphan.test.js"
+    printf '%s\n' 'import assert from "node:assert/strict";' 'import test from "node:test";' \
+      'import { orphan } from "../../../lib/src/orphan.js";' '' 'test("lib orphan", () => {' '  assert.equal(orphan(), 1);' \
+      '});' >"$app/tests/lib/src/orphan.test.js"
+  fi
+  expect_fail leaf "$app" "$lang" ci --force
+  grep -q "src/orphan.$ext has no coverage row" "${LAST_LOG}" || die "$lang matched a source to another file's coverage row"
+  rm -r "${app:?}/lib" "$app/tests/lib" "$app/src/orphan.$ext" "$app/tests/orphan.test.$ext"
 }

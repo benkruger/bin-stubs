@@ -236,6 +236,24 @@ EOF
       echo "export const a = 1;" >"$app/src/plain.xyz"
       expect_fail leaf "$app" "$lang" lint src/plain.xyz
       grep -q "src/plain.xyz: no formatter (Prettier)" "${LAST_LOG}" || die "$lang let a file only ESLint checks through"
+      printf '%s\n' 'import js from "@eslint/js";' 'import json from "@eslint/json";' \
+        'import { defineConfig } from "eslint/config";' 'import tseslint from "typescript-eslint";' '' \
+        'export default defineConfig([' \
+        '  { files: ["src/**/*.ts"], extends: [js.configs.recommended, tseslint.configs.recommended] },' \
+        '  { files: ["src/**/*.ts"], processor: { preprocess: () => [], postprocess: () => [] } },' \
+        '  { files: ["tests/**/*.ts"], plugins: { json }, language: "json/json" },' \
+        '  { files: ["**/*.js"], extends: [js.configs.recommended] },' \
+        '  { ...tseslint.configs.eslintRecommended, files: ["**/*.js"] },' \
+        '  { files: ["**/*.json"], rules: { "no-console": "error" } },' \
+        ']);' >"$app/eslint.config.js"
+      expect_fail leaf "$app" "$lang" lint src/add.ts tests/add.test.ts eslint.config.js package.json
+      grep -q "src/add.ts: ESLint runs a processor on it" "${LAST_LOG}" || die "$lang let an ESLint processor hide code"
+      grep -q "tests/add.test.ts: ESLint parses it as another language" "${LAST_LOG}" ||
+        die "$lang let ESLint parse TypeScript as another language"
+      grep -q "eslint.config.js: recommended ESLint rules not on: .*no-undef" "${LAST_LOG}" ||
+        die "$lang let a preset turn recommended ESLint rules off"
+      grep -q "package.json: recommended ESLint rules not on: json/" "${LAST_LOG}" ||
+        die "$lang let one ESLint rule stand for the recommended set"
       mv "$WORK/eslint.config.keep" "$app/eslint.config.js"
       rm "$app/src/plain.xyz"
       printf '{ bad json\n' >"$app/.prettierrc"
@@ -247,7 +265,18 @@ EOF
       printf '{ "requirePragma": true }\n' >"$app/.prettierrc"
       expect_fail leaf "$app" "$lang" lint src/add.ts
       grep -q "src/add.ts: no formatter (Prettier)" "${LAST_LOG}" || die "$lang let Prettier skip files without a pragma"
+      printf '{ "checkIgnorePragma": true }\n' >"$app/.prettierrc"
+      expect_fail leaf "$app" "$lang" lint src/add.ts
+      grep -q "src/add.ts: no formatter (Prettier)" "${LAST_LOG}" || die "$lang let Prettier skip files with an ignore pragma"
       rm "$app/.prettierrc"
+      cp "$app/tsconfig.json" "$app/tsconfig.app.json"
+      cp "$app/tsconfig.json" "$WORK/tsconfig.keep"
+      printf '{ "files": [], "references": [{ "path": "./tsconfig.app.json" }] }\n' >"$app/tsconfig.json"
+      expect_fail leaf "$app" "$lang" build
+      grep -q "src/add.ts is outside tsconfig's files" "${LAST_LOG}" || die "$lang let a tsconfig that lists no files through"
+      mv "$WORK/tsconfig.keep" "$app/tsconfig.json"
+      rm "$app/tsconfig.app.json"
+      decoy_coverage "$app" ts
       cp "$app/package.json" "$WORK/package.keep"
       (cd "$app" && npm pkg set "scripts.build=echo the-build-script-ran && false")
       expect_fail leaf "$app" "$lang" build
@@ -282,6 +311,7 @@ EOF
       expect_fail leaf "$app" "$lang" lint src/warn.js
       grep -q "noUnusedVariables" "${LAST_LOG}" || die "$lang let a Biome warning through"
       rm "$app/src/warn.js"
+      decoy_coverage "$app" js
       ;;
     ios)
       mkdir -p "$app/App"
@@ -305,6 +335,10 @@ EOF
       expect_fail leaf "$app" "$lang" test
       grep -q "was never used" "${LAST_LOG}" || die "$lang let a compiler warning in a test through"
       rm "$app/Tests/AppTests/WarnedTests.swift"
+      printf 'public func loadTests() -> Int {\n  1\n}\n' >"$app/Sources/App/LoadTests.swift"
+      expect_fail leaf "$app" "$lang" test
+      grep -q "LoadTests.swift: 0%" "${LAST_LOG}" || die "$lang let a source named like a test escape coverage"
+      rm "$app/Sources/App/LoadTests.swift"
       ;;
     python)
       printf 'def untyped(a):\n    return a\n' >"$app/src/untyped.py"
@@ -312,6 +346,37 @@ EOF
       grep -q "untyped.py:1: error: Function is missing a type annotation" "${LAST_LOG}" ||
         die "$lang let an untyped function through"
       rm "$app/src/untyped.py"
+      PYTEST_ADDOPTS=--no-cov expect_fail leaf "$app" "$lang" test --all
+      grep -q "pytest wrote no coverage report" "${LAST_LOG}" || die "$lang passed a run that measured nothing"
+      cp "$app/pyproject.toml" "$WORK/pyproject.keep"
+      perl -0pi -e 's/(\[tool\.pytest\.ini_options\]\n)/$1addopts = "--no-cov"\n/' "$app/pyproject.toml"
+      grep -q 'addopts = "--no-cov"' "$app/pyproject.toml" || die "$lang addopts plant did not land"
+      expect_ok leaf "$app" "$lang" test --all
+      grep -q "coverage bar held on 1 source(s)" "${LAST_LOG}" || die "$lang let the app's pytest options drop coverage"
+      mv "$WORK/pyproject.keep" "$app/pyproject.toml"
+      printf 'def helper() -> int:\n    return 1\n' >"$app/src/test_helpers.py"
+      expect_fail leaf "$app" "$lang" test --all
+      grep -q "no mirrored test for src/test_helpers.py" "${LAST_LOG}" || die "$lang let a source named like a test go untested"
+      rm "$app/src/test_helpers.py"
+      ;;
+    rust)
+      cp "$app/Cargo.toml" "$WORK/cargo.keep"
+      cp "$app/Cargo.lock" "$WORK/lock.keep"
+      printf '\n[workspace]\nmembers = ["extra"]\n' >>"$app/Cargo.toml"
+      mkdir -p "$app/extra/src"
+      printf '[package]\nname = "extra"\nversion = "0.1.0"\nedition = "2021"\n' >"$app/extra/Cargo.toml"
+      printf '%s\n' '#[must_use]' 'pub fn twice(n: i32) -> i32 {' '    return n * 2;' '}' >"$app/extra/src/lib.rs"
+      expect_ok leaf "$app" "$lang" dependencies
+      expect_fail leaf "$app" "$lang" lint
+      grep -q "needless_return" "${LAST_LOG}" || die "$lang lint skipped a workspace member"
+      expect_fail leaf "$app" "$lang" test
+      grep -q "extra/src/lib.rs" "${LAST_LOG}" || die "$lang coverage skipped a workspace member"
+      printf '%s\n' '#[must_use]' 'pub fn broken() -> i32 {' '    "x"' '}' >"$app/extra/src/lib.rs"
+      expect_fail leaf "$app" "$lang" build
+      grep -q "mismatched types" "${LAST_LOG}" || die "$lang build skipped a workspace member"
+      rm -r "$app/extra"
+      mv "$WORK/cargo.keep" "$app/Cargo.toml"
+      mv "$WORK/lock.keep" "$app/Cargo.lock"
       ;;
     rails)
       cp "$app/.rubocop.yml" "$WORK/rubocop.keep"
@@ -329,6 +394,11 @@ EOF
       [ -z "$(sed -n 5p "$app/app/models/included.rb")" ] || die "$lang format left a pending cop's offense"
       rm "$app/app/models/included.rb"
       mv "$WORK/rubocop.keep" "$app/.rubocop.yml"
+      cp "$app/test/test_helper.rb" "$WORK/helper.keep"
+      perl -0pi -e "s/(  enable_coverage :branch\n)/\$1  skip '\/app\/'\n/" "$app/test/test_helper.rb"
+      expect_fail leaf "$app" "$lang" test
+      grep -q "app/models/add.rb has no coverage row" "${LAST_LOG}" || die "$lang let a SimpleCov filter hide a source"
+      mv "$WORK/helper.keep" "$app/test/test_helper.rb"
       ;;
   esac
 

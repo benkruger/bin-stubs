@@ -14,12 +14,14 @@ full bar the language's standards state.
   the whole app fails when it measured no source, and one whose coverage
   tool can finish without writing a report, such as SimpleCov or
   `swift test`, fails when it writes none, so a check never passes by
-  measuring nothing. Trigger: any change to a language's `bin/test`.
+  measuring nothing; pytest counts as such a tool. Each `bin/test` finds a
+  source's row by its exact path, never by a matching tail. Trigger: any
+  change to a language's `bin/test`.
 - A coverage config measures every target with no filter. `tests/guards`
-  checks two: it fails a Ruby file that starts SimpleCov without the line
-  `minimum_coverage line: 100, branch: 100` or with an `add_filter`, and
-  an `.xctestplan` or `.xcscheme` line matching `COVERAGE_NARROWED`, which
-  turns code coverage off or limits it to some targets. Trigger: any
-  change to a Ruby file that starts SimpleCov, an `.xctestplan` or an
-  `.xcscheme`.
-<!-- audited: 8268e162df3b -->
+  fails a Ruby file that starts SimpleCov without the line
+  `minimum_coverage line: 100, branch: 100` or with `add_filter`, `skip` or
+  `filters`, any `.simplecov` file, and an `.xctestplan` or `.xcscheme`
+  line matching `COVERAGE_NARROWED`, which turns code coverage off or
+  limits it to some targets. Trigger: any change to a Ruby file that
+  starts SimpleCov, a `.simplecov`, an `.xctestplan` or an `.xcscheme`.
+<!-- audited: 32c7bd10b0d1 -->

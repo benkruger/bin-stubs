@@ -56,39 +56,8 @@ if [ "${1:-}" = "--files" ]; then
   exit 0
 fi
 
-is_source() {
-  case "$1" in
-    tests/* | .venv/* | test_*.py | */test_*.py | conftest.py | */conftest.py) return 1 ;;
-    *.py) ;;
-    *) return 1 ;;
-  esac
-  [ ! -d src ] || [ "${1#src/}" != "$1" ]
-}
-
-needs_twin() {
-  [ "$(basename "$1")" != "__init__.py" ]
-}
-
-is_test() {
-  case "$1" in
-    tests/test_*.py | tests/*/test_*.py) return 0 ;;
-    *) return 1 ;;
-  esac
-}
-
-test_for_source() {
-  local rel="$1" dir base
-  if [[ "$rel" == src/* ]]; then
-    rel="${rel#src/}"
-  fi
-  dir="$(dirname "$rel")"
-  base="$(basename "$rel" .py)"
-  if [ "$dir" = "." ]; then
-    echo "tests/test_${base}.py"
-  else
-    echo "tests/${dir}/test_${base}.py"
-  fi
-}
+# shellcheck source=lib/sources.sh
+. "$here/lib/sources.sh"
 
 already() {
   local n="$1" t

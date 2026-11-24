@@ -17,8 +17,9 @@ The iOS app is held by swift-format and its tests at full strength.
   `GCC_TREAT_WARNINGS_AS_ERRORS` to YES, so a compiler warning in the
   app's own code fails every build and test. Trigger: any source, project
   or `Package.swift` change.
-- `bin/test` fails below 100% line coverage of the sources. Trigger: any
-  source or test change.
+- `bin/test` fails below 100% line coverage of the sources: every Swift
+  file in the app's folder that coverage reports, bar `Tests/`, `.build/`
+  and `.xctest` targets. Trigger: any source or test change.
 - `bin/dependencies` updates every package to the newest version its
   requirement allows: `swift package update` for a Swift package, and for
   an Xcode workspace or project it drops the resolved versions and
@@ -32,4 +33,4 @@ The iOS app is held by swift-format and its tests at full strength.
   Trigger: every edit.
 - `.xcode-version` pins Xcode; outside CI, `bin/ci` fails unless that
   Xcode is selected. Trigger: an Xcode upgrade.
-<!-- audited: 5c7825be5597 -->
+<!-- audited: 42faa4d900cd -->

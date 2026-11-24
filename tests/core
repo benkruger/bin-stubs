@@ -185,7 +185,7 @@ EOF
 }
 
 hook_on() {
-  LAST_LOG="$(mktemp)"
+  LAST_LOG="$(mktemp "$WORK/hook.XXXXXX")"
   if jq -n --arg c "$1" "{tool_input:{command:\$c}}" |
     "$REPO/starter/.claude/hooks/require-bin" >"${LAST_LOG}" 2>&1; then
     LAST_RC=0
@@ -199,14 +199,17 @@ test_hooks() {
   local cmd
   for cmd in "bun test" "cd app && cargo build" "bundle exec rubocop -A" \
     "RAILS_ENV=test bundle exec rails test" "npx biome check ." "uv run pytest" \
-    "xcrun swift-format lint Sources" "ls; /opt/homebrew/bin/ruff check ."; do
+    "xcrun swift-format lint Sources" "ls; /opt/homebrew/bin/ruff check ." \
+    "env cargo test" "time cargo test" "command cargo test" "nice -n 5 cargo test" "python -m pytest" \
+    "uv run python3 -m mypy src" "echo \$(cargo test)" "echo \`cargo test\`" "bin/lint & cargo test" \
+    "(cargo test)" "echo \"\$(cargo test)\""; do
     hook_on "$cmd"
     assert_rc 2 "require-bin should block: $cmd"
     grep -q "Blocked: call the bin/ script" "${LAST_LOG}" || die "no block message for: $cmd"
   done
   for cmd in "git commit -m x" "cd app && git commit -am x" \
     "git -C app commit -m x" "git -c user.name=x commit" "'git' commit -m x" \
-    "sh -c \"git commit -m x\"" "GIT_DIR=. /usr/bin/git commit"; do
+    "sh -c \"git commit -m x\"" "GIT_DIR=. /usr/bin/git commit" "env git commit -m x"; do
     hook_on "$cmd"
     assert_rc 2 "require-bin should block: $cmd"
     grep -q "Blocked: commit with bin/commit" "${LAST_LOG}" || die "no commit block message for: $cmd"
@@ -216,9 +219,14 @@ test_hooks() {
     assert_rc 2 "require-bin should block: $cmd"
     grep -q "Blocked: only bin/commit stamps rules" "${LAST_LOG}" || die "no stamp block message for: $cmd"
   done
+  for cmd in "CI=1 bin/ci" "env FLOW_CHECKED_APP=x bin/lint" "export CI=1"; do
+    hook_on "$cmd"
+    assert_rc 2 "require-bin should block: $cmd"
+    grep -q "Blocked: CI and FLOW_CHECKED_APP" "${LAST_LOG}" || die "no check-skip block message for: $cmd"
+  done
   for cmd in "bin/test src/add.ts" "bin/ci --typescript" "git status" \
     "bundle exec rails runner 1" "npm test" "ls -la" "git log --grep commit" \
-    "bin/commit main /tmp/flow-commit-msg.abc123"; do
+    "bin/commit main /tmp/flow-commit-msg.abc123" "grep -n \"a\|bun test\" README.md" "echo 'cargo test'"; do
     hook_on "$cmd"
     assert_rc 0 "require-bin should allow: $cmd"
   done
@@ -259,7 +267,7 @@ EOF
   local cfg="$repo/cfg" cov="$repo/coverage-config" msg
   mkdir -p "$cov/ok/test"
   plant_ok_configs "$cfg/ok"
-  printf "require 'simplecov'\nSimpleCov.start do\n  enable_coverage :branch\n  minimum_coverage line: 100, branch: 100\n  skip %%w[/config/ /test/]\nend\n" >"$cov/ok/test/test_helper.rb"
+  printf "require 'simplecov'\nSimpleCov.start do\n  enable_coverage :branch\n  minimum_coverage line: 100, branch: 100\nend\n" >"$cov/ok/test/test_helper.rb"
   printf '{ "defaultOptions": { "codeCoverage": true } }\n' >"$cov/ok/App.xctestplan"
   printf '# Probe\n\nA probe rule.\n' >"$repo/.claude/rules/probe.md"
   expect_ok "$repo/bin/stamp-rules" "$repo/.claude/rules/probe.md"
@@ -356,10 +364,13 @@ cat <<'INNER'
 INNER
 echo 'a # b'
 # flagged
+echo "x <<END"
+# flagged after a quoted heredoc marker
 EOF
   cat >"$notes/r.rb" <<'EOF'
 # frozen_string_literal: true
 x = "#{y}" # flagged
+# coding: not a magic comment, so flagged
 =begin flagged
 flagged
 =end flagged
@@ -378,9 +389,11 @@ x = 1  # flagged
 # flagged
 EOF
   printf '%s\n' 'a = "#"' '# flagged' 'b = 1 # flagged' >"$notes/t.toml"
-  printf '%s\n' 'url: http://x#y' 'key: "a # b"' '# flagged' 'c: d # flagged' >"$notes/y.yml"
+  printf '%s\n' 'url: http://x#y' 'key: "a # b"' '# flagged' 'c: d # flagged' "name: Ben's app" 'e: f # flagged' >"$notes/y.yml"
   printf '%s\n' '// swift-tools-version: 6.0' 'import PackageDescription' '/// flagged' 'let s = "// no"' >"$notes/Package.swift"
-  printf '%s\n' '//! flagged' "fn f<'a>(s: &'a str) -> &'a str { s }" 'const U: &str = "http://x";' '/// flagged' >"$notes/lib.rs"
+  printf '%s\n' '// swift-tools-version: 6.0 flagged outside Package.swift' 'export const b = 1;' >"$notes/b.ts"
+  printf '%s\n' '//! flagged' "fn f<'a>(s: &'a str) -> &'a str { s }" 'const U: &str = "http://x";' '/// flagged' \
+    "fn g() -> &'static str { \"x\" } // flagged" "const C: char = '\"';" '// flagged' >"$notes/lib.rs"
   printf '%s\n' 'a { background: url(http://x); }' '/* flagged */' >"$notes/s.css"
   printf '%s\n' '# flagged' 'dist/' >"$notes/.gitignore"
 
@@ -398,7 +411,7 @@ EOF
 
   cp "$repo/.claude/settings.json" "$repo/settings.json.keep"
   jq '.permissions.deny -= ["Bash(git reset *)", "Bash(git push * -f)"]
-    | .permissions.allow += ["Bash(*/bin/*)"] | del(.hooks.SessionStart)' \
+    | .permissions.allow += ["Bash(*/bin/*)", "Bash"] | del(.hooks.SessionStart)' \
     "$repo/settings.json.keep" >"$repo/.claude/settings.json"
   rm "$repo/settings.json.keep"
 
@@ -439,7 +452,7 @@ EOF
     die "a bin/dependencies that only installs was not caught"
   grep -qF "bin/_python/lint: never runs packages_check" "${LAST_LOG}" ||
     die "a gate script that skips packages_check was not caught"
-  for plant in a.ts s.sh r.rb p.py t.toml y.yml Package.swift lib.rs s.css .gitignore; do
+  for plant in a.ts b.ts s.sh r.rb p.py t.toml y.yml Package.swift lib.rs s.css .gitignore; do
     expected="$(grep -n flagged "$notes/$plant" | cut -d: -f1 | tr '\n' ' ')"
     actual="$(sed -nE "s|^guards: comment-plants/$plant:([0-9]+): a comment.*|\1|p" "${LAST_LOG}" | tr '\n' ' ')"
     assert_eq "$actual" "$expected" "comments found in $plant"
@@ -452,7 +465,8 @@ EOF
   grep -q "notes.md:3.*MD018" "${LAST_LOG}" || die "markdownlint not enforced"
   grep -q "does not deny Bash(git reset \*)" "${LAST_LOG}" || die "missing deny not caught"
   grep -q "does not deny Bash(git push \* -f)" "${LAST_LOG}" || die "missing force-push deny not caught"
-  grep -q "allows a command pattern that starts with a wildcard" "${LAST_LOG}" || die "wildcard allow not caught"
+  grep -qF "allows every command: Bash(*/bin/*)" "${LAST_LOG}" || die "wildcard allow not caught"
+  grep -qx "guards: .claude/settings.json: allows every command: Bash" "${LAST_LOG}" || die "bare Bash allow not caught"
   grep -q "no SessionStart hook runs" "${LAST_LOG}" || die "missing hook not caught"
 
   sed 's/^MAX_AUTHORED_BYTES=65536$/MAX_AUTHORED_BYTES=99999/' "$repo/tests/guards" >"$repo/tests/guards.raised"
@@ -460,6 +474,12 @@ EOF
   chmod +x "$repo/tests/guards"
   expect_fail "$repo/tests/run"
   grep -q "does not pin MAX_AUTHORED_BYTES=65536" "${LAST_LOG}" || die "raised cap not caught"
+  sed 's/^MAX_AUTHORED_BYTES=99999$/MAX_AUTHORED_BYTES=65536/' "$repo/tests/guards" >"$repo/tests/guards.raised"
+  printf 'MAX_AUTHORED_BYTES=99999\n' >>"$repo/tests/guards.raised"
+  mv "$repo/tests/guards.raised" "$repo/tests/guards"
+  chmod +x "$repo/tests/guards"
+  expect_fail "$repo/tests/run"
+  grep -q "does not pin MAX_AUTHORED_BYTES=65536 in its one assignment" "${LAST_LOG}" || die "a second cap assignment was not caught"
 }
 
 fake_claude() {

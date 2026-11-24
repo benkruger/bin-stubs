@@ -14,7 +14,8 @@ packages_check "$PWD" || exit 1
 STRICT_FLAGS='["alwaysStrict", "noImplicitAny", "noImplicitThis", "strictBindCallApply", "strictBuiltinIteratorReturn", "strictFunctionTypes", "strictNullChecks", "strictPropertyInitialization", "useUnknownInCatchVariables"]'
 tsc="$root/node_modules/.bin/tsc"
 config="$(mktemp)"
-trap 'rm -f "$config"' EXIT
+listed="$(mktemp)"
+trap 'rm -f "$config" "$listed"' EXIT
 "$tsc" --showConfig >"$config" 2>&1 &
 shown=$!
 status=0
@@ -57,9 +58,17 @@ app_sources() {
   done < <(git ls-files -z --cached --others --exclude-standard -- '*.ts' '*.tsx' '*.mts' '*.cts')
 }
 
+jq -r '.files[]? | sub("^\\./"; "")' "$config" >"$listed"
 while IFS= read -r outside; do
   echo "bin/build: $outside is outside tsconfig's files, so tsc never checks it" >&2
   status=1
-done < <(app_sources | awk 'NR == FNR { seen[$0] = 1; next } !($0 in seen)' \
-  <(jq -r '.files[]? | sub("^\\./"; "")' "$config") -)
+done < <(app_sources | awk -v listed="$listed" '
+  BEGIN { while ((getline line < listed) > 0) seen[line] = 1 }
+  !($0 in seen)')
+if jq -e '.compilerOptions.skipLibCheck == true' "$config" >/dev/null; then
+  while IFS= read -r declared; do
+    echo "bin/build: skipLibCheck skips the app's own $declared" >&2
+    status=1
+  done < <(app_sources | grep -E '\.d\.[cm]?ts$' || true)
+fi
 exit "$status"

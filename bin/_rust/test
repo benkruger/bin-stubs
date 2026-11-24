@@ -22,7 +22,7 @@ fi
 
 log="$(mktemp)"
 trap 'rm -f "$log"' EXIT
-cargo llvm-cov --fail-under-lines 100 "$@" | tee "$log"
+cargo llvm-cov --workspace --fail-under-lines 100 "$@" | tee "$log"
 [ "$#" -eq 0 ] || exit 0
 measured="$(awk '/^-+$/ { rule++; next } rule == 1 && NF { n++ } END { print n + 0 }' "$log")"
 if [ "$measured" -eq 0 ]; then

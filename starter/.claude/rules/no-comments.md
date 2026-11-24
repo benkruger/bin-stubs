@@ -17,10 +17,11 @@ does.
   `Rakefile`. Any other file is classed by a Ruby, Python or shell
   shebang, and one with none is not scanned. Trigger: any new or edited
   code file.
-- Only a line a tool reads stays: a line-1 shebang, a Ruby magic comment,
-  the shellcheck line `script-standards.md` allows and Swift's line-1
-  `// swift-tools-version:`. A lint rule only a comment can satisfy is
-  handled as `no-lint-exceptions.md` states. `tests/guards` fails any
-  other comment line in a file `comment_lines` classes. Trigger: any new
-  or edited code file.
-<!-- audited: f9105caf52c7 -->
+- Only a line a tool reads stays: a line-1 shebang, a Ruby magic comment
+  with a value Ruby accepts in the file's leading comment block, the
+  shellcheck line `script-standards.md` allows and line 1
+  `// swift-tools-version:` of a `Package.swift`. A lint rule only a
+  comment can satisfy is handled as `no-lint-exceptions.md` states.
+  `tests/guards` fails any other comment line in a file `comment_lines`
+  classes. Trigger: any new or edited code file.
+<!-- audited: 5cec57291fb8 -->
