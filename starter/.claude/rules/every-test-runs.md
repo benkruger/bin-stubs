@@ -15,5 +15,9 @@ deleted.
   path, and fails a line that matches the pattern it picks: `SKIP_JS`
   (Vitest, Jest, node:test), `SKIP_PY` (pytest, unittest), `SKIP_RUBY`
   (Minitest, RSpec), `SKIP_RUST` (cargo test) and `SKIP_SWIFT` (XCTest,
-  Swift Testing). Trigger: any new or edited test or `.rs` file.
-<!-- audited: f1ed046b4257 -->
+  Swift Testing). It also fails any key in `PYTEST_COLLECTION`, whatever its
+  value, under pytest's section of a `pyproject.toml`, `pytest.ini`,
+  `tox.ini` or `setup.cfg`: a key that sets which directories, files,
+  classes or functions pytest collects. Trigger: any new or edited test,
+  `.rs` file or pytest config.
+<!-- audited: d7dd3edde1a5 -->

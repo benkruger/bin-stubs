@@ -13,23 +13,32 @@ plant_bad_rules() {
   } >"$rules/narrow.md"
   printf '## Lead\n\n# Late\n' >"$rules/late.md"
   printf '# One\n\n# Two\n' >"$rules/twice.md"
+  printf '# Fenced\n\n\x60\x60\x60bash\n# build\n\x60\x60\x60\n\n~~~~\n# also\n~~~~\n' >"$rules/fenced.md"
   printf '# Old\n\nThis rule %s apply.\n' "used to" >"$rules/old.md"
   printf -- '---\nname: front\n---\n\n# Front\n' >"$rules/front.md"
   printf '# Story\n\n## %s\n\nText.\n' Why >"$rules/story.md"
   printf '# Cite\n\nSee \x60%s\x60, \x60%s\x60 and \x60%s\x60.\n' nowhere.md starter/.claude/rules/gone.md \
     .claude/rules/cite.md >"$rules/cite.md"
+  mkdir -p "$rules/web"
+  printf '# Api\n\nSee \x60auth.md\x60 and \x60cite.md\x60.\n' >"$rules/web/api.md"
+  printf '# Auth\n\nAuth.\n' >"$rules/web/auth.md"
+  printf '# Linked\n\nA rule kept outside the rules folder.\n' >"$1/shared-rule.md"
+  ln -s ../../shared-rule.md "$rules/linked.md"
 }
 
 check_bad_rules() {
   local msg missed=""
   for msg in "wide.md: 8109 characters (cap 8000)" "late.md: does not lead with an H1" "twice.md: 2 H1 headings (want 1)" \
     "old.md: backward-facing wording" "front.md: frontmatter" "story.md: narrative heading" \
-    "cite.md: cites missing nowhere.md" "cite.md: cites missing starter/.claude/rules/gone.md"; do
+    "cite.md: cites missing nowhere.md" "cite.md: cites missing starter/.claude/rules/gone.md" \
+    "linked.md: no audit stamp (commit it through bin/commit)"; do
     grep -qxF "guards: .claude/rules/$msg" "${LAST_LOG}" || missed+=" [$msg]"
   done
   [ -z "$missed" ] || die "a rule's shape was not checked:$missed"
   ! grep -qE "narrow\.md: [0-9]+ (characters|lines)" "${LAST_LOG}" || die "a rule's cap counted bytes, not characters"
   ! grep -qF "cites missing .claude/rules/cite.md" "${LAST_LOG}" || die "a rule citing a path that exists was failed"
+  ! grep -qF "web/api.md: cites missing" "${LAST_LOG}" || die "a nested rule citing its sibling or a top-level rule was failed"
+  ! grep -qE "fenced\.md: [0-9]+ H1 headings" "${LAST_LOG}" || die "a # line inside a code fence counted as an H1"
 }
 
 plant_bad_claude() {
@@ -112,6 +121,13 @@ test_guards_scans() {
   assert_rc 1 "guards whose perl scans die"
   grep -qx "guards: the comment scan did not finish" "${LAST_LOG}" || missed+=" [comment scan]"
   grep -qx "guards: the Rust attribute scan did not finish" "${LAST_LOG}" || missed+=" [Rust attribute scan]"
+  stubs="$WORK/broken-find"
+  mkdir -p "$stubs" "$repo/.claude/rules"
+  printf '%s\n' '#!/usr/bin/env bash' 'exit 1' >"$stubs/find"
+  chmod +x "$stubs/find"
+  run_log env PATH="$stubs:$PATH" "$repo/tests/guards"
+  assert_rc 1 "guards whose rule listing fails"
+  grep -qx "guards: the rule list scan did not finish" "${LAST_LOG}" || missed+=" [rule list]"
   [ -z "$missed" ] || die "the guards passed a scan that did not finish:$missed"
   scan_plants "$repo"
   failing_tool_stubs "$WORK/failing"

@@ -38,12 +38,22 @@ plant_bad_configs() {
   rbtoken='Warning[:deprecated] '
   rbtoken+='= false'
   printf '%s\n' "$rbtoken" >>"$repo/hush.rb"
+  rbtoken='$'
+  printf '%s\n' "$rbtoken-v = nil" "$rbtoken-w = false" >>"$repo/hush.rb"
   mkdir -p "$repo/skipmore/tests" "$repo/skipmore/test" "$repo/skipmore/ios/Tests"
   printf '%s\n' 'test.concurrent.skip("a", () => {});' 'test("b", { skip: "later" }, () => {});' >"$repo/skipmore/a.test.ts"
   printf '%s\n' 'import pytest' 'from pytest import mark' 'pytestmark = pytest.mark.skip' '' '' '@mark.xfail' 'def test_b():' \
     '    pass' '' '' 'collect_ignore = ["x.py"]' >"$repo/skipmore/tests/test_b.py"
   printf '%s\n' 'class BTest' '  def test_b' '    skip_until 2099, 1, 1, "later"' '  end' 'end' >"$repo/skipmore/test/b_test.rb"
   printf '%s\n' 'import Testing' '' '@Test(.enabled(if: false)) func b() {}' >"$repo/skipmore/ios/Tests/BTests.swift"
+  printf '%s\n' 'import unittest' 'from unittest import skip' '' '' '@skip("later")' 'def test_c() -> None:' \
+    '    raise unittest.SkipTest("later")' >"$repo/skipmore/tests/test_c.py"
+  printf '%s\n' 'def pytest_ignore_collect(collection_path):' '    return "slow" in str(collection_path)' \
+    >"$repo/skipmore/conftest.py"
+  mkdir -p "$repo/skipmore/spec"
+  printf '%s\n' 'xcontext "a" do' '  it "x", skip: true do' '  end' '  it "y", :focus do' '  end' 'end' \
+    >"$repo/skipmore/spec/c_spec.rb"
+  printf '%s\n' 'test("c", (c) => {' '  c.skip();' '});' >"$repo/skipmore/c.test.ts"
   printf 'echo %s1\n' '$' >"$repo/bin/plain.sh"
   printf 'x\n' >"$repo/sealed.txt"
   chmod 000 "$repo/sealed.txt"
@@ -136,11 +146,12 @@ check_bad_configs() {
     ".simplecov: SimpleCov starts in test/test_helper.rb"; do
     grep -qF "cfg/bad/$msg" "${LAST_LOG}" || die "lint configuration not checked: $msg"
   done
-  for msg in "configured.md:3" "unchecked.py:1" "hush.rb:1" "hush.rb:2"; do
+  for msg in "configured.md:3" "unchecked.py:1" "hush.rb:1" "hush.rb:2" "hush.rb:3" "hush.rb:4"; do
     grep -qF "$msg: suppression comment" "${LAST_LOG}" || die "a suppression was not caught: $msg"
   done
   for msg in a.test.ts:1 a.test.ts:2 tests/test_b.py:3 tests/test_b.py:6 tests/test_b.py:11 test/b_test.rb:3 \
-    ios/Tests/BTests.swift:3; do
+    ios/Tests/BTests.swift:3 tests/test_c.py:5 tests/test_c.py:7 conftest.py:1 spec/c_spec.rb:1 spec/c_spec.rb:2 \
+    spec/c_spec.rb:4 c.test.ts:2; do
     grep -qF "skipmore/$msg: a test that does not run" "${LAST_LOG}" || die "a test that does not run was not caught: $msg"
   done
   grep -qF "bin/plain.sh: entry point is not executable" "${LAST_LOG}" || die "a .sh file without a shebang escaped the script checks"

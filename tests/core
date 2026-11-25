@@ -393,14 +393,33 @@ EOF
   form="XCT"
   form+="Skip"
   printf 'func testA() throws {\n  throw %s("x")\n}\n' "$form" >"$skips/ios/Tests/ATests.swift"
+  form="sk"
+  form+="ip"
+  printf 'test("a", { %s: true }, () => {});\nexpect(add({ %s: "buy milk" })).toEqual(1);\ntest("b", { %s: "later" }, () => {});\n' \
+    "$form" "to""do" "to""do" >"$skips/c.test.ts"
+  form="pend"
+  form+="ing"
+  printf 'class BTest\n  def test_b\n    %s = 1\n    assert_equal 1, %s\n  end\n\n  def test_c\n    %s "later"\n  end\nend\n' \
+    "$form" "$form" "$form" >"$skips/test/b_test.rb"
+  form=".dis"
+  form+="abled"
+  printf '@Test(%s("later")) func b() {}\nlet button = Button("x") {}%s(true)\n' "$form" "$form" >"$skips/ios/Tests/BTests.swift"
 
   local slow="$repo/timeouts"
   mkdir -p "$slow/bin/_typescript" "$slow/tests" "$slow/ios/Tests"
   printf 'vitest run --testTimeout 60000\n' >"$slow/bin/_typescript/test"
+  mkdir -p "$slow/bin/_javascript" "$slow/bin/_python"
+  printf 'vitest run --hookTimeout 60000\nvitest run --teardownTimeout 60000\n' >"$slow/bin/_javascript/test"
+  printf 'uv run pytest -o timeout=600\nuv run pytest --override-ini=timeout=600\n' >"$slow/bin/_python/test"
   printf '{ "jest": { "testTimeout": 60000 } }\n' >"$slow/package.json"
   printf 'export default { test: { testTimeout: 60000 } };\n' >"$slow/vitest.config.ts"
   printf '[test]\ntimeout = 60000\n' >"$slow/bunfig.toml"
   printf '[tool.pytest.ini_options]\ntimeout = 60\n' >"$slow/pyproject.toml"
+  mkdir -p "$slow/native" "$skips/py"
+  printf '[tool.pytest]\ntimeout = 60\n' >"$slow/native/pyproject.toml"
+  printf '[tool.pytest.ini_options]\nnorecursedirs = ["slow"]\n\n[tool.pytest]\npython_files = ["check_*.py"]\n' \
+    >"$skips/py/pyproject.toml"
+  printf '[pytest]\npython_functions = check_*\n' >"$skips/py/pytest.ini"
   printf 'test("a", () => {}, { timeout: 10_000 });\nvi.setConfig({ testTimeout: 60000 });\ntest("b", () => {}, { timeout: 2 * 60000 });\n' >"$slow/a.test.ts"
   printf '[pytest]\naddopts = --timeout=60\n' >"$slow/pytest.ini"
   printf 'import pytest\n\n\n@pytest.mark.timeout(10)\ndef test_a():\n    pass\n\n\n@pytest.mark.timeout(LIMIT)\ndef test_b():\n    pass\n' >"$slow/tests/test_slow.py"
@@ -446,6 +465,20 @@ const q = 1 / 2 / 3;
 const z = 1; /* flagged */
 const s = 'x\'y';
 EOF
+  cat >"$notes/c.tsx" <<'EOF'
+export const A = () => <p>see https://example.com</p>;
+export const B = () => <div>a</div>; // flagged
+export const C = () => (
+  <ul className="x">
+    <li>don't // stop</li>
+    {/* flagged */}
+    <Item render={() => <b>//</b>} />
+  </ul>
+);
+export const D = <T extends unknown>(v: T) => v; // flagged
+export const E = <>frag // text</>;
+// flagged
+EOF
   cat >"$notes/s.sh" <<'EOF'
 #!/usr/bin/env bash
 # shellcheck source=lib.sh
@@ -461,6 +494,11 @@ echo "x <<END"
 y=$'it\'s' # flagged
 z=$'a\nb'
 # flagged
+cat <<eof
+# lowercase heredoc body
+eof
+read -r w <<<word
+# flagged after a here-string
 EOF
   cat >"$notes/r.rb" <<'EOF'
 # frozen_string_literal: true
@@ -487,7 +525,8 @@ x = 1  # flagged
 # flagged
 EOF
   printf '%s\n' 'a = "#"' '# flagged' 'b = 1 # flagged' >"$notes/t.toml"
-  printf '%s\n' 'url: http://x#y' 'key: "a # b"' '# flagged' 'c: d # flagged' "name: Ben's app" 'e: f # flagged' >"$notes/y.yml"
+  printf '%s\n' 'url: http://x#y' 'key: "a # b"' '# flagged' 'c: d # flagged' "name: Ben's app" 'e: f # flagged' \
+    'notice: |' '  Order #1 shipped' '  # body text' '' '  more' 'list:' '  - >-' '    item #2' 'g: h # flagged' >"$notes/y.yml"
   printf '%s\n' '// swift-tools-version: 6.0' 'import PackageDescription' '/// flagged' 'let s = "// no"' \
     'let doc = """' '  see http://example.com' '  """' '// flagged' >"$notes/Package.swift"
   printf '%s\n' '// swift-tools-version: 6.0 flagged outside Package.swift' 'export const b = 1;' >"$notes/b.ts"
@@ -509,6 +548,8 @@ EOF
   printf '%s\n' '#!/usr/bin/env bash' 'echo "loose"' >"$repo/bin/loose"
   printf '%s\n' '#!/usr/bin/env bash' 'set -euo pipefail' 'if true;then' 'echo   "messy"' 'fi' >"$repo/bin/messy"
   chmod +x "$repo/bin/loose" "$repo/bin/messy"
+  mkdir -p "$repo/lib"
+  printf '%s\n' '#!/usr/bin/env bash' '' 'util() {' '  echo hi' '}' >"$repo/lib/util.sh"
   printf '%s\n' '# Notes' '' '#Heading without a space' >"$repo/notes.md"
 
   cp "$repo/.claude/settings.json" "$repo/settings.json.keep"
@@ -523,13 +564,21 @@ EOF
   grep -q "big.md: 70010 bytes, over the 65536-byte cap" "${LAST_LOG}" || die "size cap not enforced"
   grep -q "probe.py:1: suppression comment" "${LAST_LOG}" || die "suppression ban not enforced"
   check_bad_configs
-  for msg in a.test.ts:1 b.spec.js:1 tests/test_a.py:4 test/a_test.rb:3 src/lib.rs:1 ios/Tests/ATests.swift:2; do
+  for msg in a.test.ts:1 b.spec.js:1 tests/test_a.py:4 test/a_test.rb:3 src/lib.rs:1 ios/Tests/ATests.swift:2 \
+    c.test.ts:1 c.test.ts:3 test/b_test.rb:8 ios/Tests/BTests.swift:1; do
     grep -qF "skips/$msg: a test that does not run" "${LAST_LOG}" || die "a test that does not run was not caught: $msg"
   done
-  if grep -qF "skips/a.test.ts:2:" "${LAST_LOG}"; then
-    die "a test that runs was flagged"
-  fi
-  for msg in bin/_typescript/test:1 package.json:1 vitest.config.ts:1 bunfig.toml:2 pyproject.toml:2 \
+  for msg in a.test.ts:2 c.test.ts:2 test/b_test.rb:3 test/b_test.rb:4 ios/Tests/BTests.swift:2; do
+    if grep -qF "skips/$msg:" "${LAST_LOG}"; then
+      die "a test that runs was flagged: $msg"
+    fi
+  done
+  for msg in py/pyproject.toml:2 py/pyproject.toml:5 py/pytest.ini:2; do
+    grep -qF "skips/$msg: leaves test files out of pytest's collection" "${LAST_LOG}" ||
+      die "a pytest setting that narrows collection was not caught: $msg"
+  done
+  for msg in bin/_typescript/test:1 bin/_javascript/test:1 bin/_javascript/test:2 bin/_python/test:1 bin/_python/test:2 \
+    package.json:1 vitest.config.ts:1 bunfig.toml:2 pyproject.toml:2 native/pyproject.toml:2 \
     pytest.ini:2 a.test.ts:2 a.test.ts:3 tests/test_slow.py:9 ios/Tests/SlowTests.swift:2 App.xctestplan:1; do
     grep -qF "timeouts/$msg: raises the test time limit" "${LAST_LOG}" || die "a raised time limit was not caught: $msg"
   done
@@ -561,7 +610,7 @@ EOF
     die "a bin/dependencies that only installs was not caught"
   grep -qF "bin/_python/lint: never runs packages_check" "${LAST_LOG}" ||
     die "a gate script that skips packages_check was not caught"
-  for plant in a.ts b.ts s.sh r.rb p.py t.toml y.yml Package.swift lib.rs s.css .gitignore; do
+  for plant in a.ts c.tsx b.ts s.sh r.rb p.py t.toml y.yml Package.swift lib.rs s.css .gitignore; do
     expected="$(grep -n flagged "$notes/$plant" | cut -d: -f1 | tr '\n' ' ')"
     actual="$(sed -nE "s|^guards: comment-plants/$plant:([0-9]+): a comment.*|\1|p" "${LAST_LOG}" | tr '\n' ' ')"
     assert_eq "$actual" "$expected" "comments found in $plant"
@@ -573,6 +622,7 @@ EOF
   check_bad_claude
   check_bad_settings
   grep -q "bin/loose: first command is not set -euo pipefail" "${LAST_LOG}" || die "strict mode not enforced"
+  grep -qE "^guards: lib/util.sh: " "${LAST_LOG}" && die "a sourced helper at the repo root was held as an entry point"
   grep -q "shfmt would reformat" "${LAST_LOG}" || die "script formatting not enforced"
   grep -qx "+++ bin/messy" "${LAST_LOG}" || die "the shfmt check did not name the unformatted script"
   grep -q "notes.md:3.*MD018" "${LAST_LOG}" || die "markdownlint not enforced"
