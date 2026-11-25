@@ -780,7 +780,7 @@ for path in "${files[@]}"; do
   esac
 done
 
-INSTALL_COMMANDS='\b(npm|pnpm|yarn|bun)[[:space:]]+(install|i|ci|add|update|upgrade)\b|\buv[[:space:]]+(sync|add|lock|pip)\b|\bbundle[[:space:]]+(install|update|add)\b|\bcargo[[:space:]]+(fetch|update|add)\b|\bswift[[:space:]]+package[[:space:]]+(update|resolve)\b'
+INSTALL_COMMANDS='\b(npm|pnpm|yarn|bun)[[:space:]]+(install|i|ci|add|update|upgrade)\b|\buv[[:space:]]+(sync|add|lock|pip)\b|\bbundle[[:space:]]+(install|update|add|lock)\b|\bcargo[[:space:]]+(fetch|update|add|generate-lockfile)\b|\bswift[[:space:]]+package[[:space:]]+(update|resolve)\b|\bxcodebuild\b.*[[:space:]]-resolvePackageDependencies\b'
 
 leaf_scripts=()
 for path in "${files[@]}"; do
@@ -958,6 +958,7 @@ markdown_findings() {
 use strict;
 use warnings;
 use Digest::SHA qw(sha256_hex);
+use Encode qw(decode);
 
 my $backward = qr/$ENV{BACKWARD}/i;
 my $narrative = qr/$ENV{NARRATIVE}/i;
@@ -975,7 +976,7 @@ sub check_markdown {
   my ($path, $text, $max_lines, $max_chars) = @_;
   (my $body = $text) =~ s/$stamp_line/\n/;
   my $lines = ($body =~ tr/\n//);
-  my $chars = length $body;
+  my $chars = length decode('UTF-8', $body);
   my @lines = split /\n/, $text;
   print "$path: $lines lines (cap $max_lines)\n" if $lines > $max_lines;
   print "$path: $chars characters (cap $max_chars)\n" if $chars > $max_chars;
@@ -1005,10 +1006,11 @@ for my $path (@ARGV) {
       if $stamp ne substr(sha256_hex($body), 0, 12);
   }
   for my $line (@lines) {
-    while ($line =~ /`([a-z0-9\/_-]+\.md)`/g) {
+    while ($line =~ /`([A-Za-z0-9\/._-]+\.md)`/g) {
       my $ref = $1;
+      my $file = index($ref, '/') >= 0 ? $ref : ".claude/rules/$ref";
       print "$path: cites missing $ref\n"
-        unless -f ".claude/rules/$ref" || $ref eq 'CLAUDE.md' || $ref eq 'README.md';
+        unless -f $file || $ref eq 'CLAUDE.md' || $ref eq 'README.md';
     }
   }
 }
@@ -1039,12 +1041,16 @@ done < <(markdown_findings "${rules[@]+"${rules[@]}"}")
 [ -f CLAUDE.md ] || fail "CLAUDE.md is missing"
 
 SETTINGS=.claude/settings.json
-REQUIRED_ALLOW=("Bash(bin/*)")
+REQUIRED_ALLOW=("Bash(bin/*)" "Bash(tests/run)")
 REQUIRED_DENY=(
   "Bash(git commit *)" "Bash(git rebase *)" "Bash(git checkout *)"
   "Bash(git reset *)" "Bash(git restore *)" "Bash(git stash *)"
   "Bash(git clean *)" "Bash(git push *--force*)" "Bash(git push -f *)"
   "Bash(git push * -f)" "Bash(git push * -f *)" "Bash(git push * +*)"
+  "Bash(git -C * commit *)" "Bash(git -C * rebase *)" "Bash(git -C * checkout *)"
+  "Bash(git -C * reset *)" "Bash(git -C * restore *)" "Bash(git -C * stash *)"
+  "Bash(git -C * clean *)" "Bash(git -C * push *--force*)" "Bash(git -C * push -f *)"
+  "Bash(git -C * push * -f)" "Bash(git -C * push * -f *)" "Bash(git -C * push * +*)"
 )
 REQUIRED_HOOKS=(PreToolUse:require-bin SessionStart:session-start)
 

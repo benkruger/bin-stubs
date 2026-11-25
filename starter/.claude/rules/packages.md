@@ -9,9 +9,12 @@ match it or its lockfile.
 - `bin/dependencies` updates an app's packages to the newest versions its
   manifest allows, then installs them. `tests/guards` fails a
   `dependencies` script directly under a `bin/_<language>/` folder that
-  has a line matching `INSTALL_COMMANDS`, which names each package
-  manager's install, ci, sync, lock, pip, fetch, resolve, update, upgrade
-  and add commands, and none matching `UPDATE_COMMANDS`, an `update`,
+  has a line matching `INSTALL_COMMANDS` (npm, pnpm, yarn or bun
+  `install`, `i`, `ci`, `add`, `update` or `upgrade`; uv `sync`, `add`,
+  `lock` or `pip`; bundle `install`, `update`, `add` or `lock`; cargo
+  `fetch`, `update`, `add` or `generate-lockfile`; `swift package update`
+  or `resolve`; `xcodebuild -resolvePackageDependencies`), and none
+  matching `UPDATE_COMMANDS`, an `update`,
   `upgrade` or `--upgrade` argument. It fails a line matching
   `INSTALL_COMMANDS` in any other script directly under such a folder.
   Trigger: any change to a gate script.
@@ -23,4 +26,4 @@ match it or its lockfile.
   directly under that `bin/_<language>/` folder that never names
   `packages_check`. Trigger: any change to how a gate script gets its
   packages.
-<!-- audited: 84ac4d04ab09 -->
+<!-- audited: 03cdfbfcec28 -->

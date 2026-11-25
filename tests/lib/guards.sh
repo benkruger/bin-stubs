@@ -7,35 +7,42 @@ plant_bad_rules() {
     head -c 8100 /dev/zero | tr '\0' 'a'
     printf '\n'
   } >"$rules/wide.md"
+  {
+    printf '# Narrow\n\n'
+    for _ in $(seq 1 30); do printf '%100s\n' '' | sed 's/ /✓/g'; done
+  } >"$rules/narrow.md"
   printf '## Lead\n\n# Late\n' >"$rules/late.md"
   printf '# One\n\n# Two\n' >"$rules/twice.md"
   printf '# Old\n\nThis rule %s apply.\n' "used to" >"$rules/old.md"
   printf -- '---\nname: front\n---\n\n# Front\n' >"$rules/front.md"
   printf '# Story\n\n## %s\n\nText.\n' Why >"$rules/story.md"
-  printf '# Cite\n\nSee \x60%s\x60.\n' nowhere.md >"$rules/cite.md"
+  printf '# Cite\n\nSee \x60%s\x60, \x60%s\x60 and \x60%s\x60.\n' nowhere.md starter/.claude/rules/gone.md \
+    .claude/rules/cite.md >"$rules/cite.md"
 }
 
 check_bad_rules() {
   local msg missed=""
   for msg in "wide.md: 8109 characters (cap 8000)" "late.md: does not lead with an H1" "twice.md: 2 H1 headings (want 1)" \
     "old.md: backward-facing wording" "front.md: frontmatter" "story.md: narrative heading" \
-    "cite.md: cites missing nowhere.md"; do
+    "cite.md: cites missing nowhere.md" "cite.md: cites missing starter/.claude/rules/gone.md"; do
     grep -qxF "guards: .claude/rules/$msg" "${LAST_LOG}" || missed+=" [$msg]"
   done
   [ -z "$missed" ] || die "a rule's shape was not checked:$missed"
+  ! grep -qE "narrow\.md: [0-9]+ (characters|lines)" "${LAST_LOG}" || die "a rule's cap counted bytes, not characters"
+  ! grep -qF "cites missing .claude/rules/cite.md" "${LAST_LOG}" || die "a rule citing a path that exists was failed"
 }
 
 plant_bad_claude() {
   {
-    printf 'Read .claude/rules/probe.md first.\n'
+    printf 'Read .claude/rules/probe.md first; it %s differ.\n' "used to"
     for _ in $(seq 1 401); do printf -- '- a line padded out to thirty-one\n'; done
   } >"$1/CLAUDE.md"
 }
 
 check_bad_claude() {
   local msg missed=""
-  for msg in "402 lines (cap 400)" "13669 characters (cap 12000)" "does not lead with an H1" "0 H1 headings (want 1)" \
-    "points at the rules directory" "names the rule probe.md"; do
+  for msg in "402 lines (cap 400)" "13688 characters (cap 12000)" "does not lead with an H1" "0 H1 headings (want 1)" \
+    "backward-facing wording" "points at the rules directory" "names the rule probe.md"; do
     grep -qxF "guards: CLAUDE.md: $msg" "${LAST_LOG}" || missed+=" [$msg]"
   done
   [ -z "$missed" ] || die "CLAUDE.md was not checked:$missed"

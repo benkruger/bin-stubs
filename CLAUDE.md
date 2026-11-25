@@ -3,8 +3,8 @@
 ## Running Things
 
 - `bin/ci` is this repo's gate. It runs `tests/run`, which needs node,
-  uv, cargo, cargo-llvm-cov with LLVM's tools, swift, shellcheck, shfmt,
-  markdownlint-cli2 and jq installed.
+  uv, ruby with bundler, cargo, cargo-llvm-cov with LLVM's tools, Xcode,
+  shellcheck, shfmt, markdownlint-cli2, ripgrep and jq installed.
 - Iterate with `starter/tests/run` (the guard suite on this repo, seconds);
   run `bin/ci` before every commit.
 - Run scripts by their relative path (`bin/ci`, `tests/run`), never an

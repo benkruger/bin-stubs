@@ -9,8 +9,9 @@ lasts only as long as its reason.
   another version, patched, or installed from outside its registry.
 - Every pin lands with its check in `checks/`: an executable script that
   names the pin and its reason and fails from a revisit date at most 30
-  days out. `bin/_root-tests` runs every check on every `bin/ci`, so the
-  date fires on an unchanged tree.
+  days out. `bin/_root-tests` runs every check on every `bin/ci` but
+  `--clean`, with no app flag or with `--suite`, so the date fires on an
+  unchanged tree.
 - On the revisit date the pin goes if its reason is gone; otherwise the
   check gets a new date and states the reason as it stands then.
-<!-- audited: c86b6ec8e02d -->
+<!-- audited: b973d8557e69 -->

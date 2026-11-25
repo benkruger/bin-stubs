@@ -44,9 +44,10 @@ time. A pass shows the step lines. A failure shows the step that broke.
    `.githooks/`, `tests/run` and `tests/guards`. Put the project's name in
    the `CLAUDE.md` heading. Turn on the commit hook in each clone with
    `git config core.hooksPath .githooks`.
-4. Ignore `.flow-states/`, `.claude/cost/`, the dependency folders
-   (`node_modules/`, `.venv/`, `vendor/`, `target/`, `.build/`) and build
-   and coverage output (`dist/`, `build/`, `coverage/`).
+4. Ignore `.flow-states/`, `.worktrees/` (`bin/start` refuses without it),
+   `.claude/cost/`, the dependency folders (`node_modules/`, `.venv/`,
+   `vendor/`, `target/`, `.build/`) and build and coverage output
+   (`dist/`, `build/`, `coverage/`).
 5. Install shellcheck, shfmt, markdownlint-cli2 and jq; the guards and the
    hooks need them. Install Claude Code; `bin/commit` runs `claude` to
    review changed rules. A Rust app also needs `cargo-llvm-cov`
@@ -330,10 +331,11 @@ stops every process the dispatcher started.
 | `bin/_root-format`  | Repo-level format for `format`       |
 | `bin/scan`          | Search the repo                      |
 
-Both repo-level checks run every executable in `checks/`, on every call even
+`bin/_root-tests` runs every executable in `checks/`, on every call even
 when the saved pass matches, then `tests/run`; `bin/_root-tests checks/<name>`
-runs one check. A check is a bash script for something the repo must revisit,
-such as a dated dependency pin. `bin/_root-format` rewrites every
+runs one check. `bin/_root-changed` runs only `tests/guards`. A check is a
+bash script for something the repo must revisit, such as a dated
+dependency pin. `bin/_root-format` rewrites every
 bash script with `shfmt -i 2 -ci` and fixes every Markdown file with
 markdownlint, so a formatting finding from the guards is fixed by
 `bin/format`; it fails when markdownlint cannot run, not on the findings
@@ -438,10 +440,11 @@ guards, so a broken standard fails the gate like a failing test.
   any other exemption is an exact path.
 - A rule is over 40 lines or 8,000 characters (its stamp excluded), lacks
   one leading H1, has frontmatter or a "Why" or "History" heading, uses
-  past-tense wording, cites a missing rule, or lacks an audit stamp that
+  backward-facing wording, cites a missing rule, or lacks an audit stamp that
   matches its body.
 - `CLAUDE.md` is over 400 lines or 12,000 characters, lacks one leading H1,
-  or points at the rules.
+  uses backward-facing wording, or points at the rules folder or names a
+  rule.
 - Any file silences a linter, or a lint configuration file holds a setting
   outside its tool's list. Biome, RuboCop, Ruff, Cargo's lint levels,
   swift-format's rules and `.shellcheckrc` each have a list of allowed
@@ -470,13 +473,17 @@ guards, so a broken standard fails the gate like a failing test.
   with `set -euo pipefail`.
 - A Markdown file breaks a markdownlint rule.
 - An app's own `bin/` holds `ci`, `changed`, `format`, `lint`, `build`,
-  `test`, `dependencies` or `open`, or any file sits in `bin/_root/`; the
-  root `bin/` runs every app.
+  `test`, `dependencies`, `open` or `qa`, or any file sits in `bin/_root/`;
+  the root `bin/` runs every app.
 - A script in a `bin/_<language>/` folder other than `dependencies` runs a
-  package manager's install, update or add command.
-- `.claude/settings.json` is missing or invalid, does not allow `Bash(bin/*)`,
-  allows every command (`Bash` or a pattern that starts with a wildcard),
-  does not deny destructive git, or does not wire both hooks.
+  package manager's install, lock, resolve, update or add command; a
+  `dependencies` script installs without an update; or a language's other
+  gate script never runs `packages_check` when its `lib/toolchain.sh`
+  defines one.
+- `.claude/settings.json` is missing or invalid, does not allow `Bash(bin/*)`
+  and `Bash(tests/run)`, allows every command (`Bash` or a pattern that
+  starts with a wildcard), does not deny destructive git with and without
+  `git -C`, or does not wire both hooks.
 
 When you add a check:
 
@@ -532,7 +539,9 @@ The starter's `.claude/settings.json` sets what the agent may run:
 - **`session-start`** (`SessionStart`) runs `bin/ci` once in a cloud session,
   so the session starts from a known state. A local session is left alone.
 
-The guards fail when the file is missing, invalid, or drops any of these.
+The guards fail when the file is missing or invalid, or drops one of the
+allows, the git denies or a hook. They leave the gate-edit denies alone, since
+bin-stubs runs them on its own copy; its `tests/run` checks those denies.
 
 `.githooks/pre-commit` blocks a person's plain `git commit` too. Just before
 it commits, `bin/commit` writes a one-time code under `.git/` and passes it

@@ -400,6 +400,9 @@ EOF
   chmod +x "$repo/web/bin/ci" "$repo/bin/_root/test"
 
   printf 'npm install\n' >>"$repo/bin/_typescript/build"
+  printf 'bundle lock\n' >>"$repo/bin/_rails/build"
+  printf 'cargo generate-lockfile\n' >>"$repo/bin/_rust/build"
+  printf 'xcodebuild -resolvePackageDependencies\n' >>"$repo/bin/_ios/build"
   printf 'uv sync\n' >>"$repo/bin/_python/dependencies"
   grep -vx 'npm update' "$REPO/bin/_typescript/dependencies" >"$repo/bin/_typescript/dependencies"
   grep -v packages_check "$REPO/bin/_python/lint" >"$repo/bin/_python/lint"
@@ -474,8 +477,8 @@ EOF
   printf '%s\n' '# Notes' '' '#Heading without a space' >"$repo/notes.md"
 
   cp "$repo/.claude/settings.json" "$repo/settings.json.keep"
-  jq '.permissions.deny -= ["Bash(git reset *)", "Bash(git push * -f)"]
-    | .permissions.allow += ["Bash(*/bin/*)", "Bash"] | .permissions.allow -= ["Bash(bin/*)"]
+  jq '.permissions.deny -= ["Bash(git reset *)", "Bash(git push * -f)", "Bash(git -C * stash *)"]
+    | .permissions.allow += ["Bash(*/bin/*)", "Bash"] | .permissions.allow -= ["Bash(bin/*)", "Bash(tests/run)"]
     | del(.hooks.SessionStart, .hooks.PreToolUse)' \
     "$repo/settings.json.keep" >"$repo/.claude/settings.json"
   rm "$repo/settings.json.keep"
@@ -513,8 +516,11 @@ EOF
   grep -qF ".gitignore does not ignore coverage/" "${LAST_LOG}" || die "a missing ignore line was not caught"
   grep -qF "web/bin/ci: a gate script inside an app" "${LAST_LOG}" || die "a gate script inside an app was not caught"
   grep -qF "bin/_root/test: the root app runs from bin/_<language>/" "${LAST_LOG}" || die "a bin/_root script was not caught"
-  grep -qE "bin/_typescript/build:[0-9]+: installs packages; only bin/dependencies does" "${LAST_LOG}" ||
-    die "a gate script that installs was not caught"
+  local missed=""
+  for lang in typescript rails rust ios; do
+    grep -qE "bin/_$lang/build:[0-9]+: installs packages; only bin/dependencies does" "${LAST_LOG}" || missed+=" $lang"
+  done
+  [ -z "$missed" ] || die "a gate script that installs was not caught:$missed"
   grep -q "bin/_python/dependencies:[0-9]*: installs packages" "${LAST_LOG}" && die "bin/dependencies was refused for installing"
   grep -qF "bin/_typescript/dependencies: installs packages without updating them first" "${LAST_LOG}" ||
     die "a bin/dependencies that only installs was not caught"
@@ -536,6 +542,8 @@ EOF
   grep -q "notes.md:3.*MD018" "${LAST_LOG}" || die "markdownlint not enforced"
   grep -q "does not deny Bash(git reset \*)" "${LAST_LOG}" || die "missing deny not caught"
   grep -q "does not deny Bash(git push \* -f)" "${LAST_LOG}" || die "missing force-push deny not caught"
+  grep -qxF "guards: .claude/settings.json: does not deny Bash(git -C * stash *)" "${LAST_LOG}" || die "missing git -C deny not caught"
+  grep -qxF "guards: .claude/settings.json: does not allow Bash(tests/run)" "${LAST_LOG}" || die "missing tests/run allow not caught"
   grep -qF "allows every command: Bash(*/bin/*)" "${LAST_LOG}" || die "wildcard allow not caught"
   grep -qx "guards: .claude/settings.json: allows every command: Bash" "${LAST_LOG}" || die "bare Bash allow not caught"
   grep -q "no SessionStart hook runs" "${LAST_LOG}" || die "missing hook not caught"

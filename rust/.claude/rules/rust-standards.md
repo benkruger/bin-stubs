@@ -15,7 +15,13 @@ coverage.
   a failing test or below 100% line coverage of the workspace; with no
   rustup, it takes LLVM's tools from `llvm-cov` on `PATH` or Homebrew's
   `llvm`.
+- `bin/changed` runs `bin/format`, `bin/lint` and `bin/test` over the
+  whole workspace when any file in the app changed since the last commit.
+- `bin/dependencies` runs `cargo update`, then `cargo fetch`, as
+  `packages.md` states; `packages_check` fails when
+  `cargo fetch --offline --locked` fails: a crate is missing or
+  `Cargo.lock` does not match `Cargo.toml`.
 - `rust-toolchain.toml` pins the toolchain; for a numbered channel, outside
   CI, `bin/ci` fails unless that rustc is active.
 - Trigger: any change to a Rust `bin/` script.
-<!-- audited: 7285c931568d -->
+<!-- audited: 8020c323fb11 -->
