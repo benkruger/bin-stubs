@@ -329,6 +329,9 @@ EOF
   printf "require 'simplecov'\nSimpleCov.start do\n  enable_coverage :branch\n  minimum_coverage line: 100, branch: 100\nend\n" >"$cov/ok/test/test_helper.rb"
   printf '{ "defaultOptions": { "codeCoverage": true } }\n' >"$cov/ok/App.xctestplan"
   printf '# Probe\n\nA probe rule.\n' >"$repo/.claude/rules/probe.md"
+  run_log "$repo/bin/stamp-rules"
+  assert_rc 2 "bin/stamp-rules with no rule file"
+  grep -q "audited:" "$repo/.claude/rules/probe.md" && die "bin/stamp-rules with no rule file stamped a rule"
   expect_ok "$repo/bin/stamp-rules" "$repo/.claude/rules/probe.md"
   expect_ok "$repo/tests/run"
   rm -r "$cfg/ok" "$cov/ok"
@@ -404,7 +407,7 @@ EOF
   printf 'cargo generate-lockfile\n' >>"$repo/bin/_rust/build"
   printf 'xcodebuild -resolvePackageDependencies\n' >>"$repo/bin/_ios/build"
   printf 'uv sync\n' >>"$repo/bin/_python/dependencies"
-  grep -vx 'npm update' "$REPO/bin/_typescript/dependencies" >"$repo/bin/_typescript/dependencies"
+  sed 's/^npm update$/npm ci/' "$REPO/bin/_typescript/dependencies" >"$repo/bin/_typescript/dependencies"
   grep -v packages_check "$REPO/bin/_python/lint" >"$repo/bin/_python/lint"
 
   local notes="$repo/comment-plants" plant expected actual
@@ -1170,6 +1173,7 @@ test_start() {
   repo="$(new_repo)"
   KEEP="$repo"
   copy_dir "$REPO/bin" "$repo/bin"
+  stub_suite "$repo"
   mkdir -p "$repo/python"
   seed_python "$repo/python"
   expect_ok "$repo/bin/dependencies"
@@ -1427,6 +1431,6 @@ run_test() {
 
 run_all "$WORK/logs" run_test test_settings test_scan test_root_format test_open test_qa test_query \
   test_hooks test_starter test_bare_guards test_guards_scans test_commit test_commit_review test_commit_fix test_commit_rounds test_commit_stops test_commit_gate test_copies_match test_changed_empty test_parts \
-  test_dispatch test_dispatch_select test_dispatch_paths test_suite_seal test_unborn \
+  test_dispatch test_dispatch_select test_dispatch_paths test_suite_seal test_unborn test_suite_missing \
   test_shellcheck_cache test_checked_once test_steps test_jobs test_interrupt test_start test_merge test_cleanup test_complete test_ci_time test_root_app test_root_js test_root_shell test_root_changed \
   test_app_language

@@ -11,4 +11,3 @@ if [ -z "${CI:-}" ]; then
 fi
 
 npm update
-npm ci

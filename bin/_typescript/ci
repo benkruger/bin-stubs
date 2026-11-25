@@ -73,7 +73,7 @@ audit=$!
 # shellcheck source=../lib/steps.sh
 . "$here/../lib/steps.sh"
 steps_init "$root/.flow-states/$branch" "$force" "$pre_hash" "$log" "$branch" \
-  'npm warn|DeprecationWarning|^Warning: ' '| *100.00 | *100.00 |'
+  'npm warn|DeprecationWarning|^Warning: '
 start_step format "$here/format" --check --all
 start_step lint "$here/lint" --all
 start_step build "$here/build"

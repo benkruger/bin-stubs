@@ -2,7 +2,8 @@
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
-if [ -x "$ROOT/tests/guards" ]; then
-  exec "$ROOT/tests/guards"
+if [ ! -x "$ROOT/tests/guards" ]; then
+  echo "root-suite: no executable tests/guards" >&2
+  exit 1
 fi
-echo "root-suite: no tests/guards"
+exec "$ROOT/tests/guards"

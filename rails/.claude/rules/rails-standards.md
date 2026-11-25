@@ -23,12 +23,11 @@ strength.
   of the tests `bin/test <file>` runs.
 - Ruby runs the suite with warnings on; a warning from the app's own code
   fails it.
-- `bin/format` autocorrects with RuboCop under `--enable-pending-cops` and
-  fixes Markdown with `markdownlint-cli2` from PATH; with `--check` it fails
-  a RuboCop Layout offense or a `markdownlint-cli2` finding. `bin/lint`
-  fails any RuboCop offense, any Brakeman warning and any
-  `markdownlint-cli2` finding, and no cop is turned off beyond what
-  `no-lint-exceptions.md` allows.
+- `bin/format` autocorrects with RuboCop under `--enable-pending-cops`;
+  with `--check` it fails a RuboCop Layout offense. `bin/lint` fails any
+  RuboCop offense, any Brakeman warning and any `markdownlint-cli2`
+  finding, and no cop is turned off beyond what `no-lint-exceptions.md`
+  allows.
 - `bin/build` eager-loads the app with Zeitwerk.
 - `bin/dependencies` updates gems as `packages.md` states, then fails
   on any gem `bundler-audit` flags and on any Brakeman warning.
@@ -37,4 +36,4 @@ strength.
 - `bin/qa`, outside `bin/ci`, runs `rails test:system`; a failed test, or an
   output line matching `warn` or `deprecat` in any case, fails it.
 - Trigger: any change to a Rails `bin/` script or `test/test_helper.rb`.
-<!-- audited: 11fe28f7eb18 -->
+<!-- audited: ebabb917a67f -->

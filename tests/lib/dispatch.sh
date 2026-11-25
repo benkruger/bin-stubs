@@ -4,6 +4,7 @@ dispatch_repo() {
   repo="$(new_repo)"
   keep "$repo"
   copy_dir "$HERE/../bin" "$repo/bin"
+  stub_suite "$repo"
   mkdir -p "$repo/python" "$repo/shell"
   seed_python "$repo/python"
   seed_shell "$repo/shell"
@@ -184,6 +185,7 @@ test_unborn() {
   git init -q -b main "$repo"
   printf '.flow-states/\n' >"$repo/.gitignore"
   copy_dir "$HERE/../bin" "$repo/bin"
+  stub_suite "$repo"
   mkdir -p "$repo/shell"
   seed_shell "$repo/shell"
   expect_ok "$repo/bin/format"
@@ -196,6 +198,23 @@ test_unborn() {
   sum="$(summary)"
   assert_eq "$(row_of shell "$sum")" "SKIP" "shell's second run on an unborn branch"
   assert_eq "$(row_of suite "$sum")" "SKIP" "the suite's second run on an unborn branch"
+}
+
+test_suite_missing() {
+  say "bin/ci and bin/changed fail a repo with no suite"
+  local repo sum
+  repo="$(new_repo)"
+  keep "$repo"
+  copy_dir "$HERE/../bin" "$repo/bin"
+  mkdir -p "$repo/shell"
+  seed_shell "$repo/shell"
+  expect_ok "$repo/bin/format"
+  expect_fail "$repo/bin/ci"
+  grep -q "root-suite: no executable tests/run" "${LAST_LOG}" || die "bin/ci passed a repo with no tests/run"
+  sum="$(summary)"
+  assert_eq "$(row_of suite "$sum")" "FAIL" "the suite with no tests/run"
+  expect_fail "$repo/bin/changed"
+  grep -q "root-suite: no executable tests/guards" "${LAST_LOG}" || die "bin/changed passed a repo with no tests/guards"
 }
 
 test_steps() {
@@ -329,6 +348,7 @@ test_ci_time() {
   repo="$(new_repo)"
   keep "$repo"
   copy_dir "$HERE/../bin" "$repo/bin"
+  stub_suite "$repo"
   mkdir -p "$repo/python"
   seed_python "$repo/python"
   expect_ok "$repo/bin/dependencies"

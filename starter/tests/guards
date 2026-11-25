@@ -2,7 +2,6 @@
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 ROOT="$(git -C "$HERE" rev-parse --show-toplevel)"
-SELF="${HERE#"$ROOT"/}/$(basename "${BASH_SOURCE[0]}")"
 cd "$ROOT"
 
 MAX_RULE_LINES=40
@@ -67,14 +66,10 @@ if [ "${#measured[@]}" -gt 0 ]; then
     CAP="$MAX_AUTHORED_BYTES" perl -nle 'my $b = -s $_; print "$_: $b bytes, over the $ENV{CAP}-byte cap" if $b > $ENV{CAP}')
 fi
 
-scanned=()
-for path in "${files[@]}"; do
-  [ "$path" = "$SELF" ] || scanned+=("$path")
-done
-if [ "${#scanned[@]}" -gt 0 ]; then
+if [ "${#files[@]}" -gt 0 ]; then
   while IFS= read -r line; do
     fail "$line: suppression comment"
-  done < <(printf '%s\0' "${scanned[@]}" | xargs -0 grep -nIHE "$BANNED_SUPPRESSIONS" -- 2>>"$scan_errors" | cut -d: -f1,2 || true)
+  done < <(printf '%s\0' "${files[@]}" | xargs -0 grep -nIHE "$BANNED_SUPPRESSIONS" -- 2>>"$scan_errors" | cut -d: -f1,2 || true)
 fi
 
 comment_lines() {
@@ -740,7 +735,6 @@ timeout_lines() {
 TIMEOUT_ANY="$TIMEOUT_FLAGS|$TIMEOUT_JS_CONFIG|$TIMEOUT_JS_CODE|$TIMEOUT_JS_LIMIT|$TIMEOUT_PY_LIMIT|$TIMEOUT_SWIFT_CODE|$TIMEOUT_XCTESTPLAN|^[[:space:]]*timeout[[:space:]]*="
 
 while IFS= read -r path; do
-  [ "$path" = "$SELF" ] && continue
   while IFS= read -r line; do
     [ -n "$line" ] || continue
     fail "$path:$line: raises the test time limit beyond the runner's default; only a fixed number on one test is allowed"

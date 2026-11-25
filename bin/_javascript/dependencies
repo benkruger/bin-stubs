@@ -12,9 +12,3 @@ fi
 
 npm update
 "$root/node_modules/.bin/biome" migrate --write
-
-if [ -f package-lock.json ]; then
-  npm ci
-else
-  npm install
-fi

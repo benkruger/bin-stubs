@@ -58,14 +58,14 @@ if [ "$force" -eq 0 ] && [ -f "$sentinel" ] && [ "$(cat "$sentinel")" = "$pre_ha
   exit 0
 fi
 
-if [ -x "$ROOT/tests/run" ] && [ "$force" -eq 1 ]; then
+if [ ! -x "$ROOT/tests/run" ]; then
+  echo "root-suite: no executable tests/run" >&2
+  exit 1
+fi
+if [ "$force" -eq 1 ]; then
   "$ROOT/tests/run" --force
-elif [ -x "$ROOT/tests/run" ]; then
-  "$ROOT/tests/run"
-elif compgen -G "$ROOT/tests/*.test.ts" >/dev/null; then
-  (cd "$ROOT/tests" && bun test)
 else
-  echo "root-suite: no tests"
+  "$ROOT/tests/run"
 fi
 
 mkdir -p "$(dirname "$sentinel")"

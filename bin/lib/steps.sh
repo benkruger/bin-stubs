@@ -11,7 +11,6 @@ steps_init() {
   STEPS_LOG="$4"
   STEPS_BRANCH="$5"
   STEPS_WARNINGS="$6"
-  STEPS_ELIDE="$7"
 }
 
 start_step() {
@@ -76,13 +75,9 @@ finish_steps() {
     echo "bin/ci: $label $mark"
   done
   [ "${#failed[@]}" -gt 0 ] || return 0
-  if [ -n "$STEPS_ELIDE" ]; then
-    grep -v "$STEPS_ELIDE" "$STEPS_LOG" >&2 || true
-  else
-    cat "$STEPS_LOG" >&2
-  fi
+  cat "$STEPS_LOG" >&2
   for name in "${failed[@]}"; do
-    echo "bin/ci: gate RED ($STEPS_BRANCH) — step '$name' failed (above${STEPS_ELIDE:+; 100%-covered rows elided})." >&2
+    echo "bin/ci: gate RED ($STEPS_BRANCH) — step '$name' failed (above)." >&2
   done
   return 1
 }

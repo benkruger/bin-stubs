@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
 set -euo pipefail
-root="$(cd "$(dirname "$0")/.." && pwd)"
 
 stamp_one() {
   f="$1"
@@ -13,12 +12,10 @@ stamp_one() {
   rm -f "$tmp"
 }
 
-if [ "$#" -gt 0 ]; then
-  for f in "$@"; do
-    stamp_one "$f"
-  done
-else
-  while IFS= read -r -d '' f; do
-    stamp_one "$f"
-  done < <(find "$root/.claude/rules" -name '*.md' -print0)
+if [ "$#" -eq 0 ]; then
+  echo "usage: bin/stamp-rules <rule file>..." >&2
+  exit 2
 fi
+for f in "$@"; do
+  stamp_one "$f"
+done

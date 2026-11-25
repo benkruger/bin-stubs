@@ -178,7 +178,7 @@ else
   changed=()
   while IFS= read -r -d '' path; do
     case "$path" in
-      "" | .flow-commit-msg | .ci-timeout | */.ci-timeout) continue ;;
+      "" | .ci-timeout | */.ci-timeout) continue ;;
     esac
     changed+=("$path")
   done < <(collect_changed | sort -zu)

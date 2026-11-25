@@ -83,6 +83,13 @@ copy_dir() {
   cp -cR "$1/." "$2/" 2>/dev/null || cp -R "$1/." "$2/"
 }
 
+stub_suite() {
+  mkdir -p "$1/tests"
+  printf '%s\n' '#!/usr/bin/env bash' 'set -euo pipefail' >"$1/tests/run"
+  cp "$1/tests/run" "$1/tests/guards"
+  chmod +x "$1/tests/run" "$1/tests/guards"
+}
+
 sentinel_file() {
   printf '%s\n' "$1/.flow-states/main/ci-sentinel"
 }

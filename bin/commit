@@ -619,24 +619,19 @@ if [ "$ci_rc" -ne 0 ]; then
   exit 1
 fi
 
-staged_rc=0
-if git add -A >/dev/null 2>&1; then
-  git diff --cached --quiet >/dev/null 2>&1 || staged_rc=$?
-else
-  staged_rc=2
+if ! git add -A >"$WORK/git.out" 2>"$WORK/git.err"; then
+  failure_detail "stage failed: " >"$WORK/detail"
+  emit_error commit "$WORK/detail"
+  exit 1
 fi
+staged_rc=0
+git diff --cached --quiet >/dev/null 2>&1 || staged_rc=$?
 if [ "$staged_rc" -eq 0 ]; then
   error_text empty "no changes to commit — the task produced no edits"
   exit 1
 fi
 if [ "$staged_rc" -ne 1 ]; then
   error_text commit "could not read the staged diff — git failed; nothing was committed"
-  exit 1
-fi
-
-if ! git add -A >"$WORK/git.out" 2>"$WORK/git.err"; then
-  failure_detail "stage failed: " >"$WORK/detail"
-  emit_error commit "$WORK/detail"
   exit 1
 fi
 marker="$(git rev-parse --path-format=absolute --git-path flow-commit-marker)"

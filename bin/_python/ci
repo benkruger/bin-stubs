@@ -70,7 +70,7 @@ export FLOW_CHECKED_APP="$root"
 # shellcheck source=../lib/steps.sh
 . "$here/../lib/steps.sh"
 steps_init "$root/.flow-states/$branch" "$force" "$pre_hash" "$log" "$branch" \
-  '' '| *100.00 | *100.00 |'
+  ''
 start_step format "$here/format" --check --all
 start_step lint "$here/lint" --all
 start_step build "$here/build"
