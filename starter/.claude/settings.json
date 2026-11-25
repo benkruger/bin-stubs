@@ -33,6 +33,7 @@
       "Edit(/tests/guards)",
       "Edit(/tests/run)",
       "Edit(/.claude/settings.json)",
+      "Edit(/.claude/settings.local.json)",
       "Edit(/.claude/hooks/**)",
       "Edit(/.githooks/**)"
     ]

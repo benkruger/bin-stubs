@@ -83,6 +83,19 @@ test_bare_guards() {
   expect_fail "$repo/tests/guards"
   grep -qx "guards: .claude/settings.json: has a permissions.allow that is not a list" "${LAST_LOG}" ||
     missed+=" [allow not a list]"
+  jq -n '{permissions: {allow: ["Bash(bin/*)", "Bash(tests/run)"], deny: "Bash(git commit *) Bash(git reset *)"},
+    disableAllHooks: true,
+    hooks: {PreToolUse: [
+      {matcher: "Read", hooks: [{type: "command", command: "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/require-bin"}]},
+      {matcher: "Bash", hooks: [{type: "prompt", command: "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/require-bin"}]}]}}' \
+    >"$repo/.claude/settings.json"
+  expect_fail "$repo/tests/guards"
+  grep -qx "guards: .claude/settings.json: has a permissions.deny that is not a list" "${LAST_LOG}" ||
+    missed+=" [deny not a list]"
+  grep -qx "guards: .claude/settings.json: turns every hook off with disableAllHooks" "${LAST_LOG}" ||
+    missed+=" [disableAllHooks]"
+  grep -qx "guards: .claude/settings.json: no PreToolUse hook runs .claude/hooks/require-bin" "${LAST_LOG}" ||
+    missed+=" [hook off Bash]"
   [ -z "$missed" ] || die "the guards passed a repo missing what they require:$missed"
 }
 

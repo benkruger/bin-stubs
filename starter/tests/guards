@@ -1087,7 +1087,7 @@ REQUIRED_DENY=(
   "Bash(git -C * clean *)" "Bash(git -C * push *--force*)" "Bash(git -C * push -f *)"
   "Bash(git -C * push * -f)" "Bash(git -C * push * -f *)" "Bash(git -C * push * +*)"
 )
-REQUIRED_HOOKS=(PreToolUse:require-bin SessionStart:session-start)
+REQUIRED_HOOKS=(PreToolUse:require-bin:Bash SessionStart:session-start:startup)
 
 if [ ! -f "$SETTINGS" ]; then
   fail "$SETTINGS is missing"
@@ -1103,11 +1103,17 @@ elif ! settings_checks="$(jq -r --argjson na "${#REQUIRED_ALLOW[@]}" --argjson n
   (try ($s.permissions.allow // [] | .[] | select(type == "string")
     | select(. == "Bash" or . == "Bash()" or startswith("Bash(*")) | "fail\tallows every command: \(.)")
     catch "fail\thas a permissions.allow that is not a list"),
-  ($p[$na:$na + $nd][] | . as $e
-    | select((try (($s.permissions.deny // []) | index($e) != null) catch false) | not)
-    | "fail\tdoes not deny \($e)"),
-  ($p[$na + $nd:][] | (split(":") | .[0]) as $ev | (sub("^[^:]*:"; "")) as $hook
-    | (try ([$s.hooks[$ev][]?.hooks[]?.command | select(contains(".claude/hooks/" + $hook))] | length > 0) catch false) as $ok
+  (if ($s.permissions.deny // []) | type == "array" then
+    ($p[$na:$na + $nd][] | . as $e
+      | select(($s.permissions.deny // []) | index($e) == null)
+      | "fail\tdoes not deny \($e)")
+  else "fail\thas a permissions.deny that is not a list" end),
+  (select($s.disableAllHooks == true) | "fail\tturns every hook off with disableAllHooks"),
+  ($p[$na + $nd:][] | split(":") as [$ev, $hook, $tool]
+    | (try ([$s.hooks[$ev][]?
+        | select((.matcher // "") as $m | $m == "" or $m == "*" or ($tool | test("^(" + $m + ")$")))
+        | .hooks[]? | select(.type == "command") | .command
+        | select(contains(".claude/hooks/" + $hook))] | length > 0) catch false) as $ok
     | "hook\t\($ev)\t\($hook)\t\(if $ok then 1 else 0 end)")
 ' "$SETTINGS" --args "${REQUIRED_ALLOW[@]}" "${REQUIRED_DENY[@]}" "${REQUIRED_HOOKS[@]}")"; then
   fail "$SETTINGS: could not be checked"

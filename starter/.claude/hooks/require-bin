@@ -2,9 +2,12 @@
 set -euo pipefail
 
 TOOLS=" bun bunx biome tsc eslint prettier vitest jest c8 ruff pytest mypy rubocop brakeman rspec cargo swift swift-format xcodebuild shellcheck shfmt markdownlint-cli2 "
-RUNNERS=" npx pnpm yarn npm bundle uv xcrun "
+RUNNERS=" npx pnpm yarn npm bundle uv uvx xcrun "
+RUNNER_VALUE_OPTS=" -p --package --with --from --python --project --directory --sdk -sdk --toolchain "
 SHELLS=" sh bash zsh dash "
-WRAPPERS=" env time command exec nohup nice builtin "
+WRAPPERS=" env time command exec nohup nice builtin timeout stdbuf xargs "
+WRAPPER_VALUE_OPTS=" -n -u -S -a -s -k --signal --kill-after -I -P -L -d -E "
+KEYWORDS=" if then elif else do while until { ! "
 PYTHONS=" python python3 "
 GIT_OPTS_WITH_ARG=" -C -c --git-dir --work-tree --namespace "
 
@@ -58,25 +61,44 @@ skip_assignments() {
   done
 }
 
+skip_options() {
+  while [ "$i" -lt "${#words[@]}" ] && [[ "${words[$i]}" == -* ]]; do
+    if [[ "$1" == *" ${words[$i]} "* ]]; then
+      i=$((i + 2))
+    else
+      i=$((i + 1))
+    fi
+  done
+}
+
 skip_wrappers() {
+  local wrapper
   while [ "$i" -lt "${#words[@]}" ]; do
     skip_assignments
     [ "$i" -lt "${#words[@]}" ] || return 0
     case " ${words[$i]##*/} " in
-      " export " | " declare " | " readonly ")
+      " export " | " declare " | " readonly " | " typeset " | " local ")
         i=$((i + 1))
+        skip_options ""
         skip_assignments
         return 0
         ;;
     esac
-    [[ "$WRAPPERS" == *" ${words[$i]##*/} "* ]] || return 0
+    if [[ "$KEYWORDS" == *" ${words[$i]} "* ]]; then
+      i=$((i + 1))
+      continue
+    fi
+    wrapper="${words[$i]##*/}"
+    if [ "$wrapper" = command ] && [[ "${words[$((i + 1))]:-}" == -[vV] ]]; then
+      i="${#words[@]}"
+      return 0
+    fi
+    [[ "$WRAPPERS" == *" $wrapper "* ]] || return 0
     i=$((i + 1))
-    while [ "$i" -lt "${#words[@]}" ] && [[ "${words[$i]}" == -* ]]; do
-      case "${words[$i]}" in
-        -n | -u | -S) i=$((i + 2)) ;;
-        *) i=$((i + 1)) ;;
-      esac
-    done
+    skip_options "$WRAPPER_VALUE_OPTS"
+    if [ "$wrapper" = timeout ]; then
+      i=$((i + 1))
+    fi
   done
 }
 
@@ -98,43 +120,77 @@ git_commits() {
   return 1
 }
 
-blocked=""
-while IFS= read -r segment; do
+shell_body() {
+  local rest="$1" n="$2" quote
+  while [ "$n" -gt 0 ]; do
+    rest="${rest#"${rest%%[![:space:]]*}"}"
+    rest="${rest#"${rest%%[[:space:]]*}"}"
+    n=$((n - 1))
+  done
+  rest="${rest#"${rest%%[![:space:]]*}"}"
+  quote="${rest:0:1}"
+  case "$quote" in
+    \" | \')
+      rest="${rest:1}"
+      rest="${rest%%"$quote"*}"
+      ;;
+  esac
+  printf '%s\n' "$rest"
+}
+
+check_segment() {
+  local segment="$1" words=() i=0 k word
   read -r -a words <<<"$segment" || true
-  [ "${#words[@]}" -gt 0 ] || continue
+  [ "${#words[@]}" -gt 0 ] || return 0
   for k in "${!words[@]}"; do
     words[k]="${words[k]//\"/}"
     words[k]="${words[k]//\'/}"
   done
-  i=0
   skip_wrappers
-  [ -z "$blocked" ] || break
-  [ "$i" -lt "${#words[@]}" ] || continue
+  [ -z "$blocked" ] || return 0
+  [ "$i" -lt "${#words[@]}" ] || return 0
+  case "/${words[$i]}/" in
+    /bin/* | /./bin/*)
+      if [[ "/${words[$i]}/" == */../* ]]; then
+        blocked="climb"
+        return 0
+      fi
+      ;;
+  esac
   if [[ "$SHELLS" == *" ${words[$i]##*/} "* ]]; then
-    case "${words[$((i + 1))]:-}" in
-      -c | -lc)
-        i=$((i + 2))
-        skip_wrappers
-        [ -z "$blocked" ] || break
-        [ "$i" -lt "${#words[@]}" ] || continue
-        ;;
-    esac
+    i=$((i + 1))
+    while [ "$i" -lt "${#words[@]}" ] && [[ "${words[$i]}" == -* ]]; do
+      if [[ "${words[$i]}" == -c || "${words[$i]}" == -[!-]*c ]]; then
+        check_text "$(shell_body "$segment" $((i + 1)))"
+        return 0
+      fi
+      i=$((i + 1))
+    done
+  elif [ "${words[$i]}" = . ] || [ "${words[$i]}" = source ]; then
+    i=$((i + 1))
   fi
-  word="${words[$i]##*/}"
+  word="${words[$i]:-}"
+  word="${word##*/}"
   if [ "$word" = "git" ] && git_commits $((i + 1)); then
     blocked="commit"
-    break
+    return 0
   fi
   if [ "$word" = "stamp-rules" ]; then
     blocked="stamp-rules"
-    break
+    return 0
   fi
   if [[ "$RUNNERS" == *" $word "* ]]; then
     i=$((i + 1))
+    skip_options "$RUNNER_VALUE_OPTS"
     case "${words[$i]:-}" in
-      exec | run | x) i=$((i + 1)) ;;
+      exec | run | x | dlx)
+        i=$((i + 1))
+        skip_options "$RUNNER_VALUE_OPTS"
+        ;;
     esac
     word="${words[$i]:-}"
+    word="${word##*/}"
+    word="${word%%@*}"
   fi
   if [[ "$PYTHONS" == *" ${word%%[0-9.]*} "* ]] || [[ "$PYTHONS" == *" $word "* ]]; then
     if [ "${words[$((i + 1))]:-}" = "-m" ]; then
@@ -143,16 +199,30 @@ while IFS= read -r segment; do
   fi
   if [[ "$TOOLS" == *" $word "* ]]; then
     blocked="$word"
-    break
+    return 0
   fi
   if [ "$word" = "rails" ] && [ "${words[$((i + 1))]:-}" = "test" ]; then
     blocked="rails test"
-    break
   fi
-done < <(segments "$command")
+}
+
+check_text() {
+  local segment
+  while IFS= read -r segment; do
+    check_segment "$segment"
+    [ -z "$blocked" ] || return 0
+  done < <(segments "$1")
+}
+
+blocked=""
+check_text "$command"
 
 if [ "$blocked" = "check-skip" ]; then
   echo "Blocked: CI and FLOW_CHECKED_APP make the bin/ scripts skip their toolchain and package checks; run the command without them." >&2
+  exit 2
+fi
+if [ "$blocked" = "climb" ]; then
+  echo "Blocked: a bin/ path with .. in it leaves bin/; run that program by its own name." >&2
   exit 2
 fi
 if [ "$blocked" = "stamp-rules" ]; then

@@ -20,7 +20,7 @@ export XDG_CACHE_HOME="$WORK/cache"
 
 settings_findings() {
   local root="$1"
-  local gate='["Edit(/bin/**)","Edit(/tests/guards)","Edit(/tests/run)","Edit(/.claude/settings.json)","Edit(/.claude/hooks/**)","Edit(/.githooks/**)"]'
+  local gate='["Edit(/bin/**)","Edit(/tests/guards)","Edit(/tests/run)","Edit(/.claude/settings.json)","Edit(/.claude/settings.local.json)","Edit(/.claude/hooks/**)","Edit(/.githooks/**)"]'
   jq -e --argjson gate "$gate" '$gate - .permissions.deny == []' "$root/starter/.claude/settings.json" >/dev/null ||
     echo "the starter's settings do not deny editing the gate"
   jq -e --argjson gate "$gate" --slurpfile mine "$root/.claude/settings.json" \
@@ -263,7 +263,11 @@ test_hooks() {
     "xcrun swift-format lint Sources" "ls; /opt/homebrew/bin/ruff check ." \
     "env cargo test" "time cargo test" "command cargo test" "nice -n 5 cargo test" "python -m pytest" \
     "uv run python3 -m mypy src" "echo \$(cargo test)" "echo \`cargo test\`" "bin/lint & cargo test" \
-    "(cargo test)" "echo \"\$(cargo test)\""; do
+    "(cargo test)" "echo \"\$(cargo test)\"" "if true; then cargo test; fi" "{ cargo test; }" "! cargo test" \
+    "for f in a; do cargo test; done" "while cargo test; do :; done" "sh -c \"cd app && cargo test\"" \
+    "bash -c 'cargo test' arg0" "sh -ec \"cargo test\"" "npx --yes vitest run" "npx @biomejs/biome check ." "npx prettier@3 --check ." \
+    "npm exec -- biome check" "uv run --frozen pytest" "xcrun --sdk macosx swift build" "pnpm dlx biome check" \
+    "uvx ruff check ." "timeout -s KILL 60 cargo test" "ls | xargs -n 1 cargo test" "stdbuf -oL cargo test"; do
     hook_on "$cmd"
     assert_rc 2 "require-bin should block: $cmd"
     grep -q "Blocked: call the bin/ script" "${LAST_LOG}" || die "no block message for: $cmd"
@@ -275,25 +279,43 @@ test_hooks() {
     assert_rc 2 "require-bin should block: $cmd"
     grep -q "Blocked: commit with bin/commit" "${LAST_LOG}" || die "no commit block message for: $cmd"
   done
-  for cmd in "bin/stamp-rules .claude/rules/a.md" "./bin/stamp-rules" "cd app && bin/stamp-rules"; do
+  for cmd in "bin/stamp-rules .claude/rules/a.md" "./bin/stamp-rules" "cd app && bin/stamp-rules" \
+    "bash bin/stamp-rules a.md" "sh -x bin/stamp-rules a.md" ". bin/stamp-rules a.md" "source bin/stamp-rules a.md"; do
     hook_on "$cmd"
     assert_rc 2 "require-bin should block: $cmd"
     grep -q "Blocked: only bin/commit stamps rules" "${LAST_LOG}" || die "no stamp block message for: $cmd"
   done
-  for cmd in "CI=1 bin/ci" "env FLOW_CHECKED_APP=x bin/lint" "export CI=1"; do
+  for cmd in "CI=1 bin/ci" "env FLOW_CHECKED_APP=x bin/lint" "export CI=1" "declare -x CI=1; bin/ci" \
+    "typeset -x FLOW_CHECKED_APP=x; bin/lint" "local CI=1"; do
     hook_on "$cmd"
     assert_rc 2 "require-bin should block: $cmd"
     grep -q "Blocked: CI and FLOW_CHECKED_APP" "${LAST_LOG}" || die "no check-skip block message for: $cmd"
   done
+  for cmd in "bin/../../../../usr/bin/git reset --hard" "./bin/_python/../../x"; do
+    hook_on "$cmd"
+    assert_rc 2 "require-bin should block: $cmd"
+    grep -q "Blocked: a bin/ path with .. in it" "${LAST_LOG}" || die "no climb block message for: $cmd"
+  done
   for cmd in "bin/test src/add.ts" "bin/ci --typescript" "git status" \
     "bundle exec rails runner 1" "npm test" "ls -la" "git log --grep commit" \
-    "bin/commit main /tmp/flow-commit-msg.abc123" "grep -n \"a\|bun test\" README.md" "echo 'cargo test'"; do
+    "bin/commit main /tmp/flow-commit-msg.abc123" "grep -n \"a\|bun test\" README.md" "echo 'cargo test'" \
+    "command -v cargo"; do
     hook_on "$cmd"
     assert_rc 0 "require-bin should allow: $cmd"
   done
   run_log env -u CLAUDE_CODE_REMOTE "$REPO/starter/.claude/hooks/session-start"
   assert_rc 0 "session-start outside the cloud"
   [ ! -s "${LAST_LOG}" ] || die "session-start ran something outside the cloud"
+  local cloud="$WORK/cloud" source
+  mkdir -p "$cloud/bin"
+  printf '%s\n' '#!/usr/bin/env bash' 'echo "bin/ci ran"' >"$cloud/bin/ci"
+  chmod +x "$cloud/bin/ci"
+  for source in resume clear compact; do
+    run_log env CLAUDE_CODE_REMOTE=true CLAUDE_PROJECT_DIR="$cloud" \
+      "$REPO/starter/.claude/hooks/session-start" < <(printf '{"source":"%s"}\n' "$source")
+    assert_rc 0 "session-start on $source"
+    [ ! -s "${LAST_LOG}" ] || die "session-start ran bin/ci again on $source"
+  done
 }
 
 test_starter() {
