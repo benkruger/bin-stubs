@@ -402,6 +402,53 @@ test_root_js() {
   return 0
 }
 
+test_root_changed() {
+  say "a root Rust or iOS app's changed leaves its sibling apps out"
+  local repo lang
+  for lang in rust ios; do
+    repo="$(new_repo)"
+    keep "$repo"
+    copy_dir "$HERE/../bin" "$repo/bin"
+    mkdir -p "$repo/src" "$repo/web"
+    if [ "$lang" = rust ]; then
+      printf '[package]\nname = "root"\nversion = "0.1.0"\nedition = "2021"\n' >"$repo/Cargo.toml"
+      printf 'pub fn one() -> i32 {\n    1\n}\n' >"$repo/src/lib.rs"
+      (cd "$repo" && cargo generate-lockfile --offline -q)
+    else
+      printf '// swift-tools-version:5.9\nimport PackageDescription\n\nlet package = Package(name: "Root")\n' \
+        >"$repo/Package.swift"
+    fi
+    printf '{ "name": "web", "private": true }\n' >"$repo/web/package.json"
+    printf 'export const web = 1;\n' >"$repo/web/web.js"
+    run_log "$repo/bin/_$lang/changed" --files
+    grep -q "^web/" "${LAST_LOG}" && die "a root $lang app's changed listed a sibling app's file"
+    grep -qxE "src/lib.rs|Package.swift" "${LAST_LOG}" || die "a root $lang app's changed left out its own file"
+  done
+  return 0
+}
+
+test_root_shell() {
+  say "a root shell app's scripts leave its sibling apps out"
+  local repo
+  repo="$(new_repo)"
+  keep "$repo"
+  copy_dir "$HERE/../bin" "$repo/bin"
+  mkdir -p "$repo/test" "$repo/web"
+  printf '%s\n' '#!/usr/bin/env bash' 'set -euo pipefail' 'echo ok' >"$repo/test/run"
+  chmod +x "$repo/test/run"
+  printf '{ "name": "web", "private": true }\n' >"$repo/web/package.json"
+  printf '%s\n' '#!/usr/bin/env bash' "echo \$1" >"$repo/web/loose.sh"
+  run_log "$repo/bin/_shell/changed" --files
+  grep -q "web/" "${LAST_LOG}" && die "the root shell app's changed listed a sibling app's file"
+  expect_ok "$repo/bin/_shell/lint" --all
+  expect_ok "$repo/bin/_shell/format" --check --all
+  printf '%s\n' '#!/usr/bin/env bash' "echo \$1" >"$repo/loose.sh"
+  expect_fail "$repo/bin/_shell/lint" --all
+  grep -q "In loose.sh line 2" "${LAST_LOG}" || die "the root shell app's lint skipped its own file"
+  grep -q "web/loose.sh" "${LAST_LOG}" && die "the root shell app's lint checked a sibling app's file"
+  return 0
+}
+
 test_app_language() {
   say "the dispatcher tells each app's language by its manifest"
   local spec dir file parts files

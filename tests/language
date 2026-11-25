@@ -51,7 +51,7 @@ section_installed() {
   case "$lang" in
     typescript | javascript) run_all "$WORK/logs" run_section changed whole plants audit ;;
     python) run_all "$WORK/logs" run_section changed whole plants ;;
-    rails) run_all "$WORK/logs" run_section changed whole plants audit ;;
+    rails) run_all "$WORK/logs" run_section changed whole plants audit root ;;
     ios) run_all "$WORK/logs" run_section changed plants xcode ;;
     shell) run_all "$WORK/logs" run_section changed whole plants ;;
     *) run_all "$WORK/logs" run_section changed plants ;;
@@ -381,6 +381,22 @@ EOF
     ios)
       mkdir -p "$app/App"
       printf 'let Bad_Name = 1\n' >"$app/App/Bad.swift"
+      printf 'let  spaced=1\n' >"$app/App/Spaced.swift"
+      git -C "$app" add App
+      git -C "$app" commit -q -m "committed swift plants"
+      expect_ok leaf "$app" "$lang" lint
+      expect_ok leaf "$app" "$lang" format --check
+      expect_ok leaf "$app" "$lang" lint "$(source_of "$lang")"
+      expect_fail leaf "$app" "$lang" lint App/Bad.swift
+      grep -q "App/Bad.swift:1:5: error: \[AlwaysUseLowerCamelCase\]" "${LAST_LOG}" || die "$lang lint skipped a path it was given"
+      expect_fail leaf "$app" "$lang" format --check App/Spaced.swift
+      grep -q "App/Spaced.swift is not formatted" "${LAST_LOG}" || die "$lang format --check skipped a path it was given"
+      git -C "$app" rm -rqf App
+      git -C "$app" commit -q -m "committed swift plants gone"
+      mkdir -p "$app/App"
+      printf 'let Bad_Name = 1\n' >"$app/App/Bad.swift"
+      expect_fail leaf "$app" "$lang" lint
+      grep -q "App/Bad.swift:1:5: error: \[AlwaysUseLowerCamelCase\]" "${LAST_LOG}" || die "$lang lint skipped a changed file"
       expect_fail leaf "$app" "$lang" lint --all
       grep -q "App/Bad.swift:1:5: error: \[AlwaysUseLowerCamelCase\]" "${LAST_LOG}" ||
         die "$lang let a swift-format finding outside Sources through"
@@ -447,6 +463,12 @@ EOF
       grep -qxF "bin/test: src/loose/helper.py has no coverage row (need 100/100)" "${LAST_LOG}" ||
         die "$lang passed a source its coverage report never listed"
       rm -r "$app/src/loose" "$app/tests/loose"
+      cp "$app/tests/test_add.py" "$WORK/test_add.keep"
+      printf '%s\n' '' '' 'def test_warns() -> None:' '    import warnings' '' \
+        '    warnings.warn("old", DeprecationWarning, stacklevel=1)' >>"$app/tests/test_add.py"
+      expect_fail leaf "$app" "$lang" test --all
+      grep -q "DeprecationWarning: old" "${LAST_LOG}" || die "$lang test let a warning through"
+      mv "$WORK/test_add.keep" "$app/tests/test_add.py"
       ;;
     rust)
       cp "$app/Cargo.toml" "$WORK/cargo.keep"
@@ -522,6 +544,10 @@ EOF
       expect_fail leaf "$app" "$lang" ci --force
       grep -q "step 'test' printed a warning" "${LAST_LOG}" || die "$lang passed a step that printed a warning"
       mv "$WORK/spec.keep" "$spec"
+      ;;
+  esac
+  case "$lang" in
+    typescript | javascript | python | rails)
       expect_ok leaf "$app" "$lang" test "$(source_of "$lang")"
       grep -qxF "bin/test: coverage bar held on 1 source(s)" "${LAST_LOG}" || die "$lang bin/test on a source did not run its test"
       ;;
@@ -605,6 +631,33 @@ section_audit() {
   grep -q "npm audit found a moderate or worse advisory" "${LAST_LOG}" ||
     die "$lang let a package with an advisory through"
   grep -qE "^lodash +" "${LAST_LOG}" || die "$lang audit failed without naming lodash's advisory"
+}
+
+section_root() {
+  local repo app
+  repo="$(new_repo)"
+  KEEP="$repo"
+  app="$repo"
+  copy_dir "$REPO/bin" "$repo/bin"
+  cp "$repo/.gitignore" "$WORK/root.gitignore"
+  seed_of "$lang" "$app"
+  cat "$WORK/root.gitignore" >>"$app/.gitignore"
+  cp "$TEMPLATE/$lang/Gemfile.lock" "$app/Gemfile.lock"
+  mkdir -p "$app/web"
+  printf '{ "name": "web", "private": true }\n' >"$app/web/package.json"
+  printf '%s\n' 'loose = 1' >"$app/web/loose.rb"
+  printf '%s\n' '#Loose' >"$app/web/loose.md"
+  run_log leaf "$app" "$lang" changed --files
+  grep -q "^web/" "${LAST_LOG}" && die "a root $lang app's changed listed a sibling app's file"
+  expect_ok leaf "$app" "$lang" format --all
+  [ "$(cat "$app/web/loose.rb")" = "loose = 1" ] || die "a root $lang app's format rewrote a sibling app's file"
+  expect_ok leaf "$app" "$lang" lint --all
+  expect_ok leaf "$app" "$lang" format --check --all
+  cp "$app/web/loose.rb" "$app/app/models/loose.rb"
+  expect_fail leaf "$app" "$lang" lint --all
+  grep -q "== app/models/loose.rb ==" "${LAST_LOG}" || die "a root $lang app's lint skipped its own file"
+  grep -q "web/loose" "${LAST_LOG}" && die "a root $lang app's lint checked a sibling app's file"
+  return 0
 }
 
 section_xcode() {

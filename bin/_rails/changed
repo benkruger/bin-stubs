@@ -7,12 +7,15 @@ cd "$REPO_ROOT"
 . "$HERE/lib/toolchain.sh"
 packages_check "$PWD" || exit 1
 export FLOW_CHECKED_APP="$PWD"
+# shellcheck source=lib/sources.sh
+. "$HERE/lib/sources.sh"
 
 changed_files() {
   local path
   while IFS= read -r path; do
     [ -z "$path" ] && continue
     [ -f "$path" ] || continue
+    ! in_nested_app "$path" || continue
     case "$path" in
       vendor/* | tmp/* | log/* | coverage/* | db/schema.rb | .flow-states/*) continue ;;
     esac
@@ -41,32 +44,6 @@ quietly() {
   fi
   rm -f "$log"
   return 0
-}
-
-is_source() {
-  case "$1" in
-    app/*.rb | lib/*.rb) return 0 ;;
-    *) return 1 ;;
-  esac
-}
-
-is_test() {
-  case "$1" in
-    test/*_test.rb) return 0 ;;
-    *) return 1 ;;
-  esac
-}
-
-test_for_source() {
-  case "$1" in
-    app/*)
-      local rel="${1#app/}"
-      echo "test/${rel%.rb}_test.rb"
-      ;;
-    lib/*)
-      echo "test/${1%.rb}_test.rb"
-      ;;
-  esac
 }
 
 already() {

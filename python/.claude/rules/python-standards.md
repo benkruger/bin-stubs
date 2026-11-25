@@ -12,11 +12,12 @@ The Python app is held by Ruff and pytest at full strength.
   package's `__init__.py` has its twin `tests/<dir>/test_<name>.py`.
   `bin/changed` fails a changed source with no twin; `bin/ci` fails any
   source with none, and `bin/test` fails a test whose source does not
-  exist.
+  exist, runs a named source's twin, and fails a named source with none.
 - Every source is at 100% coverage. `bin/ci` checks every source;
   `bin/changed` checks the changed ones, and a changed test holds its source
-  to the same bar. pytest runs with the app's `addopts` cleared, and
-  `bin/test` fails a run with no coverage report (`full-coverage.md`).
+  to the same bar. pytest runs with the app's `addopts` cleared and with
+  `-W error`, so a warning fails the test that raises it, and `bin/test`
+  fails a run with no coverage report (`full-coverage.md`).
 - Ruff formats every file and lints it with its default rules and any
   the config adds through `extend-select`; `bin/lint` fails a finding, and
   `tests/guards` fails a Ruff setting other than `target-version`,
@@ -32,4 +33,4 @@ The Python app is held by Ruff and pytest at full strength.
   `uv sync --locked --offline --check` fails: `uv.lock` does not
   match `pyproject.toml` or `.venv` does not match `uv.lock`.
 - Trigger: any change to a Python `bin/` script.
-<!-- audited: 6d9dd5144dba -->
+<!-- audited: 84d13458d6e4 -->

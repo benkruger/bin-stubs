@@ -14,4 +14,10 @@ in the repo.
   file under `bin/_root/`, since the root app runs from `bin/_<language>/`
   like every other app. Trigger: a new app, or a file added to an app's
   `bin/`.
-<!-- audited: 451363fba03d -->
+- Run on the app at the repo root, a gate script leaves out every file in
+  a top-level folder that `is_app_dir` in `bin/lib/apps.sh` names, since
+  that folder's app runs on its own; `tests/run` fails a root app's
+  `changed`, `format`, `lint` or `build` that lists, rewrites or checks a
+  file in such a folder. Trigger: a change to how a gate script lists its
+  files.
+<!-- audited: 2b53e0967228 -->

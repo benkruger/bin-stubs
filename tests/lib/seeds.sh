@@ -514,6 +514,8 @@ twinless() {
   printf '%s\n' "$body" >"$app/$src"
   expect_fail leaf "$app" "$lang" changed
   grep -qxF "bin/changed: no mirrored test for $src → $twin" "${LAST_LOG}" || die "$lang changed let a source with no test through"
+  expect_fail leaf "$app" "$lang" test "$src"
+  grep -qxF "bin/test: no mirrored test for $src → $twin" "${LAST_LOG}" || die "$lang test ran a source with no test"
   rm "$app/$src"
 }
 
@@ -573,6 +575,8 @@ whole_app() {
       lint_plant=app/models/unused.rb
       lint_body=$'# frozen_string_literal: true\n\nmodule Unused\n  def self.call\n    unused = 1\n    2\n  end\nend'
       lint_find="Lint/UselessAssignment"
+      source_plant=app/models/extra.rb
+      source_body=$'# frozen_string_literal: true\n\nmodule Extra\n  def self.call\n    1\n  end\nend'
       ;;
     shell)
       lint_plant=loose

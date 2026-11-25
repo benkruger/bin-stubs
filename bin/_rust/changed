@@ -7,11 +7,21 @@ cd "$root"
 . "$here/lib/toolchain.sh"
 packages_check "$PWD" || exit 1
 export FLOW_CHECKED_APP="$PWD"
+# shellcheck source=../lib/apps.sh
+. "$here/../lib/apps.sh"
+root_app=0
+if [ "$(pwd -P)" = "$(git rev-parse --show-toplevel)" ]; then
+  root_app=1
+fi
 
 changed_files() {
-  local path
+  local path top
   while IFS= read -r path; do
     [ -f "$path" ] || continue
+    top="${path%%/*}"
+    if [ "$root_app" -eq 1 ] && [ "$top" != "$path" ] && is_app_dir "$PWD/$top"; then
+      continue
+    fi
     printf '%s\n' "$path"
   done < <(
     {

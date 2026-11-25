@@ -1428,5 +1428,5 @@ run_test() {
 run_all "$WORK/logs" run_test test_settings test_scan test_root_format test_open test_qa test_query \
   test_hooks test_starter test_bare_guards test_guards_scans test_commit test_commit_review test_commit_fix test_commit_rounds test_commit_stops test_commit_gate test_copies_match test_changed_empty test_parts \
   test_dispatch test_dispatch_select test_dispatch_paths test_suite_seal test_unborn \
-  test_shellcheck_cache test_checked_once test_steps test_jobs test_interrupt test_start test_merge test_cleanup test_complete test_ci_time test_root_app test_root_js \
+  test_shellcheck_cache test_checked_once test_steps test_jobs test_interrupt test_start test_merge test_cleanup test_complete test_ci_time test_root_app test_root_js test_root_shell test_root_changed \
   test_app_language

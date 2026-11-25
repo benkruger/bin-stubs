@@ -14,14 +14,8 @@ packages_check "$PWD" || exit 1
 export RAILS_ENV=test
 export RUBYOPT="-w -r${here}/warning_filter.rb${RUBYOPT:+ $RUBYOPT}"
 
-source_for_test() {
-  local rel="${1#test/}"
-  rel="${rel%_test.rb}.rb"
-  case "$rel" in
-    lib/*) printf '%s\n' "$rel" ;;
-    *) printf 'app/%s\n' "$rel" ;;
-  esac
-}
+# shellcheck source=lib/sources.sh
+. "$here/lib/sources.sh"
 
 tests_to_check() {
   if [ "$#" -gt 0 ]; then
@@ -30,6 +24,25 @@ tests_to_check() {
     git ls-files --cached --others --exclude-standard -- test
   fi
 }
+
+targets=()
+for arg in "$@"; do
+  case "$arg" in
+    -*) ;;
+    *)
+      if is_source "${arg#./}"; then
+        twin="$(test_for_source "${arg#./}")"
+        if [ ! -f "$twin" ]; then
+          echo "bin/test: no mirrored test for ${arg#./} → $twin" >&2
+          exit 1
+        fi
+        arg="$twin"
+      fi
+      ;;
+  esac
+  targets+=("$arg")
+done
+set -- ${targets[@]+"${targets[@]}"}
 
 if [ -f config/database.yml ]; then
   run_quiet "rails (db:test:prepare)" bundle exec rails db:test:prepare
@@ -64,6 +77,15 @@ if [ "$whole" -eq 1 ] && [ "${#sources[@]}" -eq 0 ]; then
   exit 1
 fi
 short=0
+if [ "$whole" -eq 1 ]; then
+  for src in "${sources[@]}"; do
+    twin="$(test_for_source "$src")"
+    if [ ! -f "$twin" ]; then
+      echo "bin/test: no mirrored test for $src → $twin" >&2
+      short=1
+    fi
+  done
+fi
 if [ "${#sources[@]}" -gt 0 ]; then
   while IFS=$'\t' read -r src lines branches; do
     if [ "$lines" = "missing" ]; then
@@ -100,4 +122,4 @@ while IFS= read -r t; do
   fi
 done < <(tests_to_check "$@")
 [ "$orphan" -eq 0 ] || exit 1
-[ "$whole" -eq 0 ] || echo "bin/test: coverage bar held on $measured source(s)"
+echo "bin/test: coverage bar held on $measured source(s)"

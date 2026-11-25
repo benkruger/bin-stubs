@@ -3,11 +3,14 @@ set -euo pipefail
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 root="$(cd "${APP_DIR:-$here/../..}" && pwd)"
 cd "$root"
+# shellcheck source=lib/scripts.sh
+. "$here/lib/scripts.sh"
 
 changed_files() {
   local path
   while IFS= read -r path; do
     [ -f "$path" ] || continue
+    ! in_nested_app "$path" || continue
     printf '%s\n' "$path"
   done < <(
     {

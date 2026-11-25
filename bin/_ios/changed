@@ -7,11 +7,16 @@ cd "$root"
 . "$here/lib/toolchain.sh"
 packages_check "$PWD" || exit 1
 export FLOW_CHECKED_APP="$PWD"
+# shellcheck source=../lib/apps.sh
+. "$here/../lib/apps.sh"
+# shellcheck source=lib/files.sh
+. "$here/lib/files.sh"
+root_app="$(at_repo_root)"
 
 changed_files() {
   local path
   while IFS= read -r path; do
-    [ -f "$path" ] || continue
+    app_file "$path" "$root_app" || continue
     printf '%s\n' "$path"
   done < <(
     {

@@ -7,25 +7,28 @@ cd "$root"
 . "$here/lib/toolchain.sh"
 packages_check "$PWD" || exit 1
 check=0
+all=0
+paths=()
 for arg in "$@"; do
   case "$arg" in
-    --all) ;;
+    --all) all=1 ;;
     --check) check=1 ;;
-    *)
+    -*)
       echo "bin/format: unknown argument: $arg" >&2
       exit 2
       ;;
+    *) paths+=("$arg") ;;
   esac
 done
 # shellcheck source=../lib/apps.sh
 . "$here/../lib/apps.sh"
 # shellcheck source=lib/files.sh
 . "$here/lib/files.sh"
-app_files '*.swift'
-if [ "${#APP_FILES[@]}" -eq 0 ]; then
+swift_files "$all" "$here" ${paths[@]+"${paths[@]}"}
+if [ "${#SWIFT_FILES[@]}" -eq 0 ]; then
   exit 0
 fi
-files=("${APP_FILES[@]}")
+files=("${SWIFT_FILES[@]}")
 
 mirror_check() {
   local real copy dir differ file unformatted=0

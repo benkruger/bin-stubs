@@ -37,16 +37,37 @@ omit =
     tests/*
 EOF
 
-pytest_args=(-o addopts= --cov-branch --cov-report=term-missing:skip-covered "--cov-report=json:$covjson" "--cov-config=$covrc")
+pytest_args=(-o addopts= -W error --cov-branch --cov-report=term-missing:skip-covered "--cov-report=json:$covjson" "--cov-config=$covrc")
 if [ -d src ]; then
   pytest_args+=(--cov=src)
 else
   pytest_args+=(--cov=.)
 fi
 
+# shellcheck source=lib/sources.sh
+. "$here/lib/sources.sh"
+
+targets=()
+for arg in "$@"; do
+  case "$arg" in
+    -*) ;;
+    *)
+      if is_source "${arg#./}" && needs_twin "${arg#./}"; then
+        twin="$(test_for_source "${arg#./}")"
+        if [ ! -f "$twin" ]; then
+          echo "bin/test: no mirrored test for ${arg#./} → $twin" >&2
+          exit 1
+        fi
+        arg="$twin"
+      fi
+      ;;
+  esac
+  targets+=("$arg")
+done
+
 rc=0
 if [ "$#" -gt 0 ]; then
-  uv run pytest "${pytest_args[@]}" "$@" || rc=$?
+  uv run pytest "${pytest_args[@]}" "${targets[@]}" || rc=$?
 elif [ -d tests ]; then
   uv run pytest tests "${pytest_args[@]}" || rc=$?
 else
@@ -75,9 +96,6 @@ owned_change() {
   fi
   return 0
 }
-
-# shellcheck source=lib/sources.sh
-. "$here/lib/sources.sh"
 
 already() {
   local n="$1" t

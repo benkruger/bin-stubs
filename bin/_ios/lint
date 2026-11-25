@@ -6,21 +6,24 @@ cd "$root"
 # shellcheck source=lib/toolchain.sh
 . "$here/lib/toolchain.sh"
 packages_check "$PWD" || exit 1
+all=0
+paths=()
 for arg in "$@"; do
   case "$arg" in
-    --all) ;;
-    *)
+    --all) all=1 ;;
+    -*)
       echo "bin/lint: unknown argument: $arg" >&2
       exit 2
       ;;
+    *) paths+=("$arg") ;;
   esac
 done
 # shellcheck source=../lib/apps.sh
 . "$here/../lib/apps.sh"
 # shellcheck source=lib/files.sh
 . "$here/lib/files.sh"
-app_files '*.swift'
-if [ "${#APP_FILES[@]}" -eq 0 ]; then
+swift_files "$all" "$here" ${paths[@]+"${paths[@]}"}
+if [ "${#SWIFT_FILES[@]}" -eq 0 ]; then
   exit 0
 fi
-xcrun swift-format lint --strict "${APP_FILES[@]}"
+xcrun swift-format lint --strict "${SWIFT_FILES[@]}"

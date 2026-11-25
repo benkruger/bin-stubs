@@ -6,10 +6,13 @@ strength.
 ## The Rule
 
 - Every source `app/<path>.rb` has its twin `test/<path>_test.rb`, and every
-  `lib/<path>.rb` has its twin `test/lib/<path>_test.rb`. `bin/changed` fails
-  a changed source with no twin, and `bin/test` fails a test whose source
-  does not exist, outside `test/integration`, `test/system`,
-  `test/support` and `test/fixtures`.
+  `lib/<path>.rb` has its twin `test/lib/<path>_test.rb`, as
+  `bin/_rails/lib/sources.sh`, which `bin/test` and `bin/changed` share,
+  maps them. `bin/changed` fails a changed source with no twin; `bin/test`
+  on a whole run fails any source with none; on any run it fails a test it
+  checks whose source does not exist, outside `test/integration`,
+  `test/system`, `test/support` and `test/fixtures`. `bin/test` runs a
+  named source's twin and fails a named source with none.
 - `bin/test` runs the suite with `rails test`, after `db:test:prepare` when
   the app has `config/database.yml`.
 - `test/test_helper.rb` starts SimpleCov with 100% line and branch coverage
@@ -34,4 +37,4 @@ strength.
 - `bin/qa`, outside `bin/ci`, runs `rails test:system`; a failed test, or an
   output line matching `warn` or `deprecat` in any case, fails it.
 - Trigger: any change to a Rails `bin/` script or `test/test_helper.rb`.
-<!-- audited: d027efa9e6d2 -->
+<!-- audited: 11fe28f7eb18 -->

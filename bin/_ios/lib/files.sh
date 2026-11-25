@@ -1,20 +1,53 @@
 #!/usr/bin/env bash
 
-app_files() {
-  local path top root_app=0
-  APP_FILES=()
+at_repo_root() {
   if [ "$(pwd -P)" = "$(git rev-parse --show-toplevel)" ]; then
-    root_app=1
+    echo 1
+  else
+    echo 0
   fi
+}
+
+app_file() {
+  local path="$1" root_app="$2" top
+  [ -f "$path" ] && [ ! -L "$path" ] || return 1
+  case "$path" in
+    .build/* | */.build/* | .flow-states/* | */.flow-states/*) return 1 ;;
+  esac
+  top="${path%%/*}"
+  ! { [ "$root_app" -eq 1 ] && [ "$top" != "$path" ] && is_app_dir "$PWD/$top"; }
+}
+
+app_files() {
+  local path root_app
+  APP_FILES=()
+  root_app="$(at_repo_root)"
   while IFS= read -r -d '' path; do
-    [ -f "$path" ] && [ ! -L "$path" ] || continue
-    case "$path" in
-      .build/* | */.build/* | .flow-states/* | */.flow-states/*) continue ;;
-    esac
-    top="${path%%/*}"
-    if [ "$root_app" -eq 1 ] && [ "$top" != "$path" ] && is_app_dir "$PWD/$top"; then
-      continue
-    fi
+    app_file "$path" "$root_app" || continue
     APP_FILES+=("$path")
   done < <(git ls-files -z --cached --others --exclude-standard -- "$@")
+}
+
+swift_files() {
+  local all="$1" here="$2" path root_app listing
+  shift 2
+  SWIFT_FILES=()
+  if [ "$all" -eq 1 ]; then
+    app_files '*.swift'
+    SWIFT_FILES=(${APP_FILES[@]+"${APP_FILES[@]}"})
+    return 0
+  fi
+  if [ "$#" -eq 0 ]; then
+    listing="$("$here/changed" --files)" || return 1
+    while IFS= read -r path; do
+      [ -z "$path" ] || set -- "$@" "$path"
+    done <<<"$listing"
+  fi
+  root_app="$(at_repo_root)"
+  for path in "$@"; do
+    path="${path#./}"
+    case "$path" in
+      *.swift) app_file "$path" "$root_app" && SWIFT_FILES+=("$path") ;;
+    esac
+  done
 }
