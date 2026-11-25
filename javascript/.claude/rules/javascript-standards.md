@@ -6,7 +6,8 @@ Biome and the app's own tests under c8 hold the JavaScript app at full strength.
 
 - A source is a `.js`, `.mjs`, `.cjs` or `.jsx` file below a directory;
   `is_source` in `bin/_javascript/test` and `bin/_javascript/changed` names
-  the directories it leaves out. Root-level files are configuration.
+  the directories it leaves out. Root-level files are configuration, and
+  `e2e/` holds `bin/qa`'s specs, which are neither sources nor tests.
 - Every source has a twin test named `tests/<path>.test.<ext>`,
   `tests/<path>.spec.<ext>`, `<dir>/<name>.test.<ext>`,
   `<dir>/<name>.spec.<ext>` or `<dir>/test-<name>.<ext>`, where `<ext>` is
@@ -37,4 +38,4 @@ Biome and the app's own tests under c8 hold the JavaScript app at full strength.
 - `bin/qa`, outside `bin/ci`, installs Chromium and runs `playwright test`;
   a failed test, or output matching those same warnings, fails it.
 - Trigger: any change to a JavaScript `bin/` script.
-<!-- audited: a005ac0129ba -->
+<!-- audited: 9f233aa559d0 -->

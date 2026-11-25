@@ -62,7 +62,7 @@ section_sentinels() {
   local repo app sent hash step mode
   fresh_app
   case "$lang" in
-    rails | ios | shell) ;;
+    ios | shell) ;;
     *)
       expect_fail leaf "$app" "$lang" ci
       grep -q "run bin/dependencies" "${LAST_LOG}" || die "$lang ci ran without its packages"
@@ -86,6 +86,17 @@ EOF
   if [ "$lang" = javascript ] && grep -q "schemas/2.0.0" "$app/biome.json"; then
     die "javascript bin/dependencies left biome.json on an older Biome"
   fi
+  case "$lang" in
+    typescript | javascript)
+      cp "$app/package-lock.json" "$WORK/lock.keep"
+      jq '.packages |= with_entries(if .key | startswith("node_modules/") then .value.version = "99.0.0" else . end)' \
+        "$WORK/lock.keep" >"$app/package-lock.json"
+      expect_fail leaf "$app" "$lang" test
+      grep -q "node_modules does not match package-lock.json; run bin/dependencies" "${LAST_LOG}" ||
+        die "$lang ran on packages its lockfile does not pin"
+      mv "$WORK/lock.keep" "$app/package-lock.json"
+      ;;
+  esac
   expect_fail leaf "$app" "$lang" ci
   grep -q "step 'format' failed" "${LAST_LOG}" || die "$lang ci passed unformatted code"
   formatted "$app" "$lang" && die "$lang ci rewrote the source"
@@ -152,6 +163,7 @@ EOF
 section_changed() {
   local repo app
   committed_app
+  deleted_change "$app" "$lang"
   unformat "$app" "$lang"
   expect_ok leaf "$app" "$lang" changed --files
   assert_eq "$(cat "${LAST_LOG}")" "$(source_of "$lang")" "$lang changed --files"
@@ -264,6 +276,7 @@ EOF
       printf 'a {\n  color: red;\n}\n' >"$app/styles.css"
       printf '# Notes\n\n#Heading\n' >"$app/NOTES.md"
       printf '%s\n' '#!/usr/bin/env bash' 'echo deployed' >"$app/deploy"
+      printf '%s\n' 'helper() {' '  echo hi' '}' >"$app/helpers.sh"
       printf '%s\n' 'const unused = 1;' >"$app/src/unused.ts"
       expect_fail leaf "$app" "$lang" ci --force
       grep -q "notes.txt: no formatter (Prettier)" "${LAST_LOG}" || die "$lang let a file with no formatter through"
@@ -271,7 +284,8 @@ EOF
       grep -q "'unused' is assigned a value but never used" "${LAST_LOG}" || die "$lang lint stopped at its first failing tool"
       ! grep -q "NOTES.md" "${LAST_LOG}" || die "$lang lint linted Markdown the guards lint"
       ! grep -q "deploy: no" "${LAST_LOG}" || die "$lang held a bash script to Prettier and ESLint"
-      rm "$app/notes.txt" "$app/styles.css" "$app/NOTES.md" "$app/deploy" "$app/src/unused.ts"
+      ! grep -q "helpers.sh: no" "${LAST_LOG}" || die "$lang held a .sh file with no shebang to its linter"
+      rm "$app/notes.txt" "$app/styles.css" "$app/NOTES.md" "$app/deploy" "$app/helpers.sh" "$app/src/unused.ts"
       mv "$app/eslint.config.js" "$WORK/eslint.config.keep"
       printf '%s\n' 'export default [{ files: ["**/*.xyz"], rules: { "no-console": "error" } }];' >"$app/eslint.config.js"
       echo "export const a = 1;" >"$app/src/plain.xyz"
@@ -354,13 +368,15 @@ EOF
       echo "plain text" >"$app/notes.txt"
       printf '# Notes\n\n#Heading\n' >"$app/NOTES.md"
       printf '%s\n' '#!/usr/bin/env bash' 'echo deployed' >"$app/deploy"
+      printf '%s\n' 'helper() {' '  echo hi' '}' >"$app/helpers.sh"
       printf '%s\n' 'export const dupe = { a: 1, a: 2 };' >"$app/src/dupe.js"
       expect_fail leaf "$app" "$lang" ci --force
       grep -q "notes.txt: no formatter or linter (Biome)" "${LAST_LOG}" || die "$lang let a file with no formatter through"
       grep -q "noDuplicateObjectKeys" "${LAST_LOG}" || die "$lang lint stopped at its first failing tool"
       ! grep -q "NOTES.md" "${LAST_LOG}" || die "$lang lint linted Markdown the guards lint"
       ! grep -q "deploy: no" "${LAST_LOG}" || die "$lang held a bash script to Biome"
-      rm "$app/notes.txt" "$app/NOTES.md" "$app/deploy" "$app/src/dupe.js"
+      ! grep -q "helpers.sh: no" "${LAST_LOG}" || die "$lang held a .sh file with no shebang to its linter"
+      rm "$app/notes.txt" "$app/NOTES.md" "$app/deploy" "$app/helpers.sh" "$app/src/dupe.js"
       cp "$app/package.json" "$WORK/package.keep"
       (cd "$app" && npm pkg set "scripts.build=echo the-build-script-ran")
       printf '%s\n' 'export const broken = (;' >"$app/src/broken.js"
@@ -456,6 +472,24 @@ EOF
       expect_ok leaf "$app" "$lang" test --all
       grep -q "coverage bar held on 1 source(s)" "${LAST_LOG}" || die "$lang let the app's pytest options drop coverage"
       mv "$WORK/pyproject.keep" "$app/pyproject.toml"
+      cp "$app/pyproject.toml" "$WORK/pyproject.keep"
+      cp "$app/uv.lock" "$WORK/uvlock.keep"
+      perl -0pi -e 's/dev = \[[^]]*\]/dev = []/' "$app/pyproject.toml"
+      expect_ok leaf "$app" "$lang" dependencies
+      mkdir -p "$WORK/global-tools"
+      for tool in ruff mypy pytest; do
+        printf '%s\n' '#!/usr/bin/env bash' 'exit 0' >"$WORK/global-tools/$tool"
+        chmod +x "$WORK/global-tools/$tool"
+      done
+      PATH="$WORK/global-tools:$PATH" expect_fail leaf "$app" "$lang" lint --all
+      grep -q "No module named ruff" "${LAST_LOG}" || die "$lang lint ran a ruff outside the app's environment"
+      PATH="$WORK/global-tools:$PATH" expect_fail leaf "$app" "$lang" build
+      grep -q "No module named mypy" "${LAST_LOG}" || die "$lang build ran a mypy outside the app's environment"
+      PATH="$WORK/global-tools:$PATH" expect_fail leaf "$app" "$lang" test --all
+      grep -q "No module named pytest" "${LAST_LOG}" || die "$lang test ran a pytest outside the app's environment"
+      mv "$WORK/pyproject.keep" "$app/pyproject.toml"
+      mv "$WORK/uvlock.keep" "$app/uv.lock"
+      expect_ok leaf "$app" "$lang" dependencies
       printf 'def helper() -> int:\n    return 1\n' >"$app/src/test_helpers.py"
       expect_fail leaf "$app" "$lang" test --all
       grep -q "no mirrored test for src/test_helpers.py" "${LAST_LOG}" || die "$lang let a source named like a test go untested"
@@ -508,10 +542,24 @@ EOF
       expect_ok leaf "$app" "$lang" format app/models/included.rb
       [ -z "$(sed -n 5p "$app/app/models/included.rb")" ] || die "$lang format left a pending cop's offense"
       rm "$app/app/models/included.rb"
+      mkdir -p "$app/lib/tasks"
+      printf '%s\n' 'task :hello do' '  puts "hi"' 'end' >"$app/lib/tasks/hello.rake"
+      expect_fail leaf "$app" "$lang" lint lib/tasks/hello.rake
+      grep -q "lib/tasks/hello.rake" "${LAST_LOG}" || die "$lang lint skipped a Ruby file that is not .rb"
+      rm -r "$app/lib/tasks"
+      printf 'inherit_from: missing.yml\n' >"$app/.rubocop.yml"
+      expect_fail leaf "$app" "$lang" format app/models/add.rb
+      grep -q "missing.yml" "${LAST_LOG}" || die "$lang format passed a RuboCop that could not run"
       mv "$WORK/rubocop.keep" "$app/.rubocop.yml"
+      mkdir -p "$app/test/system"
+      printf '%s\n' '# frozen_string_literal: true' '' "require 'test_helper'" '' 'class HomeTest < ActiveSupport::TestCase' \
+        "  test 'runs only under bin/qa' do" "    flunk 'bin/changed ran a system test'" '  end' 'end' \
+        >"$app/test/system/home_test.rb"
+      expect_ok leaf "$app" "$lang" changed
+      rm -r "$app/test/system"
       cp "$app/test/test_helper.rb" "$WORK/helper.keep"
       perl -0pi -e "s/(  enable_coverage :branch\n)/\$1  skip '\/app\/'\n/" "$app/test/test_helper.rb"
-      expect_fail leaf "$app" "$lang" test
+      expect_fail leaf "$app" "$lang" test --all
       grep -q "app/models/add.rb has no coverage row" "${LAST_LOG}" || die "$lang let a SimpleCov filter hide a source"
       mv "$WORK/helper.keep" "$app/test/test_helper.rb"
       brakeman_plant "$app"
@@ -523,6 +571,14 @@ EOF
       expect_fail leaf "$app" "$lang" build
       grep -q "misnamed.rb to define constant Misnamed" "${LAST_LOG}" || die "$lang build let a file Zeitwerk cannot load through"
       rm "$app/app/models/misnamed.rb"
+      cp "$app/Gemfile" "$WORK/gemfile.keep"
+      cp "$app/Gemfile.lock" "$WORK/lock.keep"
+      printf 'gem "json"\n' >>"$app/Gemfile"
+      expect_fail leaf "$app" "$lang" test
+      grep -q "run bin/dependencies" "${LAST_LOG}" || die "$lang ran on a Gemfile its lockfile does not match"
+      cmp -s "$app/Gemfile.lock" "$WORK/lock.keep" || die "$lang rewrote Gemfile.lock outside bin/dependencies"
+      mv "$WORK/gemfile.keep" "$app/Gemfile"
+      mv "$WORK/lock.keep" "$app/Gemfile.lock"
       printf '%s\n' '# frozen_string_literal: true' '' 'module Warned' '  def self.call' '    unused = 1' '    2' '  end' 'end' \
         >"$app/app/models/warned.rb"
       printf '%s\n' '# frozen_string_literal: true' '' "require 'test_helper'" '' 'class WarnedTest < ActiveSupport::TestCase' \
@@ -533,7 +589,8 @@ EOF
       cp "$app/Gemfile" "$WORK/gemfile.keep"
       echo "gem 'bin-stubs-absent', '0.0.1'" >>"$app/Gemfile"
       expect_fail leaf "$app" "$lang" ci --force
-      grep -q "packages: gems are missing; run bin/dependencies" "${LAST_LOG}" || die "$lang ran without a gem its Gemfile names"
+      grep -q "packages: gems are missing or Gemfile.lock does not match the Gemfile; run bin/dependencies" "${LAST_LOG}" ||
+        die "$lang ran without a gem its Gemfile names"
       mv "$WORK/gemfile.keep" "$app/Gemfile"
       printf '%s\n' 'test:' '  adapter: sqlite3' '  database: db/test.sqlite3' >"$app/config/database.yml"
       expect_fail leaf "$app" "$lang" test
@@ -581,12 +638,36 @@ EOF
     expect_fail leaf "$app" "$lang" format --check --all
     grep -qF "bin/format: Tests/AppTests/AddTests.swift is not formatted" "${LAST_LOG}" ||
       die "ios format --check ignored a .swift-format inside the app"
-    rm "$app/Tests/.swift-format"
+    mkdir -p "$app/config"
+    mv "$app/Tests/.swift-format" "$app/config/tests.swift-format"
+    ln -s ../config/tests.swift-format "$app/Tests/.swift-format"
+    expect_ok leaf "$app" "$lang" format --all
+    expect_ok leaf "$app" "$lang" format --check --all
+    rm -r "$app/Tests/.swift-format" "$app/config"
+    expect_ok leaf "$app" "$lang" format --all
     printf 'public func broken( {\n' >"$app/Sources/App/Broken.swift"
     expect_fail leaf "$app" "$lang" format --check --all
     grep -qF "bin/format: Sources/App/Broken.swift is not formatted" "${LAST_LOG}" ||
       die "ios format --check passed a file swift-format cannot parse"
     rm "$app/Sources/App/Broken.swift"
+    cp "$app/Package.swift" "$WORK/package.keep"
+    perl -0pi -e 's/^([ \t]*)(\.target\(name: "App"\),\n)/$1$2$1.target(name: "Tool"),\n/m' "$app/Package.swift"
+    grep -q 'target(name: "Tool")' "$app/Package.swift" || die "ios untested target plant did not land"
+    mkdir -p "$app/Sources/Tool"
+    printf 'public func tool() -> Int { 1 }\n' >"$app/Sources/Tool/Tool.swift"
+    expect_fail leaf "$app" "$lang" test
+    grep -qF "Sources/Tool/Tool.swift: no coverage row" "${LAST_LOG}" || die "ios passed a target no test links"
+    rm -r "$app/Sources/Tool"
+    mv "$WORK/package.keep" "$app/Package.swift"
+    cp "$app/Package.swift" "$WORK/package.keep"
+    perl -0pi -e 's/^([ \t]*)(\.target\(name: "App"\),\n)/$1$2$1.target(name: "CLib"),\n/m' "$app/Package.swift"
+    mkdir -p "$app/Sources/CLib/include"
+    printf 'int clib(int x);\n' >"$app/Sources/CLib/include/clib.h"
+    printf '#include "clib.h"\n\n#warning "unfinished"\n\nint clib(int x) {\n  return x;\n}\n' >"$app/Sources/CLib/clib.c"
+    expect_fail leaf "$app" "$lang" build
+    grep -q "clib.c:3:2: .*-Werror,-W#warnings" "${LAST_LOG}" || die "ios let a C warning through a Swift package build"
+    rm -r "$app/Sources/CLib"
+    mv "$WORK/package.keep" "$app/Package.swift"
     swift_dependency "$WORK/SwiftDep"
     cp "$app/Package.swift" "$WORK/package.keep"
     perl -0pi -e "s|( *name: \"App\",\n)|\$1  dependencies: [.package(url: \"file://$WORK/SwiftDep\", from: \"1.0.0\")],\n|" "$app/Package.swift"
@@ -599,6 +680,13 @@ EOF
     expect_fail leaf "$app" "$lang" build
     grep -q "not fetched at the versions Package.resolved pins" "${LAST_LOG}" ||
       die "ios built on checkouts Package.resolved does not pin"
+    jq '{object: {pins: [.pins[] | {package: .identity, repositoryURL: .location, state: .state}]}, version: 1}' \
+      "$WORK/resolved.keep" >"$app/Package.resolved"
+    expect_ok leaf "$app" "$lang" lint Sources/App/Add.swift
+    perl -pi -e 's/("revision"\s*:\s*")[0-9a-f]+/${1}0000000000000000000000000000000000000000/' "$app/Package.resolved"
+    expect_fail leaf "$app" "$lang" lint Sources/App/Add.swift
+    grep -q "not fetched at the versions Package.resolved pins" "${LAST_LOG}" ||
+      die "ios passed checkouts a version 1 Package.resolved does not pin"
     mv "$WORK/resolved.keep" "$app/Package.resolved"
     printf 'public func dep() -> Int { 1 }\n' >"$WORK/SwiftDep/Sources/Dep/Dep.swift"
     git -C "$WORK/SwiftDep" -c user.email=dep@example.com -c user.name=dep commit -q -am "dep 1.1.0"
@@ -658,7 +746,7 @@ section_spaced() {
   repo="$WORK/with space/${TEMPLATE##*/}"
   KEEP="$repo"
   app="$repo/$lang"
-  expect_ok leaf "$app" "$lang" test
+  expect_ok leaf "$app" "$lang" test --all
   grep -qxF "bin/test: coverage bar held on 1 source(s)" "${LAST_LOG}" || die "$lang test failed in a folder with a space"
 }
 
@@ -737,12 +825,14 @@ EOF
   expect_ok leaf "$app" "$lang" dependencies
   grep -q '"version" : "1.1.0"' "$app/App.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved" ||
     die "ios dependencies left an Xcode project's package on an older version"
+  stale_xcode_pins "$app" "$app/App.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved"
   mkdir -p "$app/App.xcworkspace"
   printf '%s\n' '<?xml version="1.0" encoding="UTF-8"?>' '<Workspace version = "1.0">' \
     '   <FileRef location = "group:App.xcodeproj"></FileRef>' '</Workspace>' >"$app/App.xcworkspace/contents.xcworkspacedata"
   expect_ok leaf "$app" "$lang" dependencies
   grep -q '"version" : "1.1.0"' "$app/App.xcworkspace/xcshareddata/swiftpm/Package.resolved" ||
     die "ios dependencies did not resolve an Xcode workspace's packages"
+  stale_xcode_pins "$app" "$app/App.xcworkspace/xcshareddata/swiftpm/Package.resolved"
   rm -r "$app/App.xcworkspace"
   perl -pi -e 's/ (SWIFT|GCC)_TREAT_WARNINGS_AS_ERRORS = YES;//g' "$app/App.xcodeproj/project.pbxproj"
   expect_fail leaf "$app" "$lang" build
@@ -750,6 +840,16 @@ EOF
     die "ios let an Xcode project build without treating warnings as errors"
   bare="$(grep -v -e '-derivedDataPath' -e '^-version$' "$calls" || true)"
   [ -z "$bare" ] || die "ios ran xcodebuild with no build folder: $bare"
+}
+
+stale_xcode_pins() {
+  local app="$1" resolved="$2"
+  cp "$resolved" "$WORK/xcode-resolved.keep"
+  perl -pi -e 's/("revision"\s*:\s*")[0-9a-f]+/${1}0000000000000000000000000000000000000000/' "$resolved"
+  expect_fail leaf "$app" "$lang" lint --all
+  grep -q "not fetched at the versions Package.resolved pins" "${LAST_LOG}" ||
+    die "ios passed Xcode package checkouts ${resolved##*/App.} does not pin"
+  mv "$WORK/xcode-resolved.keep" "$resolved"
 }
 
 own_advisory_db() {

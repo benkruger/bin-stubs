@@ -48,11 +48,16 @@ fi
 . "$here/lib/sources.sh"
 
 targets=()
+named=0
 for arg in "$@"; do
   case "$arg" in
     -*) ;;
     *)
-      if is_source "${arg#./}" && needs_twin "${arg#./}"; then
+      named=1
+      if is_source "${arg#./}" && ! needs_twin "${arg#./}"; then
+        continue
+      fi
+      if is_source "${arg#./}"; then
         twin="$(test_for_source "${arg#./}")"
         if [ ! -f "$twin" ]; then
           echo "bin/test: no mirrored test for ${arg#./} → $twin" >&2
@@ -66,10 +71,10 @@ for arg in "$@"; do
 done
 
 rc=0
-if [ "$#" -gt 0 ]; then
-  uv run pytest "${pytest_args[@]}" "${targets[@]}" || rc=$?
+if [ "$named" -eq 1 ]; then
+  uv run python -m pytest "${pytest_args[@]}" ${targets[@]+"${targets[@]}"} || rc=$?
 elif [ -d tests ]; then
-  uv run pytest tests "${pytest_args[@]}" || rc=$?
+  uv run python -m pytest tests "${pytest_args[@]}" ${targets[@]+"${targets[@]}"} || rc=$?
 else
   echo "bin/test: no tests/ directory" >&2
   rc=1
@@ -109,7 +114,7 @@ required=()
 missing_mirror=()
 orphans=()
 
-if [ "$#" -gt 0 ]; then
+if [ "$named" -eq 1 ]; then
   for arg in "$@"; do
     case "$arg" in
       -*) continue ;;

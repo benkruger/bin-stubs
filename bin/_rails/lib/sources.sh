@@ -42,6 +42,7 @@ is_source() {
 
 is_test() {
   case "$1" in
+    test/system/*) return 1 ;;
     test/*_test.rb) return 0 ;;
     *) return 1 ;;
   esac

@@ -72,7 +72,7 @@ steps_init "$root/.flow-states/$branch" "$force" "$pre_hash" "$log" "$branch" \
 start_step format "$here/format" --check --all
 start_step lint "$here/lint" --all
 start_step build "$here/build"
-start_step test "$here/test"
+start_step test "$here/test" --all
 finish_steps || exit 1
 
 mkdir -p "$(dirname "$sentinel")"

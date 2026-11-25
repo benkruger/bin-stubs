@@ -7,8 +7,8 @@ cd "$root"
 . "$here/lib/toolchain.sh"
 packages_check "$PWD" || exit 1
 export FLOW_CHECKED_APP="$PWD"
-# shellcheck source=../lib/apps.sh
-. "$here/../lib/apps.sh"
+# shellcheck source=../lib/deletions.sh
+. "$here/../lib/deletions.sh"
 # shellcheck source=lib/files.sh
 . "$here/lib/files.sh"
 root_app="$(at_repo_root)"
@@ -20,9 +20,7 @@ changed_files() {
     printf '%s\n' "$path"
   done < <(
     {
-      if git rev-parse --verify HEAD >/dev/null 2>&1; then
-        git diff --name-only --relative HEAD -- .
-      fi
+      git diff --name-only --relative "$(change_base)" -- .
       git ls-files --others --exclude-standard -- .
     } | sort -u
   )
@@ -33,7 +31,7 @@ if [ "${1:-}" = "--files" ]; then
   exit 0
 fi
 
-if [ -z "$(changed_files)" ]; then
+if [ -z "$(changed_files)" ] && [ -z "$(deleted_paths)" ]; then
   exit 0
 fi
 "$here/format"

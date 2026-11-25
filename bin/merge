@@ -24,8 +24,10 @@ if [ "$(git branch --show-current)" = "$branch" ]; then
 fi
 [ "$(git branch --show-current)" = main ] || refuse "the repo root is not on main"
 
+push=(--no-push)
 if git rev-parse -q --verify '@{upstream}' >/dev/null 2>&1; then
   git pull -q --ff-only
+  push=()
 fi
 git merge-base --is-ancestor main "$branch" ||
   refuse "main has moved on since $branch started; merge main into $branch, commit it with bin/commit, then run bin/merge again"
@@ -35,7 +37,7 @@ fi
 
 before="$(git rev-parse HEAD)"
 git merge -q --squash "$branch" >/dev/null
-if "$ROOT/bin/commit" main "$msgfile"; then
+if "$ROOT/bin/commit" ${push[@]+"${push[@]}"} main "$msgfile"; then
   exit 0
 fi
 git reset -q --hard "$before"

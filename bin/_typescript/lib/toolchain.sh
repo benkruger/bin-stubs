@@ -83,4 +83,16 @@ packages_check() {
     echo "packages: node_modules does not match package.json; run bin/dependencies" >&2
     return 1
   fi
+  if [ ! -f "$root/package-lock.json" ]; then
+    echo "packages: package-lock.json is missing; run bin/dependencies" >&2
+    return 1
+  fi
+  if ! jq -e -n --slurpfile want "$root/package-lock.json" --slurpfile have "$root/node_modules/.package-lock.json" '
+    ($have[0].packages // {}) as $h
+    | all($want[0].packages // {} | to_entries[] | select(.key | startswith("node_modules/"));
+      ($h[.key] | {version, resolved, integrity}) == (.value | {version, resolved, integrity})
+      or (.value.optional and $h[.key] == null))' >/dev/null 2>&1; then
+    echo "packages: node_modules does not match package-lock.json; run bin/dependencies" >&2
+    return 1
+  fi
 }

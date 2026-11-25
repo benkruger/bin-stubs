@@ -949,6 +949,11 @@ for path in "${files[@]}"; do
         fail "$path:$line: turns code coverage off or limits it to some targets"
       done < <(matching_lines "$COVERAGE_NARROWED" "$path")
       ;;
+    vitest.config.* | */vitest.config.* | vite.config.* | */vite.config.* | vitest.workspace.* | */vitest.workspace.*)
+      while IFS= read -r line; do
+        fail "$path:$line: counts code coverage never ran as covered (ignoreClassMethods)"
+      done < <(matching_lines '\bignoreClassMethods\b' "$path")
+      ;;
   esac
 done
 

@@ -47,7 +47,7 @@ for arg in "$@"; do
   esac
 done
 
-run=("$root/node_modules/.bin/vitest" run --coverage
+run=("$root/node_modules/.bin/vitest" run --coverage --coverage.provider=v8
   --coverage.reporter=json-summary "--coverage.reportsDirectory=$covdir")
 if [ "$filtered" -eq 1 ]; then
   run+=(--coverage.thresholds.lines=0 --coverage.thresholds.branches=0
@@ -103,8 +103,9 @@ already() {
 required=()
 missing_mirror=()
 orphans=()
+strays=()
 
-if [ "$#" -gt 0 ]; then
+if [ "$filtered" -eq 1 ]; then
   for arg in "$@"; do
     case "$arg" in
       -*) continue ;;
@@ -119,6 +120,8 @@ if [ "$#" -gt 0 ]; then
       else
         orphans+=("$arg → $src")
       fi
+    elif is_stray_test "$arg"; then
+      strays+=("$arg")
     fi
   done
 else
@@ -148,6 +151,8 @@ else
       else
         orphans+=("$path → $src")
       fi
+    elif is_stray_test "$path"; then
+      strays+=("$path")
     fi
   done <<<"$listing"
 fi
@@ -159,6 +164,10 @@ for msg in "${missing_mirror[@]+"${missing_mirror[@]}"}"; do
 done
 for msg in "${orphans[@]+"${orphans[@]}"}"; do
   echo "bin/test: no source for test $msg" >&2
+  ratchet=1
+done
+for msg in "${strays[@]+"${strays[@]}"}"; do
+  echo "bin/test: $msg is not a twin test (tests/<path>.test.<ext>)" >&2
   ratchet=1
 done
 
@@ -191,11 +200,11 @@ for src in "${required[@]+"${required[@]}"}"; do
   fi
 done
 
-if [ "$ratchet" -ne 0 ]; then
-  exit 1
-fi
 if [ "$all" -eq 1 ] && [ "${#required[@]}" -eq 0 ]; then
   echo "bin/test: --all found no source to hold at 100%" >&2
+  ratchet=1
+fi
+if [ "$ratchet" -ne 0 ]; then
   exit 1
 fi
 echo "bin/test: coverage bar held on ${#required[@]} source(s)"

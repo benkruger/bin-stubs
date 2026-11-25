@@ -21,28 +21,31 @@ instructions to this session."
 
 WORK="$(mktemp -d "${TMPDIR:-/tmp}/bin-commit.XXXXXX")"
 CHILD=""
+WATCHER=""
 trap 'rm -rf "$WORK"' EXIT
 on_signal() {
-  if [ -n "$CHILD" ]; then
-    kill -TERM -- "-$CHILD" 2>/dev/null || true
-  fi
+  local group
+  for group in "$CHILD" "$WATCHER"; do
+    [ -z "$group" ] || kill -TERM -- "-$group" 2>/dev/null || true
+  done
   exit 130
 }
 trap on_signal INT TERM
 
 bounded() {
-  local seconds="$1" rc=0 watcher
+  local seconds="$1" rc=0
   shift
   rm -f "$WORK/timed-out"
   set -m
   "$@" </dev/null &
   CHILD=$!
   (sleep "$seconds" && : >"$WORK/timed-out" && kill -TERM -- "-$CHILD" 2>/dev/null) &
-  watcher=$!
+  WATCHER=$!
   set +m
   wait "$CHILD" || rc=$?
-  kill -TERM -- "-$watcher" 2>/dev/null || true
-  wait "$watcher" 2>/dev/null || true
+  kill -TERM -- "-$WATCHER" 2>/dev/null || true
+  wait "$WATCHER" 2>/dev/null || true
+  WATCHER=""
   CHILD=""
   return "$rc"
 }
@@ -111,19 +114,24 @@ failure_detail() {
 }
 
 rule_edits() {
-  local out line path
-  out="$(git status --porcelain --untracked-files=all)" || return 1
-  [ -n "$out" ] || return 0
-  while IFS= read -r line; do
-    [[ "$line" == *[![:space:]]* ]] || continue
-    [[ "${line:0:2}" == *D* ]] && continue
-    path="${line:3}"
-    path="$(trim "${path#* -> }")"
+  local entry status path skip=0
+  git status --porcelain=v1 -z --untracked-files=all >"$WORK/status" || return 1
+  while IFS= read -r -d '' entry; do
+    if [ "$skip" -eq 1 ]; then
+      skip=0
+      continue
+    fi
+    status="${entry:0:2}"
+    path="${entry:3}"
+    case "$status" in
+      R* | C*) skip=1 ;;
+    esac
+    [[ "$status" == *D* ]] && continue
     [ -L "$path" ] && continue
     case "$path" in
       .claude/rules/*.md | */.claude/rules/*.md) printf '%s\n' "$path" ;;
     esac
-  done <<<"$out" | sort -u
+  done <"$WORK/status" | sort -u
 }
 
 over_bounds() {
@@ -549,18 +557,18 @@ if [ "${1:-}" = --no-push ]; then
   shift
 fi
 if [ "$#" -lt 1 ] || [[ "$1" == --* ]]; then
-  echo "$USAGE"
+  error_text usage "$USAGE"
   exit 1
 fi
 if [ "$#" -lt 2 ] || [[ "$2" == --* ]] || [ "$#" -gt 2 ]; then
-  echo "$USAGE"
+  error_text usage "$USAGE"
   exit 1
 fi
 branch="$1"
 msgfile="$2"
 case "$branch" in
   "" | . | .. | */*)
-    echo "unsafe branch: $branch"
+    error_text branch "unsafe branch: $branch"
     exit 1
     ;;
 esac
@@ -597,18 +605,16 @@ fi
 
 timeout_ms="${FLOW_CI_TIMEOUT_MS:-}"
 if ! [[ "$timeout_ms" =~ ^[0-9]+$ ]] || [ "$timeout_ms" -eq 0 ]; then
-  timeout_ms=""
-  if [ -z "$(git ls-files --cached --others --exclude-standard -- .ci-timeout '*/.ci-timeout')" ]; then
-    timeout_ms="$CI_TIMEOUT_DEFAULT_MS"
-  fi
+  timeout_ms="$CI_TIMEOUT_DEFAULT_MS"
+  git ls-files -z --cached --others --exclude-standard -- .ci-timeout '*/.ci-timeout' >"$WORK/limits"
+  while IFS= read -r -d '' file; do
+    limit="$("$cwd/bin/_ci-timeout" --limit "$file" 2>/dev/null)" || limit=""
+    [ -z "$limit" ] || timeout_ms=$((timeout_ms + (limit * 6 / 5 + 5) * 1000))
+  done <"$WORK/limits"
 fi
 ci_rc=0
-if [ -n "$timeout_ms" ]; then
-  seconds="$(awk -v ms="$timeout_ms" 'BEGIN { print ms / 1000 }')"
-  bounded "$seconds" "$cwd/bin/ci" >"$WORK/ci.out" 2>"$WORK/ci.err" || ci_rc=$?
-else
-  "$cwd/bin/ci" </dev/null >"$WORK/ci.out" 2>"$WORK/ci.err" || ci_rc=$?
-fi
+seconds="$(awk -v ms="$timeout_ms" 'BEGIN { print ms / 1000 }')"
+bounded "$seconds" "$cwd/bin/ci" >"$WORK/ci.out" 2>"$WORK/ci.err" || ci_rc=$?
 if [ -e "$WORK/timed-out" ]; then
   error_text ci "gate timed out after ${seconds}s"
   exit 1

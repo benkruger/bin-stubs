@@ -17,10 +17,14 @@ done
 scripts=()
 markdown=()
 shebang='^#!(.*[^[:alnum:]_])?bash([^[:alnum:]_]|$)'
+listed="$(mktemp "${TMPDIR:-/tmp}/bin-root-format.XXXXXX")"
+trap 'rm -f "$listed"' EXIT
+git ls-files -z --cached --others --exclude-standard >"$listed"
 while IFS= read -r -d '' path; do
   [ -f "$path" ] && [ ! -L "$path" ] || continue
   case "$path" in
     *.md) markdown+=("$path") ;;
+    *.sh | *.bash) scripts+=("$path") ;;
     *)
       first=""
       IFS= read -r first <"$path" || true
@@ -29,7 +33,8 @@ while IFS= read -r -d '' path; do
       fi
       ;;
   esac
-done < <(git ls-files -z --cached --others --exclude-standard)
+done <"$listed"
+rm -f "$listed"
 
 if [ "${#scripts[@]}" -gt 0 ]; then
   if ! command -v shfmt >/dev/null 2>&1; then

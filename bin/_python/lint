@@ -60,4 +60,4 @@ if [ "${#files[@]}" -eq 0 ]; then
   exit 0
 fi
 
-exec uv run ruff check "${files[@]}"
+exec uv run python -m ruff check "${files[@]}"

@@ -153,6 +153,83 @@ EOF
   unset BUILT
 }
 
+test_dispatch_path_args() {
+  say "a path argument selects the app that owns it"
+  local repo app sum
+  repo="$(new_repo)"
+  keep "$repo"
+  copy_dir "$HERE/../bin" "$repo/bin"
+  stub_suite "$repo"
+  for app in a b; do
+    mkdir -p "$repo/$app/test"
+    printf '%s\n' '#!/usr/bin/env bash' 'exit 0' >"$repo/$app/test/run"
+    chmod +x "$repo/$app/test/run"
+  done
+  git -C "$repo" add -A
+  git -C "$repo" commit -q -m "apps"
+  printf 'dirty\n' >"$repo/a/notes"
+  expect_ok "$repo/bin/test" b/test/run
+  sum="$(summary)"
+  assert_eq "$(row_of b "$sum")" "PASS" "the app a path argument names"
+  assert_eq "$(row_of a "$sum")" "SKIP" "a dirty app no path argument names"
+  mkdir -p "$repo/test"
+  printf '%s\n' '#!/usr/bin/env bash' 'exit 0' >"$repo/test/run"
+  chmod +x "$repo/test/run"
+  expect_ok "$repo/bin/test" --force test/run
+  sum="$(summary)"
+  assert_eq "$(row_of root "$sum")" "PASS" "the root app a root path names"
+  assert_eq "$(row_of a "$sum")" "SKIP" "a named app given a root path"
+  assert_eq "$(row_of b "$sum")" "SKIP" "another named app given a root path"
+  rm -r "$repo/test"
+  git -C "$repo" add -A
+  git -C "$repo" commit -q -m "notes"
+  git -C "$repo" mv a/notes b/notes
+  expect_ok "$repo/bin/test"
+  sum="$(summary)"
+  assert_eq "$(row_of a "$sum")" "PASS" "the app a rename moved a file out of"
+  assert_eq "$(row_of b "$sum")" "PASS" "the app a rename moved a file into"
+}
+
+test_git_failures() {
+  say "a git listing that fails stops the script instead of passing on no files"
+  local repo stubs="$WORK/failing-git" real
+  real="$(command -v git)"
+  repo="$(new_repo)"
+  keep "$repo"
+  copy_dir "$HERE/../bin" "$repo/bin"
+  stub_suite "$repo"
+  mkdir -p "$repo/shell/test" "$repo/ios/Sources/App" "$stubs"
+  printf '%s\n' '#!/usr/bin/env bash' 'exit 0' >"$repo/shell/test/run"
+  chmod +x "$repo/shell/test/run"
+  printf '%s\n' '// swift-tools-version: 6.0' 'import PackageDescription' '' 'let package = Package(name: "App")' \
+    >"$repo/ios/Package.swift"
+  printf 'public func one() -> Int { 1 }\n' >"$repo/ios/Sources/App/One.swift"
+  printf '%s\n' '#!/usr/bin/env bash' 'if true;then' 'echo   "loose"' 'fi' >"$repo/loose.sh"
+  cat >"$stubs/git" <<EOF
+#!/usr/bin/env bash
+for arg in "\$@"; do
+  case "\$arg" in
+    ls-files | diff) exit 128 ;;
+  esac
+done
+exec "$real" "\$@"
+EOF
+  chmod +x "$stubs/git"
+  run_log env PATH="$stubs:$PATH" "$repo/bin/changed"
+  assert_rc 1 "bin/changed whose git listing fails"
+  grep -qx "bin/changed: git could not list the changed files" "${LAST_LOG}" || die "the dispatcher passed a git listing that failed"
+  run_log env PATH="$stubs:$PATH" "$repo/bin/_root-format" --check
+  assert_rc 128 "the repo-level format whose git listing fails"
+  run_log env PATH="$stubs:$PATH" APP_DIR="$repo/shell" "$repo/bin/_shell/lint" --all
+  assert_rc 128 "shell lint whose git listing fails"
+  run_log env PATH="$stubs:$PATH" APP_DIR="$repo/shell" "$repo/bin/_shell/format" --check --all
+  assert_rc 128 "shell format whose git listing fails"
+  run_log env PATH="$stubs:$PATH" APP_DIR="$repo/shell" "$repo/bin/_shell/build"
+  assert_rc 128 "shell build whose git listing fails"
+  run_log env PATH="$stubs:$PATH" APP_DIR="$repo/ios" "$repo/bin/_ios/lint" --all
+  assert_rc 1 "iOS lint whose git listing fails"
+}
+
 test_suite_seal() {
   say "the suite saves the tree it checked, not one its run changed"
   local repo
@@ -198,6 +275,12 @@ test_unborn() {
   sum="$(summary)"
   assert_eq "$(row_of shell "$sum")" "SKIP" "shell's second run on an unborn branch"
   assert_eq "$(row_of suite "$sum")" "SKIP" "the suite's second run on an unborn branch"
+  printf '%s\n' '#!/usr/bin/env bash' 'if true;then' 'echo   "staged"' 'fi' >"$repo/shell/staged.sh"
+  git -C "$repo" add -A
+  expect_ok "$repo/bin/changed"
+  sum="$(summary)"
+  assert_eq "$(row_of shell "$sum")" "PASS" "bin/changed on the staged files of an unborn branch"
+  grep -qx "if true; then" "$repo/shell/staged.sh" || die "shell bin/changed missed a file staged on an unborn branch"
 }
 
 test_suite_missing() {
@@ -431,7 +514,8 @@ test_root_js() {
   node --version | sed 's/^v//' >"$repo/.nvmrc"
   printf '{ "name": "root", "private": true, "type": "module" }\n' >"$repo/package.json"
   (cd "$repo" && npm pkg set "packageManager=npm@$(npm --version)")
-  mkdir -p "$repo/node_modules" "$repo/src" "$repo/web"
+  stub_npm_install "$repo"
+  mkdir -p "$repo/src" "$repo/web"
   printf 'export const ok = 1;\n' >"$repo/src/ok.js"
   printf '{ "name": "web", "private": true }\n' >"$repo/web/package.json"
   printf 'export const broken = (;\n' >"$repo/web/broken.js"

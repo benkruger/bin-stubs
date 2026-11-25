@@ -21,14 +21,36 @@ toolchain_check() {
   esac
 }
 
+pins_fetched() {
+  jq -e -n --slurpfile resolved "$1" --slurpfile state "$2" '
+    [$state[0].object.dependencies[]? | {ref: .packageRef, revision: .state.checkoutState.revision}] as $have
+    | ([$have[] | {key: .ref.identity, value: .revision}] | from_entries) as $by_identity
+    | ([$have[] | {key: (.ref.location // ""), value: .revision}] | from_entries) as $by_location
+    | all(($resolved[0].pins // $resolved[0].object.pins // [])[];
+      if .identity then $by_identity[.identity] == .state.revision
+      else $by_location[.repositoryURL // ""] == .state.revision end)' >/dev/null 2>&1
+}
+
 packages_check() {
-  local root="$1"
+  local root="$1" found resolved
   [ "${FLOW_CHECKED_APP:-}" != "$root" ] || return 0
-  if grep -qs XCRemoteSwiftPackageReference "$root"/*.xcodeproj/project.pbxproj &&
-    [ ! -d "$root/.build/xcode-packages/checkouts" ]; then
-    echo "packages: Swift packages are not fetched; run bin/dependencies" >&2
-    return 1
-  fi
+  for found in "$root"/*.xcworkspace "$root"/*.xcodeproj; do
+    [ -e "$found" ] || continue
+    case "$found" in
+      *.xcworkspace) resolved="$found/xcshareddata/swiftpm/Package.resolved" ;;
+      *) resolved="$found/project.xcworkspace/xcshareddata/swiftpm/Package.resolved" ;;
+    esac
+    if [ -f "$resolved" ]; then
+      pins_fetched "$resolved" "$root/.build/xcode-packages/workspace-state.json" && return 0
+      echo "packages: Swift packages are not fetched at the versions Package.resolved pins; run bin/dependencies" >&2
+      return 1
+    fi
+    if grep -qs XCRemoteSwiftPackageReference "$root"/*.xcodeproj/project.pbxproj "$root"/*/*.xcodeproj/project.pbxproj; then
+      echo "packages: Swift packages are not fetched; run bin/dependencies" >&2
+      return 1
+    fi
+    return 0
+  done
   if [ ! -f "$root/Package.resolved" ]; then
     if grep -qs '\.package(url:' "$root/Package.swift"; then
       echo "packages: Package.swift names remote packages but Package.resolved is missing; run bin/dependencies" >&2
@@ -36,11 +58,7 @@ packages_check() {
     fi
     return 0
   fi
-  if ! jq -e -n --slurpfile resolved "$root/Package.resolved" --slurpfile state "$root/.build/workspace-state.json" '
-    ([$state[0].object.dependencies[]? | {key: .packageRef.identity, value: .state.checkoutState.revision}]
-      | from_entries) as $have
-    | all(($resolved[0].pins // $resolved[0].object.pins // [])[]; $have[.identity] == .state.revision)' \
-    >/dev/null 2>&1; then
+  if ! pins_fetched "$root/Package.resolved" "$root/.build/workspace-state.json"; then
     echo "packages: Swift packages are not fetched at the versions Package.resolved pins; run bin/dependencies" >&2
     return 1
   fi

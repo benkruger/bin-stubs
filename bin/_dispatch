@@ -137,6 +137,17 @@ already_selected() {
   return 1
 }
 
+named_paths() {
+  local a
+  for a in "${leaf_args[@]+"${leaf_args[@]}"}"; do
+    case "$a" in
+      -*) ;;
+      *) return 0 ;;
+    esac
+  done
+  return 1
+}
+
 is_corpus() {
   case "$1" in
     CLAUDE.md | README.md | .claude | .claude/* | tests | tests/* | checks | checks/*) return 0 ;;
@@ -154,10 +165,11 @@ export "GIT_CONFIG_KEY_$git_config_count=core.quotePath" "GIT_CONFIG_VALUE_$git_
 export GIT_CONFIG_COUNT=$((git_config_count + 1))
 
 collect_changed() {
-  if git -C "$REPO_ROOT" rev-parse --verify HEAD >/dev/null 2>&1; then
-    git -C "$REPO_ROOT" diff -z --name-only HEAD
-  fi
-  git -C "$REPO_ROOT" ls-files -z --others --exclude-standard
+  local base=HEAD
+  git -C "$REPO_ROOT" rev-parse --verify HEAD >/dev/null 2>&1 ||
+    base="$(git -C "$REPO_ROOT" hash-object -t tree /dev/null)"
+  git -C "$REPO_ROOT" diff -z --name-only --no-renames "$base" || return 1
+  git -C "$REPO_ROOT" ls-files -z --others --exclude-standard || return 1
 }
 
 if [ "${#picks[@]}" -gt 0 ]; then
@@ -174,14 +186,35 @@ if [ "${#picks[@]}" -gt 0 ]; then
   fi
 elif [ "$force" -eq 1 ] || [ "$PHASE" = "dependencies" ]; then
   select_all=1
+elif [ "$PHASE" != changed ] && named_paths; then
+  for a in "${leaf_args[@]}"; do
+    case "$a" in
+      -*) continue ;;
+    esac
+    owner="$(owner_of "$a" || true)"
+    if [ -n "$owner" ]; then
+      already_selected "$owner" || selected+=("$owner")
+    elif [ "$has_root_app" -eq 1 ]; then
+      run_root_app=1
+    else
+      select_all=1
+    fi
+  done
 else
   changed=()
+  changed_list="$(mktemp "${TMPDIR:-/tmp}/bin-dispatch.XXXXXX")"
+  if ! collect_changed | sort -zu >"$changed_list"; then
+    rm -f "$changed_list"
+    echo "bin/$PHASE: git could not list the changed files" >&2
+    exit 1
+  fi
   while IFS= read -r -d '' path; do
     case "$path" in
       "" | .ci-timeout | */.ci-timeout) continue ;;
     esac
     changed+=("$path")
-  done < <(collect_changed | sort -zu)
+  done <"$changed_list"
+  rm -f "$changed_list"
   if [ "${#changed[@]}" -eq 0 ]; then
     if [ "$PHASE" = "changed" ]; then
       echo "bin/changed: nothing dirty"
@@ -288,9 +321,11 @@ consider_paths() {
           esac
         done
         if [ "$known" -eq 0 ]; then
-          FILTERED+=("$a")
           paths=$((paths + 1))
-          mine=$((mine + 1))
+          if [ "$name" = __root__ ] || [ "$has_root_app" -eq 0 ]; then
+            FILTERED+=("$a")
+            mine=$((mine + 1))
+          fi
         fi
         ;;
     esac

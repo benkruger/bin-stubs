@@ -13,9 +13,10 @@ for arg in "$@"; do
 done
 
 files=()
+listing="$(shell_listing "$@")"
 while IFS= read -r path; do
   files+=("$path")
-done < <(shell_listing "$@" | shell_scripts)
+done < <(printf '%s\n' "$listing" | shell_scripts)
 if [ "${#files[@]}" -eq 0 ]; then
   exit 0
 fi

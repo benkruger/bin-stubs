@@ -1,5 +1,18 @@
 #!/usr/bin/env bash
 set -euo pipefail
+
+host="$(hostname -s 2>/dev/null || hostname)"
+host="$(printf '%s\n' "$host" | sed -E 's/-[0-9]+$//')"
+if [ -z "$host" ]; then
+  echo "bin/_ci-timeout: no hostname" >&2
+  exit 2
+fi
+
+if [ "${1:-}" = --limit ]; then
+  awk -v h="$host" '$1 == h && $2 ~ /^[0-9]+$/ { print $2; exit }' "${2:?time file required}"
+  exit 0
+fi
+
 app="${1:?app name required}"
 file="${2:?time file required}"
 took="${3:?seconds required}"
@@ -9,13 +22,6 @@ case "$took" in
     exit 2
     ;;
 esac
-
-host="$(hostname -s 2>/dev/null || hostname)"
-host="$(printf '%s\n' "$host" | sed -E 's/-[0-9]+$//')"
-if [ -z "$host" ]; then
-  echo "bin/_ci-timeout: no hostname" >&2
-  exit 2
-fi
 
 line=""
 if [ -f "$file" ]; then

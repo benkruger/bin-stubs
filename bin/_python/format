@@ -63,7 +63,7 @@ if [ "${#files[@]}" -eq 0 ]; then
 fi
 
 if [ "$check" -eq 1 ]; then
-  exec uv run ruff format --check "${files[@]}"
+  exec uv run python -m ruff format --check "${files[@]}"
 fi
-uv run ruff format "${files[@]}"
-exec uv run ruff check --fix --exit-zero "${files[@]}"
+uv run python -m ruff format "${files[@]}"
+exec uv run python -m ruff check --fix --exit-zero "${files[@]}"

@@ -7,13 +7,22 @@ is_test() {
   esac
 }
 
+is_stray_test() {
+  case "$1" in
+    e2e/* | node_modules/* | */node_modules/*) return 1 ;;
+    *.test.ts | *.test.tsx | *.test.mts | *.test.cts | *.spec.ts | *.spec.tsx | *.spec.mts | *.spec.cts) ;;
+    *) return 1 ;;
+  esac
+  ! is_test "$1"
+}
+
 is_source() {
   case "$1" in
     */*) ;;
     *) return 1 ;;
   esac
   case "$1" in
-    tests/* | node_modules/* | dist/* | public/* | coverage/* | */node_modules/*) return 1 ;;
+    tests/* | e2e/* | node_modules/* | dist/* | public/* | coverage/* | */node_modules/*) return 1 ;;
     *.d.ts | *.d.mts | *.d.cts) return 1 ;;
     *.test.ts | *.test.tsx | *.test.mts | *.test.cts) return 1 ;;
     *.spec.ts | *.spec.tsx | *.spec.mts | *.spec.cts) return 1 ;;

@@ -19,18 +19,35 @@ export RUBYOPT="-w -rwarning_filter${RUBYOPT:+ $RUBYOPT}"
 . "$here/lib/sources.sh"
 
 tests_to_check() {
-  if [ "$#" -gt 0 ]; then
+  if [ "$named" -eq 1 ]; then
     printf '%s\n' "$@"
-  else
+  elif [ "$all" -eq 1 ]; then
     git ls-files --cached --others --exclude-standard -- test
+  else
+    printf '%s\n' ${changed_tests[@]+"${changed_tests[@]}"}
   fi
 }
 
+listed() {
+  local want="$1" s
+  for s in ${sources[@]+"${sources[@]}"}; do
+    [ "$s" = "$want" ] && return 0
+  done
+  return 1
+}
+
+all=0
 targets=()
+named=0
 for arg in "$@"; do
   case "$arg" in
+    --all)
+      all=1
+      continue
+      ;;
     -*) ;;
     *)
+      named=1
       if is_source "${arg#./}"; then
         twin="$(test_for_source "${arg#./}")"
         if [ ! -f "$twin" ]; then
@@ -51,31 +68,46 @@ fi
 resultset=coverage/.resultset.json
 rm -f "$resultset"
 echo "  → rails test"
-bundle exec rails test "$@"
+rc=0
+bundle exec rails test "$@" || rc=$?
+if [ "$rc" -ne 0 ] && { [ "$all" -eq 1 ] || [ "$rc" -ne 2 ]; }; then
+  exit "$rc"
+fi
 if [ ! -f "$resultset" ]; then
   echo "bin/test: SimpleCov wrote no $resultset; test/test_helper.rb starts it" >&2
   exit 1
 fi
-whole=0
 sources=()
-if [ "$#" -gt 0 ]; then
+changed_tests=()
+if [ "$named" -eq 1 ]; then
   for t in "$@"; do
     src="$(source_for_test "${t#./}")"
     [ ! -f "$src" ] || sources+=("$src")
   done
-else
-  whole=1
+elif [ "$all" -eq 1 ]; then
   while IFS= read -r -d '' src; do
     [ -f "$src" ] && sources+=("$src")
   done < <(git ls-files -z --cached --others --exclude-standard -- 'app/*.rb' 'lib/*.rb')
+else
+  listing="$("$here/changed" --files)"
+  while IFS= read -r path; do
+    [ -f "$path" ] || continue
+    if is_source "$path"; then
+      listed "$path" || sources+=("$path")
+    elif is_test "$path"; then
+      changed_tests+=("$path")
+      src="$(source_for_test "$path")"
+      [ ! -f "$src" ] || listed "$src" || sources+=("$src")
+    fi
+  done <<<"$listing"
 fi
-if [ "$whole" -eq 1 ] && [ "${#sources[@]}" -eq 0 ]; then
+if [ "$all" -eq 1 ] && [ "${#sources[@]}" -eq 0 ]; then
   echo "bin/test: SimpleCov measured no source" >&2
   exit 1
 fi
 short=0
-if [ "$whole" -eq 1 ]; then
-  for src in "${sources[@]}"; do
+if [ "$named" -eq 0 ]; then
+  for src in ${sources[@]+"${sources[@]}"}; do
     twin="$(test_for_source "$src")"
     if [ ! -f "$twin" ]; then
       echo "bin/test: no mirrored test for $src → $twin" >&2

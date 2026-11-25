@@ -43,7 +43,7 @@ mirror_check() {
     [ -n "$dir" ] || break
     dir="${dir%/*}"
   done
-  app_files '*.swift-format'
+  app_files --links '*.swift-format' || return 2
   printf '%s\0' "${files[@]}" ${APP_FILES[@]+"${APP_FILES[@]}"} |
     tar -chf - --null -T - | tar -xf - -C "$copy" || return 2
   (cd "$copy" && xcrun swift-format format --in-place --parallel "${files[@]}") 2>"$mirror/err" || return 2

@@ -7,15 +7,25 @@ cd "$root"
 . "$here/lib/toolchain.sh"
 packages_check "$PWD" || exit 1
 
+args=()
+for arg in "$@"; do
+  case "$arg" in
+    --all | *.swift | */*) ;;
+    *) args+=("$arg") ;;
+  esac
+done
+set -- ${args[@]+"${args[@]}"}
 whole=0
 [ "$#" -gt 0 ] || whole=1
 
 coverage_ok() {
-  local report="$1"
-  python3 - "$report" "$whole" "$(pwd -P)" "$PWD" <<'PY'
-import json, sys
+  local report="$1" required="${2:-}"
+  REQUIRED_SOURCES="$required" python3 - "$report" "$whole" "$(pwd -P)" "$PWD" <<'PY'
+import json, os, sys
 report = json.load(open(sys.argv[1]))
 whole = sys.argv[2] == "1"
+required = [s for s in os.environ.get("REQUIRED_SOURCES", "").split("\n") if s]
+seen = set()
 checked = 0
 files = []
 if "targets" in report:
@@ -34,6 +44,7 @@ for f in files:
     rel = next((name[len(r):] for r in roots if name.startswith(r)), None)
     if rel is None or rel.startswith(("Tests/", ".build/")):
         continue
+    seen.add(rel)
     summary = f.get("summary", {})
     lines = summary.get("lines", {})
     count = lines.get("count", 0)
@@ -46,6 +57,7 @@ for f in files:
     checked += 1
     if pct < 1:
         bad.append(f"{name}: {int(float(pct) * 100)}%")
+bad.extend(f"{s}: no coverage row; no test target links it" for s in required if s not in seen)
 if bad:
     print("FAIL: line coverage is under 100%")
     print("\n".join(bad))
@@ -81,7 +93,7 @@ if [ ! -f Package.swift ]; then
   exit 1
 fi
 
-swift test --disable-automatic-resolution --enable-code-coverage -Xswiftc -warnings-as-errors "$@"
+swift test --disable-automatic-resolution --enable-code-coverage -Xswiftc -warnings-as-errors -Xcc -Werror "$@"
 prof="$(find .build -name 'default.profdata' | head -n 1)"
 binaries=()
 while IFS= read -r binary; do
@@ -111,6 +123,10 @@ if [ "$cov_rc" -ne 0 ]; then
   exit 1
 fi
 cov_ok=0
-coverage_ok "$root/.coverage.json" || cov_ok=$?
+required=""
+if [ "$whole" -eq 1 ]; then
+  required="$(git ls-files --cached --others --exclude-standard -- 'Sources/*.swift')"
+fi
+coverage_ok "$root/.coverage.json" "$required" || cov_ok=$?
 rm -f "$root/.coverage.json"
 exit "$cov_ok"

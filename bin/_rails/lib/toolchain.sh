@@ -22,8 +22,8 @@ toolchain_check() {
 packages_check() {
   local root="$1"
   [ "${FLOW_CHECKED_APP:-}" != "$root" ] || return 0
-  if ! (cd "$root" && bundle check >/dev/null 2>&1); then
-    echo "packages: gems are missing; run bin/dependencies" >&2
+  if ! (cd "$root" && BUNDLE_FROZEN=true bundle check >/dev/null 2>&1); then
+    echo "packages: gems are missing or Gemfile.lock does not match the Gemfile; run bin/dependencies" >&2
     return 1
   fi
 }

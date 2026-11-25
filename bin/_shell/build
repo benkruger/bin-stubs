@@ -13,9 +13,10 @@ if [ ! -x test/run ]; then
   fail=1
 fi
 scripts=()
+listing="$(shell_listing --all)"
 while IFS= read -r path; do
   scripts+=("$path")
-done < <(shell_listing --all | shell_scripts)
+done < <(printf '%s\n' "$listing" | shell_scripts)
 [ "${#scripts[@]}" -gt 0 ] || exit "$fail"
 parsed="$(mktemp -d "${TMPDIR:-/tmp}/bin-shell-build.XXXXXX")"
 trap 'rm -rf "$parsed"' EXIT

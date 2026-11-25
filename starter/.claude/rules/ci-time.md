@@ -14,4 +14,10 @@ recorded time on each machine.
   other pass off `main` writes its time. `.ci-timeout` is committed and
   left out of fingerprints and dirty checks. Trigger: any change to
   `bin/_ci-timeout` or to how `bin/ci` times an app.
-<!-- audited: ee4067f05639 -->
+- `bin/commit` stops `bin/ci` after `FLOW_CI_TIMEOUT_MS` milliseconds
+  when that is a whole number above 0, else after five minutes plus, for
+  each app whose line for this machine is a whole number, that line's
+  time, a fifth more and 5 seconds, so a hung app or suite never holds a
+  commit open; it then refuses the commit with `gate timed out after
+  <N>s`. Trigger: any change to how `bin/commit` bounds `bin/ci`.
+<!-- audited: 8f0cf1fc03da -->

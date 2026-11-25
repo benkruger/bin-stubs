@@ -77,6 +77,9 @@ is_ungated() {
 
 is_bash_script() {
   local first="" shebang='^#!(.*[^[:alnum:]_])?bash([^[:alnum:]_]|$)'
+  case "$1" in
+    *.sh | *.bash) return 0 ;;
+  esac
   IFS= read -r first <"$1" || true
   [[ "$first" =~ $shebang ]]
 }

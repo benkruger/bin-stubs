@@ -49,7 +49,7 @@ owned_change() {
 
 is_test() {
   case "$1" in
-    tests/*.js | tests/*.mjs | tests/*.cjs | tests/*.jsx) return 0 ;;
+    e2e/*) return 1 ;;
     *.test.js | *.test.mjs | *.test.cjs | *.test.jsx) return 0 ;;
     *.spec.js | *.spec.mjs | *.spec.cjs | *.spec.jsx) return 0 ;;
     test-*.js | test-*.mjs | test-*.cjs | test-*.jsx) return 0 ;;
@@ -64,7 +64,7 @@ is_source() {
     *) return 1 ;;
   esac
   case "$1" in
-    tests/* | node_modules/* | dist/* | public/* | coverage/* | */node_modules/*) return 1 ;;
+    tests/* | e2e/* | node_modules/* | dist/* | public/* | coverage/* | */node_modules/*) return 1 ;;
   esac
   is_test "$1" && return 1
   case "$1" in

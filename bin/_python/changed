@@ -10,8 +10,8 @@ cd "$root"
 packages_check "$PWD" || exit 1
 export FLOW_CHECKED_APP="$PWD"
 
-# shellcheck source=../lib/apps.sh
-. "$here/../lib/apps.sh"
+# shellcheck source=../lib/deletions.sh
+. "$here/../lib/deletions.sh"
 root_app=0
 if [ "$(pwd -P)" = "$(git rev-parse --show-toplevel)" ]; then
   root_app=1
@@ -45,7 +45,7 @@ changed_files() {
     printf '%s\n' "$path"
   done < <(
     {
-      git -C "$root" diff --name-only --relative HEAD -- .
+      git -C "$root" diff --name-only --relative "$(change_base)" -- .
       git -C "$root" ls-files --others --exclude-standard -- .
     } | sort -u
   )
@@ -71,23 +71,28 @@ files=()
 while IFS= read -r path; do
   files+=("$path")
 done < <(changed_files)
+gone="$(deleted_twin_findings)"
 
-if [ "${#files[@]}" -eq 0 ]; then
+if [ "${#files[@]}" -eq 0 ] && [ -z "$gone" ]; then
   exit 0
 fi
 
-"$here/format" "${files[@]}"
-"$here/lint" "${files[@]}"
+if [ "${#files[@]}" -gt 0 ]; then
+  "$here/format" "${files[@]}"
+  "$here/lint" "${files[@]}"
+fi
 
 tests=()
 missing_mirror=()
-for path in "${files[@]}"; do
+for path in "${files[@]+"${files[@]}"}"; do
   if is_source "$path"; then
     mirror="$(test_for_source "$path")"
     if [ -f "$mirror" ]; then
       already "$mirror" || tests+=("$mirror")
     elif needs_twin "$path"; then
       missing_mirror+=("$path → $mirror")
+    else
+      already "$path" || tests+=("$path")
     fi
   elif is_test "$path"; then
     if ! already "$path"; then
@@ -96,10 +101,11 @@ for path in "${files[@]}"; do
   fi
 done
 
-if [ "${#missing_mirror[@]}" -gt 0 ]; then
-  for msg in "${missing_mirror[@]}"; do
-    echo "bin/changed: no mirrored test for $msg" >&2
-  done
+for msg in "${missing_mirror[@]+"${missing_mirror[@]}"}"; do
+  echo "bin/changed: no mirrored test for $msg" >&2
+done
+[ -z "$gone" ] || printf '%s\n' "$gone" >&2
+if [ "${#missing_mirror[@]}" -gt 0 ] || [ -n "$gone" ]; then
   exit 1
 fi
 

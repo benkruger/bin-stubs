@@ -9,8 +9,9 @@ at_repo_root() {
 }
 
 app_file() {
-  local path="$1" root_app="$2" top
-  [ -f "$path" ] && [ ! -L "$path" ] || return 1
+  local path="$1" root_app="$2" links="${3:-}" top
+  [ -f "$path" ] || return 1
+  [ -n "$links" ] || [ ! -L "$path" ] || return 1
   case "$path" in
     .build/* | */.build/* | .flow-states/* | */.flow-states/*) return 1 ;;
   esac
@@ -19,13 +20,23 @@ app_file() {
 }
 
 app_files() {
-  local path root_app
+  local path root_app links="" listed
+  if [ "${1:-}" = --links ]; then
+    links=1
+    shift
+  fi
   APP_FILES=()
   root_app="$(at_repo_root)"
+  listed="$(mktemp "${TMPDIR:-/tmp}/bin-ios-files.XXXXXX")"
+  if ! git ls-files -z --cached --others --exclude-standard -- "$@" >"$listed"; then
+    rm -f "$listed"
+    return 1
+  fi
   while IFS= read -r -d '' path; do
-    app_file "$path" "$root_app" || continue
+    app_file "$path" "$root_app" "$links" || continue
     APP_FILES+=("$path")
-  done < <(git ls-files -z --cached --others --exclude-standard -- "$@")
+  done <"$listed"
+  rm -f "$listed"
 }
 
 swift_files() {

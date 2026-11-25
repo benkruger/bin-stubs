@@ -20,8 +20,11 @@ full bar the language's standards state.
 - A coverage config measures every target with no filter. `tests/guards`
   fails a Ruby file that starts SimpleCov without the line
   `minimum_coverage line: 100, branch: 100` or with `add_filter`, `skip` or
-  `filters`, any `.simplecov` file, and an `.xctestplan` or `.xcscheme`
+  `filters`, any `.simplecov` file, an `.xctestplan` or `.xcscheme`
   line matching `COVERAGE_NARROWED`, which turns code coverage off or
-  limits it to some targets. Trigger: any change to a Ruby file that
-  starts SimpleCov, a `.simplecov`, an `.xctestplan` or an `.xcscheme`.
-<!-- audited: 32c7bd10b0d1 -->
+  limits it to some targets, and a Vitest or Vite config line naming
+  `ignoreClassMethods`, which counts methods that never ran as covered.
+  Trigger: any change to a Ruby file that starts SimpleCov, a
+  `.simplecov`, an `.xctestplan`, an `.xcscheme` or a Vitest or Vite
+  config.
+<!-- audited: 9b4a0824ced0 -->

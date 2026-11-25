@@ -491,22 +491,26 @@ orphan_file() {
 }
 
 twinless() {
-  local app="$1" lang="$2" src twin body
+  local app="$1" lang="$2" src twin body flag
   case "$lang" in
     typescript)
       src=src/extra.ts twin=tests/extra.test.ts
+      flag=--reporter=dot
       body=$'export function extra(): number {\n  return 1;\n}'
       ;;
     javascript)
       src=src/extra.js twin=tests/extra.test.js
+      flag=--test-reporter=dot
       body=$'export function extra() {\n  return 1;\n}'
       ;;
     python)
       src=src/extra.py twin=tests/test_extra.py
+      flag=-q
       body=$'def extra() -> int:\n    return 1'
       ;;
     rails)
       src=app/models/extra.rb twin=test/models/extra_test.rb
+      flag=-v
       body=$'# frozen_string_literal: true\n\nmodule Extra\n  def self.call\n    1\n  end\nend'
       ;;
     *) return 0 ;;
@@ -516,7 +520,47 @@ twinless() {
   grep -qxF "bin/changed: no mirrored test for $src → $twin" "${LAST_LOG}" || die "$lang changed let a source with no test through"
   expect_fail leaf "$app" "$lang" test "$src"
   grep -qxF "bin/test: no mirrored test for $src → $twin" "${LAST_LOG}" || die "$lang test ran a source with no test"
+  expect_fail leaf "$app" "$lang" test "$flag"
+  grep -qF "bin/test: no mirrored test for $src → $twin" "${LAST_LOG}" ||
+    die "$lang test given only an option held no changed source to the bar"
   rm "$app/$src"
+}
+
+deleted_change() {
+  local app="$1" lang="$2" src twin
+  src="$(source_of "$lang")"
+  case "$lang" in
+    typescript) twin=tests/add.test.ts ;;
+    javascript) twin=tests/index.test.js ;;
+    python) twin=tests/test_add.py ;;
+    rails) twin=test/models/add_test.rb ;;
+    *) twin="" ;;
+  esac
+  case "$lang" in
+    rust | ios)
+      case "$lang" in
+        rust) twin=rust-toolchain.toml ;;
+        ios) twin=.xcode-version ;;
+      esac
+      mv "$app/$twin" "$WORK/pin.keep"
+      expect_ok leaf "$app" "$lang" changed
+      grep -q "bin/test: coverage bar held" "${LAST_LOG}" || die "$lang changed skipped its suite when only a deletion changed"
+      mv "$WORK/pin.keep" "$app/$twin"
+      return 0
+      ;;
+  esac
+  if [ -n "$twin" ]; then
+    mv "$app/$twin" "$WORK/twin.keep"
+    expect_fail leaf "$app" "$lang" changed
+    grep -qF "bin/changed: no mirrored test for $src → $twin" "${LAST_LOG}" ||
+      die "$lang changed passed a deleted test whose source stays"
+    mv "$WORK/twin.keep" "$app/$twin"
+  fi
+  mv "$app/$src" "$WORK/source.keep"
+  expect_fail leaf "$app" "$lang" changed
+  [ -z "$twin" ] || grep -qF "bin/changed: no source for test $twin" "${LAST_LOG}" ||
+    die "$lang changed passed a deleted source whose test stays"
+  mv "$WORK/source.keep" "$app/$src"
 }
 
 changed_scope() {
@@ -573,7 +617,7 @@ changed_scope() {
   if [ -n "$more" ]; then
     printf '%s\n' "$more" >>"$app/$spec"
   else
-    perl -0pi -e "s/(\n  end\nend\n)\z/\n  end\n\n  test 'adds again' do\n    assert_equal 4, Add.call(2, 2)\n  end\nend\n/" "$app/$spec"
+    perl -0pi -e "s/(\n  end\nend\n)\z/\n  end\n\n  test 'adds again' do\n    assert_equal 4, Add.call(2, 2)\n    assert_equal 0, Half.call(0)\n  end\nend\n/" "$app/$spec"
   fi
   expect_ok leaf "$app" "$lang" changed
   cp "$WORK/scope.keep" "$app/$spec"
@@ -669,7 +713,7 @@ whole_app() {
 }
 
 source_rules() {
-  local app="$1" lang="$2"
+  local app="$1" lang="$2" stray
   case "$lang" in
     typescript)
       printf 'export type Version = string;\n' >"$app/src/version.d.ts"
@@ -685,12 +729,25 @@ source_rules() {
       printf '%s\n' 'export function twice(n: number): number {' '  return n * 2;' '}' >"$app/lib/twice.ts"
       printf '%s\n' 'import { expect, test } from "vitest";' 'import { twice } from "../../lib/twice";' '' \
         'test("twice", () => {' '  expect(twice(2)).toBe(4);' '});' >"$app/tests/lib/twice.test.ts"
+      mkdir -p "$app/e2e"
+      printf 'export const baseUrl = "http://127.0.0.1:3000";\n' >"$app/e2e/fixtures.ts"
+      printf 'export default {\n  test: { coverage: { provider: "istanbul" } },\n};\n' >"$app/vitest.config.ts"
       expect_ok leaf "$app" "$lang" changed
       expect_ok leaf "$app" "$lang" ci --force
+      rm "$app/vitest.config.ts"
+      printf '%s\n' 'import { expect, test } from "vitest";' '' 'test("stray", () => {' '  expect(1).toBe(1);' '});' \
+        >"$app/tests/stray.spec.ts"
+      cp "$app/tests/stray.spec.ts" "$app/src/stray.test.ts"
+      expect_fail leaf "$app" "$lang" ci --force
+      for stray in tests/stray.spec.ts src/stray.test.ts; do
+        grep -qF "bin/test: $stray is not a twin test" "${LAST_LOG}" || die "$lang passed $stray, which is no source's twin"
+      done
+      rm "$app/tests/stray.spec.ts" "$app/src/stray.test.ts"
       rm "$app/tests/lib/twice.test.ts"
       expect_fail leaf "$app" "$lang" ci --force
       grep -q "no mirrored test for lib/twice.ts" "${LAST_LOG}" || die "$lang let a source outside src/ go untested"
-      rm -r "${app:?}/lib" "$app/tests/lib" "$app/src/version.d.ts" "$app/src/Button.tsx" "$app/tests/Button.test.tsx"
+      rm -r "${app:?}/lib" "$app/tests/lib" "$app/src/version.d.ts" "$app/src/Button.tsx" "$app/tests/Button.test.tsx" \
+        "$app/e2e"
       mv "$WORK/tsconfig.keep" "$app/tsconfig.json"
       ;;
     javascript)
@@ -698,8 +755,13 @@ source_rules() {
       printf '%s\n' 'import assert from "node:assert/strict";' 'import test from "node:test";' \
         'import { mul } from "./mul.js";' '' 'test("mul", () => {' '  assert.equal(mul(2, 3), 6);' '});' \
         >"$app/src/mul.spec.js"
+      mkdir -p "$app/e2e"
+      printf 'export const target = "http://127.0.0.1:3000";\n' >"$app/e2e/home.spec.js"
+      printf 'export const two = 2;\n' >"$app/tests/helpers.js"
       expect_ok leaf "$app" "$lang" changed
       rm "$app/src/mul.js" "$app/src/mul.spec.js"
+      expect_ok leaf "$app" "$lang" ci --force
+      rm -r "${app:?}/e2e" "$app/tests/helpers.js"
       printf '%s\n' 'module.exports = {' '  one() {' '    return 1;' '  },' '  two() {' '    return 2;' '  },' '};' \
         >"$app/src/legacy.cjs"
       printf '%s\n' 'import assert from "node:assert/strict";' 'import test from "node:test";' \
@@ -722,28 +784,28 @@ source_rules() {
       printf 'print("seed")\n' >"$app/scripts/seed.py"
       expect_ok leaf "$app" "$lang" changed
       expect_ok leaf "$app" "$lang" ci --force
+      printf '%s\n' 'def unused() -> int:' '    return 1' >"$app/src/pkg/__init__.py"
+      expect_fail leaf "$app" "$lang" changed
+      grep -qF "bin/test: src/pkg/__init__.py at" "${LAST_LOG}" || die "$lang changed passed an edited __init__.py below the bar"
       rm -r "$app/src/pkg" "$app/tests/pkg" "$app/scripts"
       ;;
   esac
 }
 
 coverage_gap() {
-  local app="$1" lang="$2" file body report args=()
+  local app="$1" lang="$2" file body report
   case "$lang" in
     typescript)
-      args=(--all)
       file=src/add.ts
       body=$'export function add(a: number, b: number): number {\n  return a > 0 ? a + b : b;\n}'
       report='at 100\.00 functions, 100\.00 lines, [0-9]{1,2}\.[0-9]{2} branches'
       ;;
     javascript)
-      args=(--all)
       file=src/index.js
       body=$'export function add(a, b) {\n  return a > 0 ? a + b : b;\n}'
       report='at 100\.00 functions, 100\.00 lines, [0-9]{1,2}\.[0-9]{2} branches'
       ;;
     python)
-      args=(--all)
       file=src/add.py
       body=$'def add(a: int, b: int) -> int:\n    if a > 0:\n        return a + b\n    return b'
       report='bin/test: src/add\.py at 3/4 stmts 1/2 branches \(need 100/100\)'
@@ -769,9 +831,12 @@ coverage_gap() {
     shell) return 0 ;;
     *) die "$lang has no coverage gap plant" ;;
   esac
-  expect_ok leaf "$app" "$lang" test ${args[@]+"${args[@]}"}
+  expect_ok leaf "$app" "$lang" test --all
   grep -qxF "bin/test: coverage bar held on 1 source(s)" "${LAST_LOG}" ||
-    die "$lang bin/test did not report holding its one source to the coverage bar"
+    die "$lang bin/test --all did not report holding its one source to the coverage bar"
+  expect_ok leaf "$app" "$lang" test "$file"
+  grep -qxF "bin/test: coverage bar held on 1 source(s)" "${LAST_LOG}" ||
+    die "$lang bin/test on its source did not report holding it to the coverage bar"
   cp "$app/$file" "$WORK/gap.keep"
   printf '%s\n' "$body" >"$app/$file"
   expect_fail leaf "$app" "$lang" ci --force

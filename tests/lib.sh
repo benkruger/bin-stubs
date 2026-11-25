@@ -92,6 +92,12 @@ stub_suite() {
   chmod +x "$1/tests/run" "$1/tests/guards"
 }
 
+stub_npm_install() {
+  mkdir -p "$1/node_modules"
+  printf '{ "lockfileVersion": 3, "packages": {} }\n' >"$1/package-lock.json"
+  cp "$1/package-lock.json" "$1/node_modules/.package-lock.json"
+}
+
 sentinel_file() {
   printf '%s\n' "$1/.flow-states/main/ci-sentinel"
 }

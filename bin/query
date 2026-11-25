@@ -11,6 +11,7 @@ fi
 PGOPTIONS="${PGOPTIONS:+$PGOPTIONS }-c default_transaction_read_only=on"
 export PGOPTIONS
 writes="SELECT r.rolsuper OR r.rolcreaterole OR r.rolcreatedb OR r.rolbypassrls OR r.rolreplication
+  OR pg_has_role('pg_execute_server_program', 'MEMBER') OR pg_has_role('pg_write_server_files', 'MEMBER')
   OR has_database_privilege(current_database(), 'CREATE')
   OR EXISTS (SELECT FROM pg_namespace n WHERE n.nspname NOT LIKE 'pg\\_temp\\_%'
     AND n.nspname NOT LIKE 'pg\\_toast\\_temp\\_%' AND has_schema_privilege(n.oid, 'CREATE'))

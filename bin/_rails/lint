@@ -33,7 +33,7 @@ if [ "$all" -eq 0 ]; then
     [ -f "$path" ] || continue
     ! in_nested_app "$path" || continue
     case "$path" in
-      *.rb) rb_files+=("$path") ;;
+      *.rb | *.rake | *.ru | *.gemspec | Gemfile | */Gemfile | Rakefile | */Rakefile) rb_files+=("$path") ;;
     esac
   done <<<"$listing"
 elif [ "${#NESTED_APPS[@]}" -gt 0 ]; then

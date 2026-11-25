@@ -139,10 +139,12 @@ test_commit() {
   commit_case
   commit --
   assert_rc 1 "bin/commit with no arguments"
-  grep -qx "usage: bin/commit \[--no-push\] <branch> <msgfile>" "${LAST_LOG}" || die "no usage line"
+  assert_eq "$(commit_json .step)" "usage" "bin/commit with no arguments"
+  assert_eq "$(commit_json .detail)" "usage: bin/commit [--no-push] <branch> <msgfile>" "the usage refusal's detail"
   commit -- a/b "$msg"
   assert_rc 1 "a branch with a slash"
-  grep -qx "unsafe branch: a/b" "${LAST_LOG}" || die "a slashed branch was not refused"
+  assert_eq "$(commit_json .step)" "branch" "a branch with a slash"
+  assert_eq "$(commit_json .detail)" "unsafe branch: a/b" "the unsafe branch refusal's detail"
   printf 'x\n' >"$WORK/invented-msg"
   commit -- main "$WORK/invented-msg"
   assert_rc 1 "an invented message file"
@@ -252,6 +254,13 @@ test_commit_review() {
   assert_rc 0 "a nested rule review"
   grep -qx "### .claude/rules/guard-tests.md" "$CLAUDE_LOG.prompt" ||
     die "the review of a nested rule left out the root rules"
+
+  commit_case
+  printf '# Spaced\n\nA rule whose name has a space.\n' >"$repo/.claude/rules/my rule.md"
+  commit -- main "$msg"
+  assert_rc 0 "a rule whose name has a space"
+  tail -n 1 "$repo/.claude/rules/my rule.md" | grep -qE '^<!-- audited: [0-9a-f]{12} -->$' ||
+    die "a rule whose name has a space was not reviewed and stamped"
 }
 
 test_commit_fix() {
@@ -365,7 +374,7 @@ test_commit_stops() {
 
 test_commit_gate() {
   say "commit bounds the gate, pushes and commits from a worktree"
-  local repo origin rule msg finding before pidfile tries=0 hurry patient
+  local repo origin rule msg finding before pidfile tries=0 hurry patient host interrupted watch
   commit_setup
 
   commit_case
@@ -393,6 +402,31 @@ EOF
     sleep 0.1
   done
 
+  commit_case
+  mkdir -p "$repo/checks"
+  rm -f "$pidfile"
+  printf '%s\n' '#!/usr/bin/env bash' 'set -euo pipefail' "echo \"\$\$\" >\"$pidfile\"" 'exec sleep 30' >"$repo/checks/slow"
+  chmod +x "$repo/checks/slow"
+  watch=$((90000 + RANDOM))
+  env PATH="$FAKE_CLAUDE:$PATH" FAKE_CLAUDE_LOG="$CLAUDE_LOG" FLOW_CI_TIMEOUT_MS="$((watch * 1000))" \
+    "$repo/bin/commit" main "$msg" >/dev/null 2>&1 &
+  interrupted=$!
+  tries=0
+  until [ -s "$pidfile" ]; do
+    tries=$((tries + 1))
+    [ "$tries" -le 100 ] || die "the gate under an interrupted bin/commit never started"
+    sleep 0.1
+  done
+  kill -TERM "$interrupted"
+  wait "$interrupted" || true
+  tries=0
+  while pgrep -f "sleep $watch\$" >/dev/null; do
+    tries=$((tries + 1))
+    [ "$tries" -le 50 ] || die "an interrupted bin/commit left its timeout watcher running"
+    sleep 0.1
+  done
+  ! ps -p "$(cat "$pidfile")" >/dev/null || die "an interrupted bin/commit left its gate running"
+
   hurry="$WORK/hurry"
   mkdir -p "$hurry"
   cat >"$hurry/sleep" <<'EOF'
@@ -412,9 +446,15 @@ EOF
   mkdir -p "$repo/checks"
   printf '%s\n' '#!/usr/bin/env bash' 'sleep 1' >"$repo/checks/slow"
   chmod +x "$repo/checks/slow"
-  printf 'host 600\n' >"$repo/.ci-timeout"
+  printf 'elsewhere 600\n' >"$repo/.ci-timeout"
   commit FLOW_CI_TIMEOUT_MS= PATH="$hurry:$FAKE_CLAUDE:$PATH" -- main "$msg"
-  assert_rc 0 "bin/ci once the repo holds a .ci-timeout"
+  assert_eq "$(commit_json .detail)" "gate timed out after 300s" "bin/ci with another machine's .ci-timeout line"
+  host="$(hostname -s 2>/dev/null || hostname)"
+  host="$(printf '%s\n' "$host" | sed -E 's/-[0-9]+$//')"
+  printf '%s 600\n' "$host" >>"$repo/.ci-timeout"
+  perl -pi -e 's/!= 300 \]/!= 1025 ]/' "$hurry/sleep"
+  commit FLOW_CI_TIMEOUT_MS= PATH="$hurry:$FAKE_CLAUDE:$PATH" -- main "$msg"
+  assert_eq "$(commit_json .detail)" "gate timed out after 1025s" "bin/ci bounded by this machine's .ci-timeout line"
 
   commit_case
   printf '\nMore.\n' >>"$repo/notes.md"
