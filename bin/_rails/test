@@ -12,7 +12,8 @@ packages_check "$PWD" || exit 1
 . "$here/_run_quiet"
 
 export RAILS_ENV=test
-export RUBYOPT="-w -r${here}/warning_filter.rb${RUBYOPT:+ $RUBYOPT}"
+export RUBYLIB="${here}${RUBYLIB:+:$RUBYLIB}"
+export RUBYOPT="-w -rwarning_filter${RUBYOPT:+ $RUBYOPT}"
 
 # shellcheck source=lib/sources.sh
 . "$here/lib/sources.sh"
@@ -57,11 +58,7 @@ if [ ! -f "$resultset" ]; then
 fi
 whole=0
 sources=()
-if [ -n "${COVERAGE_DIRTY_FILES:-}" ]; then
-  while IFS= read -r src; do
-    [ -n "$src" ] && sources+=("$src")
-  done <"$COVERAGE_DIRTY_FILES"
-elif [ "$#" -gt 0 ]; then
+if [ "$#" -gt 0 ]; then
   for t in "$@"; do
     src="$(source_for_test "${t#./}")"
     [ ! -f "$src" ] || sources+=("$src")

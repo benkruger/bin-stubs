@@ -217,6 +217,27 @@ test_suite_missing() {
   grep -q "root-suite: no executable tests/guards" "${LAST_LOG}" || die "bin/changed passed a repo with no tests/guards"
 }
 
+test_root_check() {
+  say "bin/_root-tests checks/<name> runs that one check"
+  local repo
+  repo="$(new_repo)"
+  keep "$repo"
+  copy_dir "$HERE/../bin" "$repo/bin"
+  stub_suite "$repo"
+  printf '%s\n' '#!/usr/bin/env bash' "echo suite >\"$repo/suite.ran\"" >"$repo/tests/run"
+  mkdir -p "$repo/checks"
+  printf '%s\n' '#!/usr/bin/env bash' 'echo passing-check-ran' >"$repo/checks/pass"
+  printf '%s\n' '#!/usr/bin/env bash' 'echo failing-check-ran' 'exit 1' >"$repo/checks/fail"
+  chmod +x "$repo/checks/pass" "$repo/checks/fail"
+  expect_ok "$repo/bin/_root-tests" checks/pass
+  grep -qx "passing-check-ran" "${LAST_LOG}" || die "bin/_root-tests did not run the named check"
+  grep -q "failing-check-ran" "${LAST_LOG}" && die "bin/_root-tests ran a check it was not named"
+  [ ! -e "$repo/suite.ran" ] || die "bin/_root-tests ran tests/run for one check"
+  expect_fail "$repo/bin/_root-tests" checks/fail
+  grep -qx "failing-check-ran" "${LAST_LOG}" || die "bin/_root-tests passed a failing named check"
+  return 0
+}
+
 test_steps() {
   say "bin/ci runs an app's four steps at once"
   local repo name
@@ -497,4 +518,17 @@ test_app_language() {
   is_app_dir "$dir" && die "an empty folder counts as an app"
   app_language "$dir" && die "an empty folder has a language"
   return 0
+}
+
+test_die_fixture() {
+  say "a failed test keeps its fixture"
+  local script="$WORK/dies" kept
+  mkdir -p "$WORK/kept"
+  printf '%s\n' '#!/usr/bin/env bash' 'set -euo pipefail' ". \"$HERE/lib.sh\"" 'start_work' "repo=\"\$(new_repo)\"" \
+    "keep \"\$repo\"" "echo kept >\"\$repo/marker\"" 'die "on purpose"' >"$script"
+  chmod +x "$script"
+  run_log env TMPDIR="$WORK/kept" "$script"
+  assert_rc 1 "a test that dies"
+  kept="$(sed -n 's/^fixture: //p' "${LAST_LOG}")"
+  [ -n "$kept" ] && [ -f "$kept/marker" ] || die "a failed test's fixture was gone: $kept"
 }

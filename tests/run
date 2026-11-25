@@ -65,14 +65,17 @@ part() {
   printf '%s\n' "$hash" >"$pass"
 }
 
-say "every kit script is bash"
+say "every kit script is bash and gives mktemp a template"
 while IFS= read -r -d '' path; do
   [ -f "$REPO/$path" ] && [ ! -L "$REPO/$path" ] || continue
   first=""
   IFS= read -r first <"$REPO/$path" || true
   case "$first" in
     "#!"*) [ "$first" = "#!/usr/bin/env bash" ] || die "$path: shebang is $first" ;;
+    *) continue ;;
   esac
+  bare="$(grep -nE '\$\(mktemp( -d)?\)' "$REPO/$path" | head -n 1 | cut -d: -f1)" || true
+  [ -z "$bare" ] || die "$path:$bare: mktemp with no template ignores TMPDIR on macOS"
 done < <(git -C "$REPO" ls-files -z --cached --others --exclude-standard)
 stop_spin "✓"
 

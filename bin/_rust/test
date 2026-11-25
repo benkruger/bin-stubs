@@ -20,7 +20,7 @@ if ! command -v rustup >/dev/null 2>&1 && [ -z "${LLVM_COV:-}" ]; then
   fi
 fi
 
-log="$(mktemp)"
+log="$(mktemp "${TMPDIR:-/tmp}/bin-rust-test.XXXXXX")"
 trap 'rm -f "$log"' EXIT
 cargo llvm-cov --workspace --fail-under-lines 100 "$@" | tee "$log"
 [ "$#" -eq 0 ] || exit 0

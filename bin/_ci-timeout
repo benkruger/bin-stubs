@@ -38,7 +38,7 @@ if [ "$branch" = main ]; then
   exit 0
 fi
 
-next="$(mktemp)"
+next="$(mktemp "${TMPDIR:-/tmp}/bin-ci-timeout.XXXXXX")"
 if [ -f "$file" ]; then
   awk -v h="$host" -v s="$took" '$1 == h { print h " " s; done = 1; next } { print } END { if (!done) print h " " s }' "$file" >"$next"
 else

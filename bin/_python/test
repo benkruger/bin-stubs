@@ -25,9 +25,9 @@ else
   export PYTHONPATH="${root}${PYTHONPATH:+:$PYTHONPATH}"
 fi
 
-covjson="$(mktemp)"
-covrc="$(mktemp)"
-covdata="$(mktemp -d)"
+covjson="$(mktemp "${TMPDIR:-/tmp}/bin-python-test.XXXXXX")"
+covrc="$(mktemp "${TMPDIR:-/tmp}/bin-python-test.XXXXXX")"
+covdata="$(mktemp -d "${TMPDIR:-/tmp}/bin-python-test.XXXXXX")"
 trap 'rm -rf "$covjson" "$covrc" "$covdata"' EXIT
 export COVERAGE_FILE="$covdata/.coverage" PYTHONDONTWRITEBYTECODE=1
 cat >"$covrc" <<'EOF'

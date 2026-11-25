@@ -82,13 +82,9 @@ is_bash_script() {
 }
 
 gated=()
-md_files=()
 for path in "${files[@]}"; do
   case "$path" in
-    *.md)
-      md_files+=("$path")
-      continue
-      ;;
+    *.md) continue ;;
   esac
   if [ -L "$path" ] || is_ungated "$path" || is_bash_script "$path"; then
     continue
@@ -96,7 +92,7 @@ for path in "${files[@]}"; do
   gated+=("$path")
 done
 
-logs="$(mktemp -d)"
+logs="$(mktemp -d "${TMPDIR:-/tmp}/bin-typescript-lint.XXXXXX")"
 trap 'rm -rf "$logs"' EXIT
 pids=()
 
@@ -184,9 +180,6 @@ if [ "${#gated[@]}" -gt 0 ]; then
     await import(new URL(typeof bin === "string" ? bin : bin.eslint, manifest));
   ' "${gated[@]}"
 fi
-if [ "${#md_files[@]}" -gt 0 ]; then
-  in_background markdownlint-cli2 "${md_files[@]}"
-fi
 
 status=0
 for i in ${pids[@]+"${!pids[@]}"}; do
@@ -195,5 +188,4 @@ for i in ${pids[@]+"${!pids[@]}"}; do
   cat "$logs/$i.out"
   cat "$logs/$i.err" >&2
 done
-[ "${#md_files[@]}" -gt 0 ] || echo "  ✓ markdownlint (no dirty Markdown files)"
 exit "$status"

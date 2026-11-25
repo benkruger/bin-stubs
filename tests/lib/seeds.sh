@@ -28,14 +28,14 @@ seed_typescript() {
   "private": true,
   "type": "module",
   "devDependencies": {
-    "@eslint/js": "10.0.1",
-    "@eslint/json": "2.1.1",
-    "@vitest/coverage-v8": "5.1.0",
-    "eslint": "10.14.0",
-    "prettier": "3.9.10",
-    "typescript": "6.0.3",
-    "typescript-eslint": "8.72.1",
-    "vitest": "5.1.0"
+    "@eslint/js": "latest",
+    "@eslint/json": "latest",
+    "@vitest/coverage-v8": "latest",
+    "eslint": "latest",
+    "prettier": "latest",
+    "typescript": "~6.0.0",
+    "typescript-eslint": "latest",
+    "vitest": "latest"
   },
   "overrides": {
     "minimatch": "latest"
@@ -111,8 +111,8 @@ seed_javascript() {
     "test": "node --test"
   },
   "devDependencies": {
-    "@biomejs/biome": "2.2.4",
-    "c8": "10.1.3"
+    "@biomejs/biome": "latest",
+    "c8": "latest"
   },
   "overrides": {
     "glob": "latest",
@@ -517,6 +517,71 @@ twinless() {
   expect_fail leaf "$app" "$lang" test "$src"
   grep -qxF "bin/test: no mirrored test for $src → $twin" "${LAST_LOG}" || die "$lang test ran a source with no test"
   rm "$app/$src"
+}
+
+changed_scope() {
+  local app="$1" lang="$2" src spec idle more half twin half_body twin_body gap
+  src="$(source_of "$lang")"
+  case "$lang" in
+    typescript)
+      spec=tests/add.test.ts
+      idle=$'import { expect, test } from "vitest";\n\ntest("idle", () => {\n  expect(1).toBe(1);\n});'
+      more=$'\ntest("adds again", () => {\n  expect(add(2, 2)).toBe(4);\n});'
+      half=src/half.ts twin=tests/half.test.ts
+      half_body=$'export function half(n: number): number {\n  return n > 0 ? n / 2 : 0;\n}'
+      twin_body=$'import { expect, test } from "vitest";\nimport { half } from "../src/half";\n\ntest("half", () => {\n  expect(half(4)).toBe(2);\n});'
+      gap="src/half.ts at "
+      ;;
+    javascript)
+      spec=tests/index.test.js
+      idle=$'import assert from "node:assert/strict";\nimport test from "node:test";\n\ntest("idle", () => {\n  assert.equal(1, 1);\n});'
+      more=$'\ntest("adds again", () => {\n  assert.equal(add(2, 2), 4);\n});'
+      half=src/half.js twin=tests/half.test.js
+      half_body=$'export function half(n) {\n  return n > 0 ? n / 2 : 0;\n}'
+      twin_body=$'import assert from "node:assert/strict";\nimport test from "node:test";\nimport { half } from "../src/half.js";\n\ntest("half", () => {\n  assert.equal(half(4), 2);\n});'
+      gap="src/half.js at "
+      ;;
+    python)
+      spec=tests/test_add.py
+      idle=$'def test_idle() -> None:\n    assert str(1) == "1"'
+      more=$'\n\ndef test_adds_again() -> None:\n    assert add(2, 2) == 4'
+      half=src/half.py twin=tests/test_half.py
+      half_body=$'def half(n: int) -> float:\n    if n > 0:\n        return n / 2\n    return 0.0'
+      twin_body=$'from half import half\n\n\ndef test_half() -> None:\n    assert half(4) == 2'
+      gap="src/half.py at "
+      ;;
+    rails)
+      spec=test/models/add_test.rb
+      idle=$'# frozen_string_literal: true\n\nrequire \x27test_helper\x27\n\nclass AddTest < ActiveSupport::TestCase\n  test \x27idles\x27 do\n    assert true\n  end\nend'
+      more=''
+      half=app/models/half.rb twin=test/models/half_test.rb
+      half_body=$'# frozen_string_literal: true\n\nmodule Half\n  module_function\n\n  def call(number)\n    return 0 unless number.positive?\n\n    number / 2\n  end\nend'
+      twin_body=$'# frozen_string_literal: true\n\nrequire \x27test_helper\x27\n\nclass HalfTest < ActiveSupport::TestCase\n  test \x27halves\x27 do\n    assert_equal 2, Half.call(4)\n  end\nend'
+      gap="coverage"
+      ;;
+    *) return 0 ;;
+  esac
+  cp "$app/$spec" "$WORK/scope.keep"
+  printf '%s\n' "$idle" >"$app/$spec"
+  expect_fail leaf "$app" "$lang" changed
+  grep -qF "$src" "${LAST_LOG}" || die "$lang changed let a changed test drop its source below the bar"
+  cp "$WORK/scope.keep" "$app/$spec"
+  printf '%s\n' "$half_body" >"$app/$half"
+  printf '%s\n' "$twin_body" >"$app/$twin"
+  git -C "$app" add -- "$half" "$twin"
+  git -C "$app" commit -q -m "a source below the bar"
+  if [ -n "$more" ]; then
+    printf '%s\n' "$more" >>"$app/$spec"
+  else
+    perl -0pi -e "s/(\n  end\nend\n)\z/\n  end\n\n  test 'adds again' do\n    assert_equal 4, Add.call(2, 2)\n  end\nend\n/" "$app/$spec"
+  fi
+  expect_ok leaf "$app" "$lang" changed
+  cp "$WORK/scope.keep" "$app/$spec"
+  printf '%s\n' "$half_body" "" >"$app/$half"
+  expect_fail leaf "$app" "$lang" changed
+  grep -qF "$gap" "${LAST_LOG}" || die "$lang changed passed an edited source below the bar"
+  git -C "$app" rm -qf -- "$half" "$twin"
+  git -C "$app" commit -q -m "the source below the bar goes"
 }
 
 sourceless() {

@@ -17,7 +17,7 @@ while IFS= read -r path; do
   scripts+=("$path")
 done < <(shell_listing --all | shell_scripts)
 [ "${#scripts[@]}" -gt 0 ] || exit "$fail"
-parsed="$(mktemp -d)"
+parsed="$(mktemp -d "${TMPDIR:-/tmp}/bin-shell-build.XXXXXX")"
 trap 'rm -rf "$parsed"' EXIT
 jobs="$(getconf _NPROCESSORS_ONLN)"
 parse_every() {

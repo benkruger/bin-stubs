@@ -18,7 +18,7 @@ if [ ! -x "$playwright" ]; then
 fi
 "$playwright" install chromium
 
-log="$(mktemp)"
+log="$(mktemp "${TMPDIR:-/tmp}/bin-javascript-qa.XXXXXX")"
 trap 'rm -f "$log"' EXIT
 rc=0
 "$playwright" test "$@" 2>&1 | tee "$log" || rc=$?

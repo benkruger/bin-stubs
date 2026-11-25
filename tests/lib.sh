@@ -44,8 +44,10 @@ die() {
     echo "----- log -----" >&2
     cat "${LAST_LOG}" >&2
   fi
-  if [ -n "${KEEP:-}" ]; then
-    echo "fixture: ${KEEP}" >&2
+  local kept
+  if [ -n "${KEEP:-}" ] && [ -d "$KEEP" ] && kept="$(mktemp -d "${TMPDIR:-/tmp}/bin-stubs-fixture.XXXXXX")" &&
+    mv "$KEEP" "$kept/"; then
+    echo "fixture: $kept/${KEEP##*/}" >&2
   fi
   exit 1
 }
@@ -57,7 +59,7 @@ run_log() {
     RUN_LOGS=$((${RUN_LOGS:-0} + 1))
     LAST_LOG="$WORK/run-log.$BASHPID.$RUN_LOGS"
   else
-    LAST_LOG="$(mktemp)"
+    LAST_LOG="$(mktemp "${TMPDIR:-/tmp}/bin-stubs-log.XXXXXX")"
   fi
   if "$@" >"${LAST_LOG}" 2>&1; then
     LAST_RC=0

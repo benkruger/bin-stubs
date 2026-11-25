@@ -18,15 +18,15 @@ strength.
 - `test/test_helper.rb` starts SimpleCov with 100% line and branch coverage
   before the app loads. `bin/test` then reads SimpleCov's resultset and
   fails any source below 100% lines or branches, or with no row: every
-  `app/` and `lib/` `.rb` file on a whole run, the files the list
-  `COVERAGE_DIRTY_FILES` names when `bin/changed` sets it, and the sources
-  of the tests `bin/test <file>` runs.
+  `app/` and `lib/` `.rb` file on a whole run, and the sources of the tests
+  `bin/test <file>` runs, which for `bin/changed` are the changed tests and
+  the twins of the changed sources, so a changed test holds its source too.
 - Ruby runs the suite with warnings on; a warning from the app's own code
   fails it.
 - `bin/format` autocorrects with RuboCop under `--enable-pending-cops`;
   with `--check` it fails a RuboCop Layout offense. `bin/lint` fails any
-  RuboCop offense, any Brakeman warning and any `markdownlint-cli2`
-  finding, and no cop is turned off beyond what `no-lint-exceptions.md`
+  RuboCop offense and any Brakeman warning, and leaves Markdown to
+  `tests/guards`; no cop is turned off beyond what `no-lint-exceptions.md`
   allows.
 - `bin/build` eager-loads the app with Zeitwerk.
 - `bin/dependencies` updates gems as `packages.md` states, then fails
@@ -36,4 +36,4 @@ strength.
 - `bin/qa`, outside `bin/ci`, runs `rails test:system`; a failed test, or an
   output line matching `warn` or `deprecat` in any case, fails it.
 - Trigger: any change to a Rails `bin/` script or `test/test_helper.rb`.
-<!-- audited: ebabb917a67f -->
+<!-- audited: d6370bd9ca63 -->

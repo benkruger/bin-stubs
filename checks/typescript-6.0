@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+set -euo pipefail
+pin="the TypeScript test app in tests/run holds typescript to ~6.0.0, because typescript-eslint 8.74.0, its latest release, accepts only typescript >=4.8.4 <6.1.0 while typescript 7.0.2 is out"
+revisit=2026-12-20
+if [[ "$(date +%F)" < "$revisit" ]]; then
+  exit 0
+fi
+echo "checks/typescript-6.0: revisit date $revisit reached. Pin: $pin." >&2
+echo "  If typescript-eslint accepts the latest typescript, set typescript to" >&2
+echo "  latest in tests/lib/seeds.sh and delete this check. Otherwise set a new date." >&2
+exit 1

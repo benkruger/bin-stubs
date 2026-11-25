@@ -48,7 +48,7 @@ if [ "${#markdown[@]}" -gt 0 ] && [ "$check" -eq 0 ]; then
     echo "bin/format: markdownlint-cli2 is not installed (brew install markdownlint-cli2)" >&2
     exit 1
   fi
-  out="$(mktemp)"
+  out="$(mktemp "${TMPDIR:-/tmp}/bin-root-format.XXXXXX")"
   trap 'rm -f "$out"' EXIT
   rc=0
   markdownlint-cli2 --fix "${markdown[@]}" >"$out" 2>&1 || rc=$?

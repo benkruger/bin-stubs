@@ -43,7 +43,7 @@ untracked_kept() {
 
 content_tree() {
   local dir real prefix tree rc=0
-  dir="$(mktemp -d)"
+  dir="$(mktemp -d "${TMPDIR:-/tmp}/bin-lib-tree-sentinel.XXXXXX")"
   real="$(git rev-parse --path-format=absolute --git-path index)" || rc=$?
   [ "$rc" -ne 0 ] || [ ! -f "$real" ] || cp "$real" "$dir/index" || rc=$?
   prefix="$(git rev-parse --show-prefix)" || rc=$?

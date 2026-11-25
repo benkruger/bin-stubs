@@ -13,8 +13,8 @@ packages_check "$PWD" || exit 1
 
 STRICT_FLAGS='["alwaysStrict", "noImplicitAny", "noImplicitThis", "strictBindCallApply", "strictBuiltinIteratorReturn", "strictFunctionTypes", "strictNullChecks", "strictPropertyInitialization", "useUnknownInCatchVariables"]'
 tsc="$root/node_modules/.bin/tsc"
-config="$(mktemp)"
-listed="$(mktemp)"
+config="$(mktemp "${TMPDIR:-/tmp}/bin-typescript-build.XXXXXX")"
+listed="$(mktemp "${TMPDIR:-/tmp}/bin-typescript-build.XXXXXX")"
 trap 'rm -f "$config" "$listed"' EXIT
 "$tsc" --showConfig >"$config" 2>&1 &
 shown=$!

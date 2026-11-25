@@ -11,7 +11,8 @@ The iOS app is held by swift-format and its tests at full strength.
   any edit to a Swift file.
 - A Swift package builds and tests with `-warnings-as-errors` and
   `--disable-automatic-resolution`, so it uses only the versions
-  `Package.resolved` names and fetches nothing. An Xcode
+  `Package.resolved` names and fetches nothing; `bin/build` also builds the
+  tests with coverage on, so `bin/test` reuses that build. An Xcode
   workspace or project, used first when one sits in the folder, builds
   and tests with `xcodebuild` on `IOS_DESTINATION` or else the first iOS
   Simulator or Mac it lists, and `bin/build` fails any of its own targets
@@ -36,4 +37,4 @@ The iOS app is held by swift-format and its tests at full strength.
   green when it has none. Trigger: every edit.
 - `.xcode-version` pins Xcode; outside CI, `bin/ci` fails unless that
   Xcode is selected. Trigger: an Xcode upgrade.
-<!-- audited: 7595f39434fa -->
+<!-- audited: 4cca6f81a915 -->

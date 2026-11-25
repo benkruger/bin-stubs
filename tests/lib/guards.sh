@@ -100,4 +100,67 @@ test_guards_scans() {
   grep -qx "guards: the comment scan did not finish" "${LAST_LOG}" || missed+=" [comment scan]"
   grep -qx "guards: the Rust attribute scan did not finish" "${LAST_LOG}" || missed+=" [Rust attribute scan]"
   [ -z "$missed" ] || die "the guards passed a scan that did not finish:$missed"
+  scan_plants "$repo"
+  failing_tool_stubs "$WORK/failing"
+  failing_scans "$repo" "$WORK/failing" perl "byte cap" "file size"
+  failing_scans "$repo" "$WORK/failing" perl "sh|bash" "bash script"
+  failing_scans "$repo" "$WORK/failing" perl "entry point is not executable" "entry point"
+  failing_scans "$repo" "$WORK/failing" perl "audited:" rule
+  failing_scans "$repo" "$WORK/failing" grep "-nIHE -lE -nHE -Lw" suppression "skip candidate" "time limit" install \
+    packages_check
+  failing_scans "$repo" "$WORK/failing" grep "-nE -noE -LE" skip "matching line" "time limit value" update
+}
+
+scan_plants() {
+  local repo="$1"
+  mkdir -p "$repo/.claude/rules" "$repo/bin/_x/lib"
+  printf '# Probe\n\nA probe rule.\n' >"$repo/.claude/rules/probe.md"
+  printf '%s\n' '#!/usr/bin/env bash' 'set -euo pipefail' 'npm install' >"$repo/bin/_x/build"
+  printf '%s\n' '#!/usr/bin/env bash' 'set -euo pipefail' 'npm install' >"$repo/bin/_x/dependencies"
+  printf '%s\n' '#!/usr/bin/env bash' 'set -euo pipefail' >"$repo/bin/_x/ci"
+  printf '%s\n' '#!/usr/bin/env bash' '' 'packages_check() {' '  return 0' '}' >"$repo/bin/_x/lib/toolchain.sh"
+  chmod +x "$repo/bin/_x/build" "$repo/bin/_x/dependencies" "$repo/bin/_x/ci"
+  printf '{ "jest": { "testTimeout": 5 } }\n' >"$repo/package.json"
+  printf 'test.skip("a", () => {});\ntest("b", () => {}, { timeout: limit });\n' >"$repo/a.test.ts"
+}
+
+failing_tool_stubs() {
+  local stubs="$1" tool real
+  mkdir -p "$stubs"
+  for tool in perl grep; do
+    real="$(command -v "$tool")"
+    cat >"$stubs/$tool" <<EOF
+#!/usr/bin/env bash
+if [ "\${FAIL_TOOL:-}" = "$tool" ]; then
+  if [ "$tool" = grep ]; then
+    case " \$FAIL_ON " in
+      *" \${1:-} "*) exit 2 ;;
+    esac
+  elif [ "\${1:-}" = - ]; then
+    program="\$(cat)"
+    case "\$program" in
+      *"\$FAIL_ON"*) exit 1 ;;
+    esac
+    exec "$real" "\$@" <<<"\$program"
+  else
+    case "\$*" in
+      *"\$FAIL_ON"*) exit 1 ;;
+    esac
+  fi
+fi
+exec "$real" "\$@"
+EOF
+    chmod +x "$stubs/$tool"
+  done
+}
+
+failing_scans() {
+  local repo="$1" stubs="$2" tool="$3" on="$4" label missed=""
+  shift 4
+  run_log env PATH="$stubs:$PATH" FAIL_TOOL="$tool" FAIL_ON="$on" "$repo/tests/guards"
+  assert_rc 1 "guards whose $tool fails on $on"
+  for label in "$@"; do
+    grep -qx "guards: the $label scan did not finish" "${LAST_LOG}" || missed+=" [$label]"
+  done
+  [ -z "$missed" ] || die "the guards passed a scan that did not finish:$missed"
 }

@@ -64,7 +64,7 @@ mirror_check() {
 }
 
 if [ "$check" -eq 1 ]; then
-  mirror="$(mktemp -d)"
+  mirror="$(mktemp -d "${TMPDIR:-/tmp}/bin-ios-format.XXXXXX")"
   trap 'rm -rf "$mirror"' EXIT
   rc=0
   mirror_check || rc=$?

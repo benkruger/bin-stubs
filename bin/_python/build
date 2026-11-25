@@ -8,7 +8,7 @@ cd "$root"
 # shellcheck source=lib/toolchain.sh
 . "$here/lib/toolchain.sh"
 packages_check "$PWD" || exit 1
-PYTHONPYCACHEPREFIX="$(mktemp -d)"
+PYTHONPYCACHEPREFIX="$(mktemp -d "${TMPDIR:-/tmp}/bin-python-build.XXXXXX")"
 export PYTHONPYCACHEPREFIX
 trap 'rm -rf "$PYTHONPYCACHEPREFIX"' EXIT
 

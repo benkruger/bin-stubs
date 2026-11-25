@@ -51,7 +51,7 @@ section_installed() {
   case "$lang" in
     typescript | javascript) run_all "$WORK/logs" run_section changed whole plants audit ;;
     python) run_all "$WORK/logs" run_section changed whole plants ;;
-    rails) run_all "$WORK/logs" run_section changed whole plants audit root ;;
+    rails) run_all "$WORK/logs" run_section changed whole plants audit root spaced ;;
     ios) run_all "$WORK/logs" run_section changed plants xcode ;;
     shell) run_all "$WORK/logs" run_section changed whole plants ;;
     *) run_all "$WORK/logs" run_section changed plants ;;
@@ -180,7 +180,7 @@ section_whole() {
 }
 
 section_plants() {
-  local repo app pin script spec
+  local repo app pin script spec warning
   committed_app
   if pin="$(pin_file_of "$lang")"; then
     pin="$app/$pin"
@@ -264,12 +264,14 @@ EOF
       printf 'a {\n  color: red;\n}\n' >"$app/styles.css"
       printf '# Notes\n\n#Heading\n' >"$app/NOTES.md"
       printf '%s\n' '#!/usr/bin/env bash' 'echo deployed' >"$app/deploy"
+      printf '%s\n' 'const unused = 1;' >"$app/src/unused.ts"
       expect_fail leaf "$app" "$lang" ci --force
       grep -q "notes.txt: no formatter (Prettier)" "${LAST_LOG}" || die "$lang let a file with no formatter through"
       grep -q "styles.css: no linter (no ESLint rules apply)" "${LAST_LOG}" || die "$lang let a file with no linter through"
-      grep -q "NOTES.md:3:1 error MD018" "${LAST_LOG}" || die "$lang lint stopped at its first failing tool"
+      grep -q "'unused' is assigned a value but never used" "${LAST_LOG}" || die "$lang lint stopped at its first failing tool"
+      ! grep -q "NOTES.md" "${LAST_LOG}" || die "$lang lint linted Markdown the guards lint"
       ! grep -q "deploy: no" "${LAST_LOG}" || die "$lang held a bash script to Prettier and ESLint"
-      rm "$app/notes.txt" "$app/styles.css" "$app/NOTES.md" "$app/deploy"
+      rm "$app/notes.txt" "$app/styles.css" "$app/NOTES.md" "$app/deploy" "$app/src/unused.ts"
       mv "$app/eslint.config.js" "$WORK/eslint.config.keep"
       printf '%s\n' 'export default [{ files: ["**/*.xyz"], rules: { "no-console": "error" } }];' >"$app/eslint.config.js"
       echo "export const a = 1;" >"$app/src/plain.xyz"
@@ -352,11 +354,13 @@ EOF
       echo "plain text" >"$app/notes.txt"
       printf '# Notes\n\n#Heading\n' >"$app/NOTES.md"
       printf '%s\n' '#!/usr/bin/env bash' 'echo deployed' >"$app/deploy"
+      printf '%s\n' 'export const dupe = { a: 1, a: 2 };' >"$app/src/dupe.js"
       expect_fail leaf "$app" "$lang" ci --force
       grep -q "notes.txt: no formatter or linter (Biome)" "${LAST_LOG}" || die "$lang let a file with no formatter through"
-      grep -q "NOTES.md:3:1 error MD018" "${LAST_LOG}" || die "$lang lint stopped at its first failing tool"
+      grep -q "noDuplicateObjectKeys" "${LAST_LOG}" || die "$lang lint stopped at its first failing tool"
+      ! grep -q "NOTES.md" "${LAST_LOG}" || die "$lang lint linted Markdown the guards lint"
       ! grep -q "deploy: no" "${LAST_LOG}" || die "$lang held a bash script to Biome"
-      rm "$app/notes.txt" "$app/NOTES.md" "$app/deploy"
+      rm "$app/notes.txt" "$app/NOTES.md" "$app/deploy" "$app/src/dupe.js"
       cp "$app/package.json" "$WORK/package.keep"
       (cd "$app" && npm pkg set "scripts.build=echo the-build-script-ran")
       printf '%s\n' 'export const broken = (;' >"$app/src/broken.js"
@@ -531,6 +535,10 @@ EOF
       expect_fail leaf "$app" "$lang" ci --force
       grep -q "packages: gems are missing; run bin/dependencies" "${LAST_LOG}" || die "$lang ran without a gem its Gemfile names"
       mv "$WORK/gemfile.keep" "$app/Gemfile"
+      printf '%s\n' 'test:' '  adapter: sqlite3' '  database: db/test.sqlite3' >"$app/config/database.yml"
+      expect_fail leaf "$app" "$lang" test
+      grep -q "rails (db:test:prepare)" "${LAST_LOG}" || die "$lang tested an app with a database without preparing it"
+      rm "$app/config/database.yml"
       ;;
   esac
 
@@ -544,6 +552,13 @@ EOF
       expect_fail leaf "$app" "$lang" ci --force
       grep -q "step 'test' printed a warning" "${LAST_LOG}" || die "$lang passed a step that printed a warning"
       mv "$WORK/spec.keep" "$spec"
+      cp "$app/package.json" "$WORK/package.warn"
+      for warning in "npm warn planted" "Warning: planted"; do
+        (cd "$app" && npm pkg set "scripts.build=echo $warning")
+        expect_fail leaf "$app" "$lang" ci --force
+        grep -q "step 'build' printed a warning" "${LAST_LOG}" || die "$lang passed a build that printed: $warning"
+      done
+      mv "$WORK/package.warn" "$app/package.json"
       ;;
   esac
   case "$lang" in
@@ -554,6 +569,7 @@ EOF
   esac
 
   sourceless "$app" "$lang"
+  changed_scope "$app" "$lang"
   coverage_gap "$app" "$lang"
 
   if [ "$lang" = "ios" ]; then
@@ -597,11 +613,13 @@ EOF
     printf '%s\n' '# frozen_string_literal: true' '' 'module Unused' '  def self.call' '    unused = 1' '    2' '  end' 'end' \
       >"$app/app/models/unused.rb"
     printf '# Notes\n\n#Heading\n' >"$app/NOTES.md"
+    brakeman_plant "$app"
     expect_fail leaf "$app" "$lang" ci --force
     grep -q "step 'lint' failed" "${LAST_LOG}" || die "rails lint passed a RuboCop finding"
     grep -q "Lint/UselessAssignment" "${LAST_LOG}" || die "rails lint did not show the RuboCop finding"
-    grep -q "✗ markdownlint" "${LAST_LOG}" || die "rails lint stopped at its first failing tool"
-    rm "$app/app/models/unused.rb" "$app/NOTES.md"
+    grep -q "Command Injection" "${LAST_LOG}" || die "rails lint stopped at its first failing tool"
+    ! grep -q "NOTES.md" "${LAST_LOG}" || die "rails lint linted Markdown the guards lint"
+    rm -r "$app/app/models/unused.rb" "$app/NOTES.md" "$app/app/controllers"
   fi
 }
 
@@ -631,6 +649,17 @@ section_audit() {
   grep -q "npm audit found a moderate or worse advisory" "${LAST_LOG}" ||
     die "$lang let a package with an advisory through"
   grep -qE "^lodash +" "${LAST_LOG}" || die "$lang audit failed without naming lodash's advisory"
+}
+
+section_spaced() {
+  local repo app
+  mkdir -p "$WORK/with space"
+  cp -cR "$TEMPLATE" "$WORK/with space/" 2>/dev/null || cp -R "$TEMPLATE" "$WORK/with space/"
+  repo="$WORK/with space/${TEMPLATE##*/}"
+  KEEP="$repo"
+  app="$repo/$lang"
+  expect_ok leaf "$app" "$lang" test
+  grep -qxF "bin/test: coverage bar held on 1 source(s)" "${LAST_LOG}" || die "$lang test failed in a folder with a space"
 }
 
 section_root() {

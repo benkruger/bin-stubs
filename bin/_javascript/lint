@@ -82,11 +82,10 @@ is_bash_script() {
 }
 
 biome_files=()
-md_files=()
 ungated=0
 for path in "${files[@]}"; do
   case "$path" in
-    *.md) md_files+=("$path") ;;
+    *.md) ;;
     *.js | *.mjs | *.cjs | *.jsx | *.json | *.jsonc | *.css) biome_files+=("$path") ;;
     *)
       if [ -L "$path" ] || is_ungated "$path" || is_bash_script "$path"; then
@@ -97,7 +96,7 @@ for path in "${files[@]}"; do
       ;;
   esac
 done
-logs="$(mktemp -d)"
+logs="$(mktemp -d "${TMPDIR:-/tmp}/bin-javascript-lint.XXXXXX")"
 trap 'rm -rf "$logs"' EXIT
 pids=()
 
@@ -110,9 +109,6 @@ in_background() {
 if [ "${#biome_files[@]}" -gt 0 ]; then
   in_background "$root/node_modules/.bin/biome" check --error-on-warnings "${biome_files[@]}"
 fi
-if [ "${#md_files[@]}" -gt 0 ]; then
-  in_background markdownlint-cli2 "${md_files[@]}"
-fi
 
 status="$ungated"
 for i in ${pids[@]+"${!pids[@]}"}; do
@@ -120,5 +116,4 @@ for i in ${pids[@]+"${!pids[@]}"}; do
   cat "$logs/$i.out"
   cat "$logs/$i.err" >&2
 done
-[ "${#md_files[@]}" -gt 0 ] || echo "  ✓ markdownlint (no dirty Markdown files)"
 exit "$status"

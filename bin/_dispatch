@@ -449,7 +449,7 @@ queue_one() {
   BG_MT+=("$mt_before")
 }
 
-slots="$(mktemp -d)"
+slots="$(mktemp -d "${TMPDIR:-/tmp}/bin-dispatch.XXXXXX")"
 mkfifo "$slots/fifo"
 exec 3<>"$slots/fifo"
 rm -rf "$slots"

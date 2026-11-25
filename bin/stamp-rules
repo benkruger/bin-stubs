@@ -3,7 +3,7 @@ set -euo pipefail
 
 stamp_one() {
   f="$1"
-  tmp="$(mktemp)"
+  tmp="$(mktemp "${TMPDIR:-/tmp}/bin-stamp-rules.XXXXXX")"
   perl -0777 -pe 's/\n<!-- audited: [0-9a-f]{12} -->\s*\z/\n/; s/\s*\z/\n/' \
     "$f" >"$tmp"
   h="$(shasum -a 256 "$tmp" | cut -c1-12)"

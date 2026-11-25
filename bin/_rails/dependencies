@@ -9,7 +9,7 @@ bundle update --all
 echo "  → rails (bundle check)"
 bundle check
 
-logs="$(mktemp -d)"
+logs="$(mktemp -d "${TMPDIR:-/tmp}/bin-rails-dependencies.XXXXXX")"
 trap 'rm -rf "$logs"' EXIT
 bundle exec bundler-audit check --update >"$logs/audit" 2>&1 &
 audit=$!

@@ -21,7 +21,7 @@ if [ -z "${CI:-}" ]; then
 fi
 packages_check "$PWD" || exit 1
 
-covdir="$(mktemp -d)"
+covdir="$(mktemp -d "${TMPDIR:-/tmp}/bin-typescript-test.XXXXXX")"
 trap 'rm -rf "$covdir"' EXIT
 
 # shellcheck source=lib/sources.sh

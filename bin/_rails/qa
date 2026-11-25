@@ -8,7 +8,7 @@ cd "$root"
 . "$here/lib/toolchain.sh"
 packages_check "$root" || exit 1
 
-log="$(mktemp)"
+log="$(mktemp "${TMPDIR:-/tmp}/bin-rails-qa.XXXXXX")"
 trap 'rm -f "$log"' EXIT
 rc=0
 bundle exec rails test:system "$@" 2>&1 | tee "$log" || rc=$?

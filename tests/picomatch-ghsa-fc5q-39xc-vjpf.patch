@@ -1,12 +1,9 @@
 --- a/lib/parse.js
 +++ b/lib/parse.js
-@@ -343,6 +343,13 @@ const analyzeRepeatedExtglob = (body, options) => {
+@@ -343,6 +343,10 @@ const analyzeRepeatedExtglob = (body, options) => {
        : { risky: true };
    }
 
-+  // GHSA-fc5q-39xc-vjpf: a wildcard or negation inside a repeated extglob,
-+  // such as `+(*a)`, nests an unbounded quantifier inside the repeat and
-+  // backtracks exponentially. Such a repeat is risky, so it matches literally.
 +  if (branches.some(branch => /(?:^|[^\\])(?:\*|!\()/.test(branch))) {
 +    return { risky: true };
 +  }

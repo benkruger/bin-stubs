@@ -1,7 +1,6 @@
 # JavaScript Standards
 
-The JavaScript app is held by Biome and its own test script under c8 at full
-strength.
+Biome and the app's own tests under c8 hold the JavaScript app at full strength.
 
 ## The Rule
 
@@ -20,9 +19,9 @@ strength.
 - `bin/lint` skips `node_modules/` and `.flow-states/` at any depth, a top-level
   `dist/` and the apps inside a root app; Biome formats and lints every other
   `.js`, `.mjs`, `.cjs`, `.jsx`, `.json`, `.jsonc` and `.css` file with zero
-  warnings, `biome.json` keeping every rule on (`no-lint-exceptions.md`); it
-  runs PATH's markdownlint on Markdown and fails any other file but a symlink or
-  bash script unless `UNGATED_NAMES` or exact paths in `UNGATED_PATHS` name it.
+  warnings on the recommended or stricter rules `no-lint-exceptions.md` allows;
+  it leaves Markdown and bash scripts to `tests/guards` and fails any other
+  file but a symlink unless `UNGATED_NAMES` or `UNGATED_PATHS` names it.
 - `bin/build` runs the package's `build` script, if any, then `node --check`
   on every `.js`, `.mjs` and `.cjs` file, bar those of the apps inside a
   root app, and fails when either fails.
@@ -38,4 +37,4 @@ strength.
 - `bin/qa`, outside `bin/ci`, installs Chromium and runs `playwright test`;
   a failed test, or output matching those same warnings, fails it.
 - Trigger: any change to a JavaScript `bin/` script.
-<!-- audited: f5b65bec1841 -->
+<!-- audited: a005ac0129ba -->

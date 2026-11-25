@@ -35,7 +35,7 @@ fi
 
 quietly() {
   local log rc=0
-  log="$(mktemp)"
+  log="$(mktemp "${TMPDIR:-/tmp}/bin-rails-changed.XXXXXX")"
   "$@" >"$log" 2>&1 || rc=$?
   if [ "$rc" -ne 0 ]; then
     cat "$log" >&2
@@ -67,11 +67,9 @@ fi
 "$HERE/lint" "${files[@]}"
 
 tests=()
-dirty_sources=()
 missing_mirror=()
 for path in "${files[@]}"; do
   if is_source "$path"; then
-    dirty_sources+=("$path")
     mirror="$(test_for_source "$path")"
     if [ ! -f "$mirror" ]; then
       missing_mirror+=("$path → $mirror")
@@ -96,13 +94,5 @@ if [ "${#tests[@]}" -eq 0 ]; then
   exit 0
 fi
 
-list="$(mktemp)"
-trap 'rm -f "$list"' EXIT
-if [ "${#dirty_sources[@]}" -gt 0 ]; then
-  printf '%s\n' "${dirty_sources[@]}" >"$list"
-else
-  : >"$list"
-fi
-export COVERAGE_DIRTY_FILES="$list"
 quietly "$HERE/test" "${tests[@]}"
 exit 0
