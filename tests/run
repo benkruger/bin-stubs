@@ -21,6 +21,17 @@ LANGUAGES=(typescript javascript python rails rust ios shell)
 SHARED=(bin starter tests/lib.sh tests/lib tests/run tests/picomatch-ghsa-fc5q-39xc-vjpf.patch)
 PASSES="$REPO/.flow-states/$(git -C "$REPO" rev-parse --abbrev-ref HEAD)/tests"
 
+tool_versions() {
+  local probe cmd=()
+  for probe in "node --version" "npm --version" "uv --version" "uv python find" "ruby --version" "bundle --version" \
+    "rustc --version" "cargo --version" "swift --version" "xcodebuild -version" "shellcheck --version" \
+    "shfmt --version" "jq --version"; do
+    read -r -a cmd <<<"$probe"
+    printf '%s: %s\n' "$probe" "$("${cmd[@]}" 2>&1 || echo missing)"
+  done
+  printf 'markdownlint-cli2: %s\n' "$(readlink -f "$(command -v markdownlint-cli2)" 2>/dev/null || echo missing)"
+}
+
 inputs_hash() {
   local path sum
   local files=() digest=(shasum -a 256)
@@ -31,6 +42,7 @@ inputs_hash() {
   sum="$({
     printf '%s\n' "${files[@]}"
     git -C "$REPO" hash-object -- "${files[@]}"
+    printf '%s\n' "$TOOLS"
   } | "${digest[@]}")" || return
   printf '%s\n' "${sum%% *}"
 }
@@ -75,6 +87,7 @@ run_part() {
   esac
 }
 
-LOGS="$(mktemp -d)"
-trap 'stop_spin; rm -rf "$LOGS"' EXIT
-run_all "$LOGS" run_part guards core "${LANGUAGES[@]}"
+TOOLS="$(tool_versions)"
+WORK="$(mktemp -d "${TMPDIR:-/tmp}/bin-stubs-run.XXXXXX")"
+trap 'stop_spin; rm -rf "$WORK"' EXIT
+run_all "$WORK/logs" run_part guards core "${LANGUAGES[@]}"

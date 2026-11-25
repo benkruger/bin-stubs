@@ -56,8 +56,8 @@ fi
 label="$(basename "$root")"
 echo ""
 echo "═══ $label ════════════════════════════════════"
-log="$(mktemp)"
-trap 'rm -f "$log"' EXIT
+log="$(mktemp "${TMPDIR:-/tmp}/bin-ci.XXXXXX")"
+trap 'rm -f "$log" "$log".*' EXIT
 
 if ! packages_check "$root"; then
   echo "bin/ci: gate RED ($branch) — packages are not installed (above)." >&2
@@ -65,8 +65,8 @@ if ! packages_check "$root"; then
 fi
 export FLOW_CHECKED_APP="$root"
 
-audit_log="$(mktemp)"
-trap 'rm -f "$log" "$audit_log"' EXIT
+audit_log="$(mktemp "${TMPDIR:-/tmp}/bin-audit.XXXXXX")"
+trap 'rm -f "$log" "$log".* "$audit_log"' EXIT
 npm audit --audit-level=moderate >"$audit_log" 2>&1 &
 audit_pid=$!
 

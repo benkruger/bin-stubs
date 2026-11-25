@@ -360,7 +360,9 @@ BG_SENT=()
 BG_MT=()
 BG_STEPS=()
 BG_GROUP=()
-trap 'kill -TERM -- ${BG_GROUP[@]+"${BG_GROUP[@]}"} 2>/dev/null || true; exit 130' INT TERM
+trap 'kill -TERM -- ${BG_GROUP[@]+"${BG_GROUP[@]}"} 2>/dev/null || true
+  for log in ${BG_LOG[@]+"${BG_LOG[@]}"}; do rm -f "$log" "$log.rc"; done
+  exit 130' INT TERM
 
 if [ "$run_suite" -eq 1 ]; then
   run_one "suite" "$REPO_ROOT" "$REPO_ROOT/$suite_leaf" "root-suite-sentinel"
@@ -426,7 +428,7 @@ queue_one() {
       mt_before="$(mtime_of "$sentinel")"
     fi
   fi
-  log="$(mktemp)"
+  log="$(mktemp "${TMPDIR:-/tmp}/bin-dispatch.XXXXXX")"
   BG_STEPS+=("$(steps_snapshot "$folder")")
   set -m
   (

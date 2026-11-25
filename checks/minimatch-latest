@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+set -euo pipefail
+pin="the TypeScript and JavaScript test apps in tests/run override minimatch to latest, because @eslint/config-array, @typescript-eslint/typescript-estree and c8's test-exclude pull minimatch versions npm audit fails for GHSA-g3hv-75wg-m249"
+revisit=2026-12-20
+if [[ "$(date +%F)" < "$revisit" ]]; then
+  exit 0
+fi
+echo "checks/minimatch-latest: revisit date $revisit reached. Pin: $pin." >&2
+echo "  If npm audit passes both test apps without it, delete the minimatch" >&2
+echo "  overrides in tests/lib/seeds.sh and this check. Otherwise set a new date." >&2
+exit 1

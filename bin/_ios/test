@@ -60,7 +60,9 @@ PY
 xcode_test() {
   local destination bundle
   destination="$(xcode_destination)"
-  bundle="$(mktemp -d)/Result.xcresult"
+  results="$(mktemp -d "${TMPDIR:-/tmp}/bin-xcresult.XXXXXX")"
+  trap 'rm -rf "$results"' EXIT
+  bundle="$results/Result.xcresult"
   xcodebuild test "${XCODE_ARGS[@]}" -disableAutomaticPackageResolution -destination "$destination" \
     -derivedDataPath "$root/.build/xcode-test" -enableCodeCoverage YES -resultBundlePath "$bundle" "$@"
   xcrun xccov view --report --json "$bundle" >"$bundle.json"

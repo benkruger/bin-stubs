@@ -690,7 +690,7 @@ coverage_gap() {
       body=$'pub fn add(a: i32, b: i32) -> i32 {\n    a + b\n}\n\npub fn untested() -> i32 {\n    1\n}\n\n'
       body+=$'#[cfg(test)]\nmod tests {\n    use super::add;\n\n    #[test]\n    fn adds() {\n'
       body+=$'        assert_eq!(add(1, 2), 3);\n    }\n}'
-      report='test result: ok'
+      report='src/lib\.rs( +[0-9.%-]+){6} +[0-9]+ +[1-9][0-9]* +[0-9.]+%'
       ;;
     ios)
       file=Sources/App/Add.swift

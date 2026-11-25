@@ -24,7 +24,7 @@ start_step() {
     STEP_LOGS+=("")
     return 0
   fi
-  step_log="$(mktemp)"
+  step_log="$STEPS_LOG.$name"
   "$@" >"$step_log" 2>&1 &
   STEP_PIDS+=("$!")
   STEP_LOGS+=("$step_log")

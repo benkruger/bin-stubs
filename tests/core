@@ -13,6 +13,8 @@ REPO="$(cd "$HERE/.." && pwd)"
 # shellcheck source=lib/guards.sh
 . "$HERE/lib/guards.sh"
 start_work
+export UV_CACHE_DIR="${UV_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/uv}"
+export XDG_CACHE_HOME="$WORK/cache"
 
 settings_findings() {
   local root="$1"
@@ -661,6 +663,7 @@ commit() {
   done
   [ "$#" -eq 0 ] || shift
   : >"$CLAUDE_LOG"
+  rm -f "$CLAUDE_LOG.prompt" "$CLAUDE_LOG.recheck"
   run_log env PATH="$FAKE_CLAUDE:$PATH" FAKE_CLAUDE_LOG="$CLAUDE_LOG" \
     ${vars[@]+"${vars[@]}"} "$repo/bin/commit" "$@"
 }
@@ -673,6 +676,7 @@ commit_setup() {
   fake_claude "$FAKE_CLAUDE"
   commit_base
   msg="$(mktemp /tmp/flow-commit-msg.XXXXXX)"
+  litter "$msg"
   printf '  Add notes  \n\n' >"$msg"
   finding='[{"file":".claude/rules/probe.md","requirement":"r","offending":"BAD","fix":"say GOOD"}]'
 }
@@ -682,6 +686,7 @@ test_commit() {
   local repo origin rule msg empty finding sha before
   commit_setup
   empty="$(mktemp /tmp/flow-commit-msg.XXXXXX)"
+  litter "$empty"
   printf '  \n' >"$empty"
 
   commit_case
@@ -755,7 +760,6 @@ test_commit() {
   assert_rc 1 "a commit with the wrong code"
   [ ! -f "$marker" ] || die "a refused commit left its code for another try"
   assert_eq "$(git -C "$repo" rev-parse HEAD)" "$before" "a refused commit landed"
-  rm -f "$msg" "$empty"
 }
 
 test_commit_review() {
@@ -799,7 +803,6 @@ test_commit_review() {
   assert_rc 0 "a nested rule review"
   grep -qx "### .claude/rules/guard-tests.md" "$CLAUDE_LOG.prompt" ||
     die "the review of a nested rule left out the root rules"
-  rm -f "$msg"
 }
 
 test_commit_fix() {
@@ -836,7 +839,6 @@ test_commit_fix() {
   commit FAKE_AUDIT="$finding" FAKE_FIX=grow -- main "$msg"
   assert_rc 0 "an over-bound fix"
   [ "$(grep -c -- "- more" "$rule" || true)" -eq 0 ] || die "an over-bound fix was kept"
-  rm -f "$msg"
 }
 
 test_commit_rounds() {
@@ -874,7 +876,6 @@ test_commit_rounds() {
   printf '# Probe\n\nA BAD rule.\n' >"$rule"
   commit FAKE_AUDIT=none -- main "$msg"
   assert_eq "$(commit_json .detail)" "rule audit: the auditor session never submitted a verdict" "no verdict"
-  rm -f "$msg"
 }
 
 test_commit_stops() {
@@ -910,13 +911,12 @@ test_commit_stops() {
   commit -- main "$msg"
   [ "$(tail -n 1 "${LAST_LOG}" | jq -r .detail)" = "rule audit: could not read the working tree's rule edits" ] ||
     missed+=" [unreadable tree]"
-  rm -f "$msg"
   [ -z "$missed" ] || die "a stopped review did not say why:$missed"
 }
 
 test_commit_gate() {
   say "commit bounds the gate, pushes and commits from a worktree"
-  local repo origin rule msg finding before pidfile tries=0 hurry
+  local repo origin rule msg finding before pidfile tries=0 hurry patient
   commit_setup
 
   commit_case
@@ -924,7 +924,18 @@ test_commit_gate() {
   mkdir -p "$repo/checks"
   printf '%s\n' '#!/usr/bin/env bash' 'set -euo pipefail' "echo \"\$\$\" >\"$pidfile\"" 'exec sleep 30' >"$repo/checks/slow"
   chmod +x "$repo/checks/slow"
-  commit FLOW_CI_TIMEOUT_MS=1000 -- main "$msg"
+  patient="$WORK/patient"
+  mkdir -p "$patient"
+  cat >"$patient/sleep" <<EOF
+#!/usr/bin/env bash
+set -euo pipefail
+if [ "\$1" = 1 ]; then
+  until [ -s "$pidfile" ]; do /bin/sleep 0.05; done
+fi
+exec /bin/sleep "\$@"
+EOF
+  chmod +x "$patient/sleep"
+  commit FLOW_CI_TIMEOUT_MS=1000 PATH="$patient:$FAKE_CLAUDE:$PATH" -- main "$msg"
   assert_eq "$(commit_json .detail)" "gate timed out after 1s" "a slow bin/ci"
   [ -s "$pidfile" ] || die "the slow check never started"
   while ps -p "$(cat "$pidfile")" >/dev/null; do
@@ -973,7 +984,6 @@ EOF
   assert_rc 0 "a worktree commit"
   assert_eq "$(git -C "$origin" rev-parse feat)" "$(commit_json .sha)" "the worktree push"
   assert_eq "$(git -C "$repo" rev-parse HEAD)" "$before" "the worktree commit landed in the root"
-  rm -f "$msg"
 }
 
 copies_findings() {
@@ -1065,6 +1075,18 @@ test_parts() {
   : >"$log"
   expect_ok "$repo/tests/run"
   assert_eq "$(sort "$log" | tr '\n' ' ')" "guards rust " "a rerun after one part failed"
+  mkdir -p "$WORK/tool-stub"
+  printf '%s\n' '#!/usr/bin/env bash' "cat \"$run.shfmt\"" >"$WORK/tool-stub/shfmt"
+  chmod +x "$WORK/tool-stub/shfmt"
+  echo "shfmt 1" >"$run.shfmt"
+  expect_ok env PATH="$WORK/tool-stub:$PATH" "$repo/tests/run"
+  : >"$log"
+  expect_ok env PATH="$WORK/tool-stub:$PATH" "$repo/tests/run"
+  assert_eq "$(sort "$log" | tr '\n' ' ')" "guards " "an unchanged toolchain"
+  echo "shfmt 2" >"$run.shfmt"
+  : >"$log"
+  expect_ok env PATH="$WORK/tool-stub:$PATH" "$repo/tests/run"
+  assert_eq "$(sort "$log" | tr '\n' ' ')" "core guards ios javascript python rails rust shell typescript " "a shfmt update"
   printf '#!/bin/sh\necho posix\n' >"$repo/bin/posix"
   expect_fail "$repo/tests/run"
   grep -qF "bin/posix: shebang is #!/bin/sh" "${LAST_LOG}" || die "tests/run passed a kit script that is not bash"
@@ -1106,12 +1128,13 @@ test_checked_once() {
   say "a step skips the toolchain and package checks its bin/ci or bin/changed ran"
   local lang app="$WORK/no-app"
   mkdir -p "$app"
+  printf '%s\n' '.package(url: "https://example.com/dep.git", from: "1.0.0")' >"$app/Package.swift"
   for lang in typescript javascript python rails rust ios; do
     (
       # shellcheck source=/dev/null
       . "$REPO/bin/_$lang/lib/toolchain.sh"
-      FLOW_CHECKED_APP="$app" PATH=/nonexistent toolchain_check "$app"
-      FLOW_CHECKED_APP="$app" PATH=/nonexistent packages_check "$app"
+      FLOW_CHECKED_APP="$app" PATH=/nonexistent toolchain_check "$app" &&
+        FLOW_CHECKED_APP="$app" PATH=/nonexistent packages_check "$app"
     ) || die "$lang ran a check its bin/ci already ran"
     if (
       # shellcheck source=/dev/null
@@ -1119,6 +1142,13 @@ test_checked_once() {
       toolchain_check "$app"
     ) 2>/dev/null; then
       die "$lang skipped a toolchain check nothing ran"
+    fi
+    if (
+      # shellcheck source=/dev/null
+      . "$REPO/bin/_$lang/lib/toolchain.sh"
+      packages_check "$app"
+    ) 2>/dev/null; then
+      die "$lang skipped a package check nothing ran"
     fi
     grep -qxF "export FLOW_CHECKED_APP=\"\$root\"" "$REPO/bin/_$lang/ci" || die "$lang ci does not pass its checks to its steps"
     grep -qxF "export FLOW_CHECKED_APP=\"\$PWD\"" "$REPO/bin/_$lang/changed" ||
@@ -1202,6 +1232,7 @@ test_start() {
 minted() {
   local file
   file="$(mktemp /tmp/flow-commit-msg.XXXXXX)"
+  litter "$file"
   printf '%s\n' "$1" >"$file"
   printf '%s\n' "$file"
 }
@@ -1380,20 +1411,6 @@ test_complete() {
   return 0
 }
 
-test_dependencies() {
-  say "rust dependencies"
-  local repo
-  repo="$(new_repo)"
-  KEEP="$repo"
-  copy_dir "$REPO/bin" "$repo/bin"
-  mkdir -p "$repo/rust"
-  seed_rust "$repo/rust"
-  expect_ok "$repo/bin/dependencies"
-  local sum
-  sum="$(summary)"
-  assert_eq "$(row_of rust "$sum")" "PASS" "dependencies"
-}
-
 run_test() {
   WORK="$WORK/$1"
   mkdir -p "$WORK"
@@ -1404,4 +1421,4 @@ run_all "$WORK/logs" run_test test_settings test_scan test_root_format test_open
   test_hooks test_starter test_bare_guards test_guards_scans test_commit test_commit_review test_commit_fix test_commit_rounds test_commit_stops test_commit_gate test_copies_match test_changed_empty test_parts \
   test_dispatch test_dispatch_select test_dispatch_paths test_suite_seal test_unborn \
   test_shellcheck_cache test_checked_once test_steps test_jobs test_interrupt test_start test_merge test_cleanup test_complete test_ci_time test_root_app test_root_js \
-  test_dependencies
+  test_app_language

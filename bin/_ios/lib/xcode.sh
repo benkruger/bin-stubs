@@ -20,7 +20,7 @@ xcode_destination() {
     printf '%s\n' "$IOS_DESTINATION"
     return 0
   fi
-  destination="$(xcodebuild -showdestinations "${XCODE_ARGS[@]}" -disableAutomaticPackageResolution 2>/dev/null |
+  destination="$(xcodebuild -showdestinations "${XCODE_ARGS[@]}" -disableAutomaticPackageResolution -derivedDataPath "$PWD/.build/xcode-build" 2>/dev/null |
     awk '/Ineligible destinations/ { exit }
       match($0, /\{ platform:(iOS Simulator|macOS), (arch:[^,]+, )?id:[0-9A-F-]+,/) {
         found = substr($0, RSTART, RLENGTH)
@@ -39,7 +39,8 @@ xcode_destination() {
 }
 
 xcode_loose_targets() {
-  xcodebuild -showBuildSettings -json "${XCODE_ARGS[@]}" -disableAutomaticPackageResolution build-for-testing |
+  xcodebuild -showBuildSettings -json "${XCODE_ARGS[@]}" -disableAutomaticPackageResolution \
+    -derivedDataPath "$PWD/.build/xcode-build" build-for-testing |
     jq -r '.[] | select(.buildSettings.PROJECT_FILE_PATH | test("/(Pods|\\.build|SourcePackages)/") | not)
       | select(.buildSettings.SWIFT_TREAT_WARNINGS_AS_ERRORS != "YES" or .buildSettings.GCC_TREAT_WARNINGS_AS_ERRORS != "YES")
       | .target'

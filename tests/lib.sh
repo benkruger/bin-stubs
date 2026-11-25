@@ -87,10 +87,20 @@ sentinel_file() {
   printf '%s\n' "$1/.flow-states/main/ci-sentinel"
 }
 
+litter() { printf '%s\n' "$1" >>"$WORK/litter"; }
+
+sweep_work() {
+  local path
+  while IFS= read -r path; do
+    rm -f "$path"
+  done < <(find "$WORK" -name litter -type f -exec cat {} + 2>/dev/null)
+  rm -rf "$WORK"
+}
+
 start_work() {
   WORK="$(mktemp -d "${TMPDIR:-/tmp}/bin-stubs-tests.XXXXXX")"
   export NODE_COMPILE_CACHE="$WORK/node-compile-cache"
-  trap 'stop_spin; rm -rf "$WORK"' EXIT
+  trap 'stop_spin; sweep_work' EXIT
   set -o errtrace
   trap 'echo "FAIL: ${SAY:-suite}: line $LINENO exited $?: $BASH_COMMAND" >&2' ERR
 }

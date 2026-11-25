@@ -393,12 +393,12 @@ EOF
       rm -r "$app/App"
       printf 'public func warned() -> Int {\n  var unused = 1\n  return 2\n}\n' >"$app/Sources/App/Warned.swift"
       expect_fail leaf "$app" "$lang" build
-      grep -q "was never used" "${LAST_LOG}" || die "$lang let a compiler warning through"
+      grep -qE "Warned\.swift:[0-9]+:[0-9]+: .*initialization of variable 'unused' was never used" "${LAST_LOG}" || die "$lang let a compiler warning through"
       rm "$app/Sources/App/Warned.swift"
       printf '%s\n' 'import Testing' '' '@Test func warned() {' '  var unused = 1' '  #expect(true)' '}' \
         >"$app/Tests/AppTests/WarnedTests.swift"
       expect_fail leaf "$app" "$lang" test
-      grep -q "was never used" "${LAST_LOG}" || die "$lang let a compiler warning in a test through"
+      grep -qE "WarnedTests\.swift:[0-9]+:[0-9]+: .*initialization of variable 'unused' was never used" "${LAST_LOG}" || die "$lang let a compiler warning in a test through"
       rm "$app/Tests/AppTests/WarnedTests.swift"
       printf 'public func loadTests() -> Int {\n  1\n}\n' >"$app/Sources/App/LoadTests.swift"
       expect_fail leaf "$app" "$lang" test
@@ -588,8 +588,11 @@ section_audit() {
     grep -q "Command Injection" "${LAST_LOG}" || die "rails bin/dependencies let a Brakeman warning through"
     rm -r "$app/app/controllers"
     echo "gem 'rake', '12.3.2'" >>"$app/Gemfile"
+    : >"$WORK/advisory-db.marker"
     expect_fail leaf "$app" "$lang" dependencies
     grep -q "Name: rake" "${LAST_LOG}" || die "rails bin/dependencies let a gem with an advisory through"
+    [ "${BUNDLER_AUDIT_DB:-}/.git/FETCH_HEAD" -nt "$WORK/advisory-db.marker" ] ||
+      die "rails bin/dependencies updated an advisory database other sections share"
     return 0
   fi
   committed_app
@@ -601,10 +604,20 @@ section_audit() {
   expect_fail leaf "$app" "$lang" ci --force
   grep -q "npm audit found a moderate or worse advisory" "${LAST_LOG}" ||
     die "$lang let a package with an advisory through"
+  grep -qE "^lodash +" "${LAST_LOG}" || die "$lang audit failed without naming lodash's advisory"
 }
 
 section_xcode() {
-  local repo app
+  local repo app leaked bare stubs="$WORK/xcodebuild-stub" calls="$WORK/xcodebuild-calls" real
+  real="$(command -v xcodebuild)"
+  mkdir -p "$stubs"
+  cat >"$stubs/xcodebuild" <<EOF
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >>"$calls"
+exec "$real" "\$@"
+EOF
+  chmod +x "$stubs/xcodebuild"
+  PATH="$stubs:$PATH"
   repo="$(new_repo)"
   KEEP="$repo"
   app="$repo/$lang"
@@ -616,12 +629,15 @@ section_xcode() {
   expect_ok leaf "$app" "$lang" format --all
   git -C "$repo" add -A
   git -C "$repo" commit -q -m "xcode app"
-  expect_ok leaf "$app" "$lang" ci
+  mkdir -p "$WORK/xcode-tmp"
+  TMPDIR="$WORK/xcode-tmp" expect_ok leaf "$app" "$lang" ci
+  leaked="$(find "$WORK/xcode-tmp" -mindepth 1 -maxdepth 1 -name 'bin-*')"
+  [ -z "$leaked" ] || die "ios ci left temp files: $(printf '%s' "$leaked" | tr '\n' ' ')"
   IOS_DESTINATION="platform=macOS,arch=$(uname -m)"
   export IOS_DESTINATION
   printf 'public func warned() -> Int {\n  var unused = 1\n  return 2\n}\n' >"$app/Sources/App/Warned.swift"
   expect_fail leaf "$app" "$lang" build
-  grep -q "was never used" "${LAST_LOG}" || die "ios let a compiler warning through an Xcode project build"
+  grep -qE "Warned\.swift:[0-9]+:[0-9]+: .*initialization of variable 'unused' was never used" "${LAST_LOG}" || die "ios let a compiler warning through an Xcode project build"
   rm "$app/Sources/App/Warned.swift"
   printf 'public func untested() -> Int {\n  1\n}\n' >"$app/Sources/App/Untested.swift"
   expect_fail leaf "$app" "$lang" test
@@ -631,7 +647,7 @@ section_xcode() {
   printf '%s\n' 'import Testing' '' '@Test func warned() {' '  var unused = 1' '  #expect(true)' '}' \
     >"$app/Tests/AppTests/WarnedTests.swift"
   expect_fail leaf "$app" "$lang" test
-  grep -q "was never used" "${LAST_LOG}" || die "ios let a compiler warning in an Xcode project's test through"
+  grep -qE "WarnedTests\.swift:[0-9]+:[0-9]+: .*initialization of variable 'unused' was never used" "${LAST_LOG}" || die "ios let a compiler warning in an Xcode project's test through"
   rm "$app/Tests/AppTests/WarnedTests.swift"
   printf '\n' >>"$WORK/Dep/Package.swift"
   git -C "$WORK/Dep" -c user.email=dep@example.com -c user.name=dep commit -q -am "dep 1.1.0"
@@ -650,11 +666,20 @@ section_xcode() {
   expect_fail leaf "$app" "$lang" build
   grep -q "bin/build: AppTests does not set SWIFT_TREAT_WARNINGS_AS_ERRORS" "${LAST_LOG}" ||
     die "ios let an Xcode project build without treating warnings as errors"
+  bare="$(grep -v -e '-derivedDataPath' -e '^-version$' "$calls" || true)"
+  [ -z "$bare" ] || die "ios ran xcodebuild with no build folder: $bare"
+}
+
+own_advisory_db() {
+  local shared="$HOME/.local/share/ruby-advisory-db"
+  export BUNDLER_AUDIT_DB="$WORK/ruby-advisory-db"
+  [ ! -d "$shared" ] || copy_dir "$shared" "$BUNDLER_AUDIT_DB"
 }
 
 run_section() {
   WORK="$WORK/$1"
   mkdir -p "$WORK"
+  [ "$lang" != rails ] || own_advisory_db
   "section_$1"
 }
 

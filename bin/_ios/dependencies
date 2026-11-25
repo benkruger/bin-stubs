@@ -8,6 +8,6 @@ cd "$root"
 if xcode_container; then
   find "${XCODE_ARGS[1]}" -path '*/xcshareddata/swiftpm/Package.resolved' -delete
   rm -f "$root/.build/xcode-packages/workspace-state.json"
-  exec xcodebuild -resolvePackageDependencies "${XCODE_ARGS[@]}"
+  exec xcodebuild -resolvePackageDependencies "${XCODE_ARGS[@]}" -derivedDataPath "$root/.build/xcode-build"
 fi
 swift package update

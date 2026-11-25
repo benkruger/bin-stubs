@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+set -euo pipefail
+pin="the JavaScript test app in tests/run overrides glob to latest, because c8's test-exclude pulls a glob version npm audit fails for GHSA-3g3m-2fjr-6pw4"
+revisit=2026-12-20
+if [[ "$(date +%F)" < "$revisit" ]]; then
+  exit 0
+fi
+echo "checks/glob-latest: revisit date $revisit reached. Pin: $pin." >&2
+echo "  If npm audit passes the JavaScript test app without it, delete the glob" >&2
+echo "  override in tests/lib/seeds.sh and this check. Otherwise set a new date." >&2
+exit 1

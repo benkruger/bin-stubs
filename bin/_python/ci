@@ -58,8 +58,8 @@ fi
 label="$(basename "$root")"
 echo ""
 echo "═══ $label ════════════════════════════════════"
-log="$(mktemp)"
-trap 'rm -f "$log"' EXIT
+log="$(mktemp "${TMPDIR:-/tmp}/bin-ci.XXXXXX")"
+trap 'rm -f "$log" "$log".*' EXIT
 
 if ! packages_check "$root"; then
   echo "bin/ci: gate RED ($branch) — packages are not installed (above)." >&2

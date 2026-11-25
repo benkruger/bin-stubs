@@ -43,8 +43,8 @@ fi
 
 echo ""
 echo "═══ $(basename "$root") ════════════════════════════════════"
-log="$(mktemp)"
-trap 'rm -f "$log"' EXIT
+log="$(mktemp "${TMPDIR:-/tmp}/bin-ci.XXXXXX")"
+trap 'rm -f "$log" "$log".*' EXIT
 
 # shellcheck source=../lib/steps.sh
 . "$here/../lib/steps.sh"

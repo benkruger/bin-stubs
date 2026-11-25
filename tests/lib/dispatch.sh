@@ -13,7 +13,7 @@ dispatch_repo() {
 
 test_dispatch() {
   say "dispatcher"
-  local repo sent_rails
+  local repo sent_python
   dispatch_repo
   expect_ok "$repo/bin/ci"
   local sum
@@ -27,24 +27,20 @@ test_dispatch() {
   sum="$(summary)"
   assert_eq "$(row_of python "$sum")" "SKIP" "second python"
   assert_eq "$(row_of shell "$sum")" "SKIP" "second shell"
-  if [ "$(row_of suite "$sum")" = "PASS" ]; then
-    expect_ok "$repo/bin/ci"
-    sum="$(summary)"
-  fi
-  assert_eq "$(row_of suite "$sum")" "SKIP" "suite settled"
+  assert_eq "$(row_of suite "$sum")" "SKIP" "second suite"
   printf 'true\n' >>"$repo/shell/add"
   expect_ok "$repo/bin/ci"
   sum="$(summary)"
   assert_eq "$(row_of shell "$sum")" "PASS" "edited shell"
   assert_eq "$(row_of python "$sum")" "SKIP" "python untouched"
-  sent_rails="$(sentinel_file "$repo/python")"
-  local rails_hash
-  rails_hash="$(cat "$sent_rails")"
+  sent_python="$(sentinel_file "$repo/python")"
+  local python_hash
+  python_hash="$(cat "$sent_python")"
   echo "top" >"$repo/TOP.txt"
   expect_ok "$repo/bin/ci"
   sum="$(summary)"
   assert_eq "$(row_of python "$sum")" "SKIP" "foreign file left python"
-  assert_eq "$(cat "$sent_rails")" "$rails_hash" "foreign file changed rails hash"
+  assert_eq "$(cat "$sent_python")" "$python_hash" "foreign file changed python hash"
   git -C "$repo" add -A
   git -C "$repo" commit -q -m "formatted"
   expect_ok "$repo/bin/ci"
@@ -70,10 +66,7 @@ test_dispatch_select() {
   git -C "$repo" commit -q -m "formatted"
   expect_ok "$repo/bin/ci"
   expect_ok "$repo/bin/ci"
-  if [ "$(row_of suite "$(summary)")" = "PASS" ]; then
-    expect_ok "$repo/bin/ci"
-  fi
-  assert_eq "$(row_of suite "$(summary)")" "SKIP" "suite settled"
+  assert_eq "$(row_of suite "$(summary)")" "SKIP" "second suite"
   echo "corpus" >"$repo/CLAUDE.md"
   expect_ok "$repo/bin/ci"
   sum="$(summary)"
@@ -246,6 +239,12 @@ test_jobs() {
 #!/usr/bin/env bash
 set -euo pipefail
 touch "$RUNNING/$$"
+if [ "${APP_DIR##*/}" = a ]; then
+  for _ in $(seq 1 100); do
+    [ "$(find "$RUNNING" -type f | wc -l)" -lt 2 ] || break
+    sleep 0.1
+  done
+fi
 find "$RUNNING" -type f | wc -l >>"$RUNNING.counts"
 printf '%s\n' "$*" >>"$RUNNING.args"
 sleep 0.3
@@ -254,7 +253,7 @@ EOF
   export RUNNING="$WORK/running"
   mkdir -p "$RUNNING"
   expect_ok "$repo/bin/build" --jobs 2
-  [ "$(sort -n "$RUNNING.counts" | tail -n 1 | tr -d ' ')" -le 2 ] || die "--jobs 2 ran more than 2 apps at once"
+  assert_eq "$(sort -n "$RUNNING.counts" | tail -n 1 | tr -d ' ')" 2 "the most apps --jobs 2 ran at once"
   grep -q -- "--jobs" "$RUNNING.args" && die "the dispatcher passed --jobs to an app"
   cap=$(($(getconf _NPROCESSORS_ONLN) / 2))
   [ "$cap" -ge 1 ] || cap=1
@@ -269,7 +268,8 @@ EOF
 
 test_interrupt() {
   say "Ctrl-C stops every process the dispatcher started"
-  local repo name pid rc=0 tries=0 left
+  local repo name pid rc=0 tries=0 left leaked tmp="$WORK/interrupt-tmp"
+  mkdir -p "$tmp"
   repo="$(new_repo)"
   keep "$repo"
   copy_dir "$HERE/../bin" "$repo/bin"
@@ -281,15 +281,14 @@ test_interrupt() {
   cat >"$repo/bin/_shell/build" <<'EOF'
 #!/usr/bin/env bash
 sleep 60 &
-printf '%s\n' "$$" "$!" >>"$PIDS"
+printf '%s\n' "$$" "$!" "$PPID" >>"$PIDS"
 wait
 EOF
   export PIDS="$WORK/pids"
-  perl -e 'setpgrp(0, 0); $SIG{INT} = "DEFAULT"; exec @ARGV' "$repo/bin/build" --jobs 2 >/dev/null 2>&1 &
+  TMPDIR="$tmp" perl -e 'setpgrp(0, 0); $SIG{INT} = "DEFAULT"; exec @ARGV' "$repo/bin/ci" --jobs 2 >/dev/null 2>&1 &
   pid=$!
-  until [ -f "$PIDS" ] && [ "$(wc -l <"$PIDS")" -ge 4 ]; do
-    tries=$((tries + 1))
-    [ "$tries" -le 100 ] || die "the apps never started"
+  until [ -f "$PIDS" ] && [ "$(wc -l <"$PIDS")" -ge 6 ]; do
+    kill -0 "$pid" 2>/dev/null || die "bin/ci exited before both apps started"
     sleep 0.1
   done
   kill -INT -- "-$pid"
@@ -302,6 +301,8 @@ EOF
     sleep 0.1
   done
   unset PIDS
+  leaked="$(find "$tmp" -mindepth 1)"
+  [ -z "$leaked" ] || die "Ctrl-C left temp files: $(printf '%s' "$leaked" | tr '\n' ' ')"
 }
 
 test_ci_time() {
@@ -398,5 +399,35 @@ test_root_js() {
   expect_fail "$repo/bin/_javascript/build" --all
   grep -q "src/broken.js:1" "${LAST_LOG}" || die "the root app's build skipped its own file"
   grep -q "web/broken.js" "${LAST_LOG}" && die "the root app's build checked a sibling app's file"
+  return 0
+}
+
+test_app_language() {
+  say "the dispatcher tells each app's language by its manifest"
+  local spec dir file parts files
+  # shellcheck source=../../bin/lib/apps.sh
+  . "$HERE/../bin/lib/apps.sh"
+  for spec in "rails Gemfile" "rust Cargo.toml" "ios Package.swift" "ios App.xcodeproj" "python pyproject.toml" \
+    "typescript package.json tsconfig.json" "javascript package.json" "shell test/run"; do
+    read -r -a parts <<<"$spec"
+    files=("${parts[@]:1}")
+    dir="$(mktemp -d "$WORK/app.XXXXXX")"
+    for file in "${files[@]}"; do
+      case "$file" in
+        *.xcodeproj) mkdir -p "$dir/$file" ;;
+        test/run)
+          mkdir -p "$dir/test"
+          printf '#!/usr/bin/env bash\n' >"$dir/test/run"
+          chmod +x "$dir/test/run"
+          ;;
+        *) : >"$dir/$file" ;;
+      esac
+    done
+    is_app_dir "$dir" || die "a folder with ${files[*]} is not an app"
+    assert_eq "$(app_language "$dir")" "${parts[0]}" "the language of a folder with ${files[*]}"
+  done
+  dir="$(mktemp -d "$WORK/app.XXXXXX")"
+  is_app_dir "$dir" && die "an empty folder counts as an app"
+  app_language "$dir" && die "an empty folder has a language"
   return 0
 }
