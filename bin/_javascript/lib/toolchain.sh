@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 
+export NODE_DISABLE_COMPILE_CACHE=1
+
 pm_version() {
   local name="$1" path link pkg found hops=0
   path="$(command -v "$name")" || return 1

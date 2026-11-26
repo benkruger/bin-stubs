@@ -28,14 +28,14 @@ Prettier, ESLint, `tsc` and Vitest hold the TypeScript app at full strength.
   and fails when either fails or `tsc --showConfig` does not show `strict`
   true, no `STRICT_FLAGS` entry false, no `noCheck` and every TypeScript
   file in the app, or shows `skipLibCheck` over the app's own `.d.ts` file.
-- `packageManager` in `package.json` pins npm, which installs from
-  `package-lock.json`; outside CI, every `bin/` script activates the Node
-  `.nvmrc` pins through nvm and fails unless both pins are active.
+- `packageManager` pins npm, which installs from `package-lock.json`. Every
+  `bin/` script disables Node's `TMPDIR` compile cache and, outside CI,
+  activates the `.nvmrc` Node through nvm and fails unless both pins are active.
 - `npm audit` finds no moderate or worse advisory, or `bin/ci` fails; a
   vulnerable transitive package lifts through `package.json` `overrides`.
-- A `bin/ci` step that exits 0 still fails on output matching `npm warn`,
-  `DeprecationWarning` or a line starting `Warning:` and a space, any case.
-- `bin/qa`, outside `bin/ci`, installs Chromium and runs `playwright test`;
-  a failed test, or output matching those same warnings, fails it.
+- A `bin/ci` step that exits 0, or `bin/qa`, which runs outside `bin/ci`,
+  installs Chromium and runs `playwright test`, still fails on output
+  matching `npm warn`, `DeprecationWarning` or a line starting `Warning:`
+  and a space, any case; a failed test fails `bin/qa`.
 - Trigger: any change to a TypeScript `bin/` script or `eslint.config.js`.
-<!-- audited: 4cc16c93397c -->
+<!-- audited: 4bd8bae07947 -->

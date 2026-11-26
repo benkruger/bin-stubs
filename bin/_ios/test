@@ -71,7 +71,7 @@ PY
 
 xcode_test() {
   local destination bundle
-  destination="$(xcode_destination)"
+  destination="$(xcode_destination "$root/.build/xcode-test")"
   results="$(mktemp -d "${TMPDIR:-/tmp}/bin-xcresult.XXXXXX")"
   trap 'rm -rf "$results"' EXIT
   bundle="$results/Result.xcresult"

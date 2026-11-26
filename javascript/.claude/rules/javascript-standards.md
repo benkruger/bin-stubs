@@ -26,16 +26,16 @@ Biome and the app's own tests under c8 hold the JavaScript app at full strength.
 - `bin/build` runs the package's `build` script, if any, then `node --check`
   on every `.js`, `.mjs` and `.cjs` file, bar those of the apps inside a
   root app, and fails when either fails.
-- `.nvmrc` pins Node and `packageManager` in `package.json` pins npm, which
-  installs from `package-lock.json`; outside CI, every `bin/` script
-  activates Node through nvm and fails unless both pins are active.
+- `.nvmrc` pins Node and `packageManager` pins npm, which installs from
+  `package-lock.json`. Every `bin/` script disables Node's compile cache and,
+  outside CI, activates Node through nvm and fails unless both pins are active.
 - `npm audit` finds no moderate or worse advisory, or `bin/ci` fails; a
   vulnerable transitive package lifts through `package.json` `overrides`.
 - `bin/dependencies` updates packages as `packages.md` states, then rewrites
   `biome.json` with `biome migrate --write` to match the installed Biome.
-- A `bin/ci` step that exits 0 still fails on output matching `npm warn`,
-  `DeprecationWarning` or a line starting `Warning:` and a space, any case.
-- `bin/qa`, outside `bin/ci`, installs Chromium and runs `playwright test`;
-  a failed test, or output matching those same warnings, fails it.
+- A `bin/ci` step that exits 0, or `bin/qa`, which runs outside `bin/ci`,
+  installs Chromium and runs `playwright test`, still fails on output
+  matching `npm warn`, `DeprecationWarning` or a line starting `Warning:`
+  and a space, any case; a failed test fails `bin/qa`.
 - Trigger: any change to a JavaScript `bin/` script.
-<!-- audited: 9f233aa559d0 -->
+<!-- audited: 5f93ad7ca548 -->

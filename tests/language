@@ -359,6 +359,11 @@ EOF
       grep -q "ESLint found too many warnings (maximum: 0)" "${LAST_LOG}" || die "$lang lint let an ESLint warning through"
       mv "$WORK/eslint.config.keep" "$app/eslint.config.js"
       rm "$app/src/shout.ts"
+      mkdir -p "$WORK/lint-tmp"
+      run_log env -u NODE_COMPILE_CACHE TMPDIR="$WORK/lint-tmp" APP_DIR="$app" \
+        "$(git -C "$app" rev-parse --show-toplevel)/bin/_$lang/lint" --all
+      assert_rc 0 "$lang lint on a clean app"
+      [ ! -e "$WORK/lint-tmp/node-compile-cache" ] || die "$lang lint left a compile cache in TMPDIR"
       ln -s package.json "$app/link.json"
       expect_ok leaf "$app" "$lang" format --check --all
       expect_ok leaf "$app" "$lang" format --all
@@ -377,6 +382,11 @@ EOF
       ! grep -q "deploy: no" "${LAST_LOG}" || die "$lang held a bash script to Biome"
       ! grep -q "helpers.sh: no" "${LAST_LOG}" || die "$lang held a .sh file with no shebang to its linter"
       rm "$app/notes.txt" "$app/NOTES.md" "$app/deploy" "$app/helpers.sh" "$app/src/dupe.js"
+      mkdir -p "$WORK/lint-tmp"
+      run_log env -u NODE_COMPILE_CACHE TMPDIR="$WORK/lint-tmp" APP_DIR="$app" \
+        "$(git -C "$app" rev-parse --show-toplevel)/bin/_$lang/lint" --all
+      assert_rc 0 "$lang lint on a clean app"
+      [ ! -e "$WORK/lint-tmp/node-compile-cache" ] || die "$lang lint left a compile cache in TMPDIR"
       cp "$app/package.json" "$WORK/package.keep"
       (cd "$app" && npm pkg set "scripts.build=echo the-build-script-ran")
       printf '%s\n' 'export const broken = (;' >"$app/src/broken.js"
@@ -803,6 +813,8 @@ EOF
   TMPDIR="$WORK/xcode-tmp" expect_ok leaf "$app" "$lang" ci
   leaked="$(find "$WORK/xcode-tmp" -mindepth 1 -maxdepth 1 -name 'bin-*')"
   [ -z "$leaked" ] || die "ios ci left temp files: $(printf '%s' "$leaked" | tr '\n' ' ')"
+  grep -q -- "-showdestinations .*xcode-test" "$calls" ||
+    die "ios test looked up its destination in the build step's derived data, which the build step holds"
   IOS_DESTINATION="platform=macOS,arch=$(uname -m)"
   export IOS_DESTINATION
   printf 'public func warned() -> Int {\n  var unused = 1\n  return 2\n}\n' >"$app/Sources/App/Warned.swift"

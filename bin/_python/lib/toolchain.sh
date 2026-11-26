@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 
+export UV_PYTHON_DOWNLOADS=never
+
 toolchain_check() {
   local root="$1" pinned python active
   [ "${FLOW_CHECKED_APP:-}" != "$root" ] || return 0

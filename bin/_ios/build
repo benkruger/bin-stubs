@@ -18,7 +18,7 @@ while IFS= read -r target; do
   echo "bin/build: $target does not set SWIFT_TREAT_WARNINGS_AS_ERRORS and GCC_TREAT_WARNINGS_AS_ERRORS to YES" >&2
   status=1
 done <<<"$loose"
-destination="$(xcode_destination)"
+destination="$(xcode_destination "$root/.build/xcode-build")"
 xcodebuild build -quiet "${XCODE_ARGS[@]}" -disableAutomaticPackageResolution -destination "$destination" \
   -derivedDataPath "$root/.build/xcode-build" || status=1
 exit "$status"

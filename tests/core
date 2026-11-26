@@ -818,6 +818,47 @@ EOF
   grep -q "SC2086" "${LAST_LOG}" || die "the guards cached a shellcheck finding"
 }
 
+test_no_installs() {
+  say "the gate and bin/dependencies never install a toolchain"
+  local stubs="$WORK/no-install" app="$WORK/no-install-app"
+  mkdir -p "$stubs" "$app"
+  cat >"$stubs/cargo" <<'EOF'
+#!/usr/bin/env bash
+printf 'RUSTUP_AUTO_INSTALL=%s\n' "${RUSTUP_AUTO_INSTALL:-}"
+EOF
+  chmod +x "$stubs/cargo"
+  run_log env -u RUSTUP_AUTO_INSTALL PATH="$stubs:$PATH" APP_DIR="$app" "$REPO/bin/_rust/dependencies"
+  assert_rc 0 "Rust dependencies with a stand-in cargo"
+  grep -qx "RUSTUP_AUTO_INSTALL=0" "${LAST_LOG}" || die "Rust bin/dependencies let rustup install a toolchain"
+  (
+    unset RUSTUP_AUTO_INSTALL
+    # shellcheck source=/dev/null
+    . "$REPO/bin/_rust/lib/toolchain.sh"
+    [ "${RUSTUP_AUTO_INSTALL:-}" = 0 ]
+  ) || die "the Rust scripts let rustup install a toolchain"
+  cat >"$stubs/uv" <<'EOF'
+#!/usr/bin/env bash
+printf 'uv %s UV_PYTHON_DOWNLOADS=%s\n' "$*" "${UV_PYTHON_DOWNLOADS:-}"
+[ "$1 $2" != "python find" ] || exit 1
+EOF
+  chmod +x "$stubs/uv"
+  printf '3.99\n' >"$app/.python-version"
+  run_log env -u CI -u UV_PYTHON_DOWNLOADS HOME="$app" PATH="$stubs:$PATH" APP_DIR="$app" "$REPO/bin/_python/dependencies"
+  assert_rc 1 "Python dependencies with no Python that matches the pin"
+  grep -q "no installed Python matches .python-version (3.99)" "${LAST_LOG}" ||
+    die "Python bin/dependencies ran without the pinned Python"
+  grep -q "^uv sync" "${LAST_LOG}" && die "Python bin/dependencies synced before checking the pinned Python"
+  run_log env CI=1 HOME="$app" PATH="$stubs:$PATH" APP_DIR="$app" "$REPO/bin/_python/dependencies"
+  assert_rc 0 "Python dependencies in CI with a stand-in uv"
+  grep -q "^uv sync .* UV_PYTHON_DOWNLOADS=never$" "${LAST_LOG}" || die "Python bin/dependencies let uv download a Python"
+  (
+    unset UV_PYTHON_DOWNLOADS
+    # shellcheck source=/dev/null
+    . "$REPO/bin/_python/lib/toolchain.sh"
+    [ "${UV_PYTHON_DOWNLOADS:-}" = never ]
+  ) || die "the Python scripts let uv download a Python"
+}
+
 test_checked_once() {
   say "a step skips the toolchain and package checks its bin/ci or bin/changed ran"
   local lang app="$WORK/no-app"
@@ -1123,5 +1164,5 @@ run_test() {
 run_all "$WORK/logs" run_test test_settings test_scan test_root_format test_open test_qa test_query \
   test_hooks test_starter test_bare_guards test_guards_scans test_commit test_commit_review test_commit_fix test_commit_rounds test_commit_stops test_commit_gate test_commit_failures test_copies_match test_changed_empty test_parts \
   test_dispatch test_dispatch_select test_dispatch_paths test_dispatch_path_args test_git_failures test_suite_seal test_unborn test_suite_missing test_root_check \
-  test_shellcheck_cache test_checked_once test_steps test_jobs test_interrupt test_start test_merge test_cleanup test_complete test_ci_time test_root_app test_root_js test_root_shell test_root_changed test_die_fixture \
+  test_shellcheck_cache test_no_installs test_checked_once test_steps test_jobs test_interrupt test_start test_merge test_cleanup test_complete test_ci_time test_root_app test_root_js test_root_shell test_root_changed test_die_fixture \
   test_app_language

@@ -15,12 +15,12 @@ xcode_container() {
 }
 
 xcode_destination() {
-  local destination
+  local derived="$1" destination
   if [ -n "${IOS_DESTINATION:-}" ]; then
     printf '%s\n' "$IOS_DESTINATION"
     return 0
   fi
-  destination="$(xcodebuild -showdestinations "${XCODE_ARGS[@]}" -disableAutomaticPackageResolution -derivedDataPath "$PWD/.build/xcode-build" 2>/dev/null |
+  destination="$(xcodebuild -showdestinations "${XCODE_ARGS[@]}" -disableAutomaticPackageResolution -derivedDataPath "$derived" 2>/dev/null |
     awk '/Ineligible destinations/ { exit }
       match($0, /\{ platform:(iOS Simulator|macOS), (arch:[^,]+, )?id:[0-9A-F-]+,/) {
         found = substr($0, RSTART, RLENGTH)

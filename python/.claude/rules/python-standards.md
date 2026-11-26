@@ -27,10 +27,13 @@ The Python app is held by Ruff and pytest at full strength.
   tracked or untracked and not ignored, and fails on any that does not
   compile, then type-checks those files with `mypy --strict` and fails on
   any error, or when mypy is not installed in the app's environment.
-- `.python-version` pins Python; outside CI, `bin/ci` fails unless uv finds
-  an installed Python that matches it.
+- `.python-version` pins Python; outside CI, `bin/ci` and
+  `bin/dependencies` fail unless uv finds an installed Python that matches
+  it. Every Python script runs uv with `UV_PYTHON_DOWNLOADS=never`, and
+  `tests/core` fails when `bin/dependencies` or the shared `toolchain.sh`
+  lets uv download a Python.
 - `packages_check` fails, as `packages.md` states, when
   `uv sync --locked --offline --check` fails: `uv.lock` does not
   match `pyproject.toml` or `.venv` does not match `uv.lock`.
 - Trigger: any change to a Python `bin/` script.
-<!-- audited: 84d13458d6e4 -->
+<!-- audited: b363fcbdc55e -->

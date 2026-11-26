@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 
+export RUSTUP_AUTO_INSTALL=0
+
 toolchain_check() {
   local root="$1" channel active
   [ "${FLOW_CHECKED_APP:-}" != "$root" ] || return 0

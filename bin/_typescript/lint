@@ -107,11 +107,9 @@ in_background() {
 
 if [ "${#gated[@]}" -gt 0 ]; then
   in_background node --input-type=module -e '
-    import module from "node:module";
     import { readFileSync, writeSync } from "node:fs";
     import { extname } from "node:path";
     import { inspect } from "node:util";
-    module.enableCompileCache?.();
     const { ESLint } = await import("eslint");
     const prettier = await import("prettier");
     const files = process.argv.slice(1);
