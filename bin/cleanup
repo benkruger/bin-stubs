@@ -47,6 +47,11 @@ while IFS= read -r branch; do
     echo "bin/cleanup: kept $branch: its work is not in main"
     continue
   fi
+  created="$(git reflog show --format=%gs "refs/heads/$branch" 2>/dev/null || true)"
+  if [ -n "$worktree" ] && [[ "$created" == "branch: Created from "* && "$created" != *$'\n'* ]]; then
+    echo "bin/cleanup: kept $branch: started but nothing committed"
+    continue
+  fi
   if [ -n "$worktree" ] && [ -n "$(git -C "$worktree" status --porcelain)" ]; then
     echo "bin/cleanup: kept $branch: uncommitted changes in $worktree"
     continue

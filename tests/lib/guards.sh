@@ -9,8 +9,12 @@ plant_bad_rules() {
   } >"$rules/wide.md"
   {
     printf '# Narrow\n\n'
-    for _ in $(seq 1 30); do printf '%100s\n' '' | sed 's/ /✓/g'; done
+    for _ in $(seq 1 38); do printf '%80s\n' '' | sed 's/ /✓/g'; done
   } >"$rules/narrow.md"
+  {
+    printf '# Wrap\n\n'
+    printf '%s\n' "- A line whose last space sits before column eighty, then one long path: bin/_typescript/lib/some/very/long/path/name.sh"
+  } >"$rules/wrap.md"
   printf '## Lead\n\n# Late\n' >"$rules/late.md"
   printf '# One\n\n# Two\n' >"$rules/twice.md"
   printf '# Fenced\n\n\x60\x60\x60bash\n# build\n\x60\x60\x60\n\n~~~~\n# also\n~~~~\n' >"$rules/fenced.md"
@@ -28,15 +32,17 @@ plant_bad_rules() {
 
 check_bad_rules() {
   local msg missed=""
-  for msg in "wide.md: 8109 characters (cap 8000)" "late.md: does not lead with an H1" "twice.md: 2 H1 headings (want 1)" \
+  for msg in "wide.md: 8109 characters (cap 8000)" "wide.md:3: 8100 characters (cap 80)" "wrap.md:3: 120 characters (cap 80)" \
+    "late.md: does not lead with an H1" "twice.md: 2 H1 headings (want 1)" \
     "old.md: backward-facing wording" "front.md: frontmatter" "story.md: narrative heading" \
     "cite.md: cites missing nowhere.md" "cite.md: cites missing starter/.claude/rules/gone.md" \
-    "linked.md: no audit stamp (commit it through bin/commit)"; do
+    "linked.md: links to a file outside every .claude/rules folder, which bin/commit never reviews or stamps"; do
     grep -qxF "guards: .claude/rules/$msg" "${LAST_LOG}" || missed+=" [$msg]"
   done
   [ -z "$missed" ] || die "a rule's shape was not checked:$missed"
-  ! grep -qE "narrow\.md: [0-9]+ (characters|lines)" "${LAST_LOG}" || die "a rule's cap counted bytes, not characters"
+  ! grep -qE "narrow\.md(:[0-9]+)?: [0-9]+ (characters|lines)" "${LAST_LOG}" || die "a rule's cap counted bytes, not characters"
   ! grep -qF "cites missing .claude/rules/cite.md" "${LAST_LOG}" || die "a rule citing a path that exists was failed"
+  ! grep -qF "linked.md: no audit stamp" "${LAST_LOG}" || die "a rule linked outside the rules folders was asked for a stamp"
   ! grep -qF "web/api.md: cites missing" "${LAST_LOG}" || die "a nested rule citing its sibling or a top-level rule was failed"
   ! grep -qE "fenced\.md: [0-9]+ H1 headings" "${LAST_LOG}" || die "a # line inside a code fence counted as an H1"
 }

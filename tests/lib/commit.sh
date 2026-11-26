@@ -13,6 +13,7 @@ case "$prompt" in
     while IFS= read -r f; do
       case "${FAKE_FIX:-}" in
         good) text="$(perl -pe 's/BAD/GOOD/' "$f")" ;;
+        arrow) text="$(perl -pe 's/BAD rule\./GOOD rule →./' "$f")" ;;
         grow) text="$(cat "$f" && for _ in $(seq 1 50); do echo "- more"; done)" ;;
         outside)
           f=notes.md
@@ -311,11 +312,19 @@ test_commit_fix() {
 
   commit_case
   printf '# Probe\n\nA BAD rule.\n' >"$rule"
-  sed 's/^MAX_RULE_CHARS=8000$/MAX_RULE_CHARS=20/' "$repo/tests/guards" >"$WORK/guards.capped"
+  sed 's/^MAX_RULE_CHARS=8000$/MAX_RULE_CHARS=21/' "$repo/tests/guards" >"$WORK/guards.capped"
   cat "$WORK/guards.capped" >"$repo/tests/guards"
   commit FAKE_AUDIT="$finding" FAKE_FIX=good -- main "$msg"
   assert_rc 0 "a fix over the cap tests/guards sets"
-  grep -q "A GOOD rule." "$rule" && die "bin/commit kept a fix over the character cap tests/guards sets"
+  grep -q "A GOOD rule." "$rule" &&
+    die "bin/commit kept a fix one character over the cap tests/guards sets, its final newline counted"
+
+  commit_case
+  printf '# Probe\n\nA BAD rule.\n' >"$rule"
+  sed 's/^MAX_RULE_CHARS=8000$/MAX_RULE_CHARS=24/' "$repo/tests/guards" >"$WORK/guards.capped"
+  cat "$WORK/guards.capped" >"$repo/tests/guards"
+  commit FAKE_AUDIT="$finding" FAKE_FIX=arrow -- main "$msg"
+  grep -q "A GOOD rule →." "$rule" || die "bin/commit dropped a fix within the cap, counting bytes not characters"
 
   commit_case
   printf '# Probe\n\nA BAD rule.\n' >"$rule"

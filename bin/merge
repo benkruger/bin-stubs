@@ -35,6 +35,32 @@ if git diff --quiet main "$branch"; then
   refuse "$branch has nothing to merge into main"
 fi
 
+main_states() {
+  find . \( -path ./.worktrees -o -name node_modules -o -name .venv -o -name target -o -name .build \) -prune -o \
+    -type d -path '*/.flow-states/main' -print0
+}
+
+aside="$(mktemp -d "${TMPDIR:-/tmp}/bin-merge.XXXXXX")"
+trap 'rm -rf "$aside"' EXIT
+while IFS= read -r -d '' states; do
+  mkdir -p "$aside/$states"
+  for pass in "$states"/*; do
+    [ -e "$pass" ] && [ "${pass##*/}" != commit-review ] || continue
+    cp -R "$pass" "$aside/$states/"
+  done
+done < <(main_states)
+
+restore_passes() {
+  local states pass
+  while IFS= read -r -d '' states; do
+    for pass in "$states"/*; do
+      [ -e "$pass" ] && [ "${pass##*/}" != commit-review ] || continue
+      rm -rf "$pass"
+    done
+    [ ! -d "$aside/$states" ] || cp -R "$aside/$states/." "$states/"
+  done < <(main_states)
+}
+
 src=".worktrees/$branch"
 [ -d "$src" ] || src=.
 while IFS= read -r -d '' states; do
@@ -53,5 +79,6 @@ if "$ROOT/bin/commit" ${push[@]+"${push[@]}"} main "$msgfile"; then
   exit 0
 fi
 git reset -q --hard "$before"
+restore_passes
 echo "bin/merge: $branch did not land; main is back where it was" >&2
 exit 1

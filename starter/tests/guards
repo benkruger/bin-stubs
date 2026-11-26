@@ -6,6 +6,7 @@ cd "$ROOT"
 
 MAX_RULE_LINES=40
 MAX_RULE_CHARS=8000
+MAX_RULE_LINE_CHARS=80
 MAX_CLAUDE_LINES=400
 MAX_CLAUDE_CHARS=12000
 MAX_AUTHORED_BYTES=65536
@@ -1059,7 +1060,7 @@ if [ "${#entry_points[@]}" -gt 0 ]; then
 fi
 
 markdown_findings() {
-  RULE_LINES="$MAX_RULE_LINES" RULE_CHARS="$MAX_RULE_CHARS" \
+  RULE_LINES="$MAX_RULE_LINES" RULE_CHARS="$MAX_RULE_CHARS" RULE_LINE_CHARS="$MAX_RULE_LINE_CHARS" \
     CLAUDE_LINES="$MAX_CLAUDE_LINES" CLAUDE_CHARS="$MAX_CLAUDE_CHARS" \
     BACKWARD="$BACKWARD_FACING" NARRATIVE="$NARRATIVE_HEADING" perl - "$@" <<'PERL'
 use strict;
@@ -1112,6 +1113,12 @@ sub check_markdown {
 for my $path (@ARGV) {
   my $text = read_text($path);
   my @lines = check_markdown($path, $text, $ENV{RULE_LINES}, $ENV{RULE_CHARS});
+  my $n = 0;
+  for my $line (@lines) {
+    $n++;
+    my $len = length decode('UTF-8', $line);
+    print "$path:$n: $len characters (cap $ENV{RULE_LINE_CHARS})\n" if $len > $ENV{RULE_LINE_CHARS};
+  }
   print "$path: frontmatter\n" if @lines && $lines[0] eq '---';
   print "$path: narrative heading\n" if grep { /$narrative/ } @lines;
   my ($last) = reverse grep { !/^[[:space:]]*$/ } @lines;
@@ -1156,6 +1163,24 @@ if [ -d .claude/rules ]; then
 fi
 
 [ "${#rules[@]}" -gt 0 ] || fail ".claude/rules holds no rules"
+
+if [ "${#rules[@]}" -gt 0 ]; then
+  outside="$(perl -MCwd=abs_path -e '
+    for my $path (@ARGV) {
+      my $real = abs_path($path);
+      print "$path\n" unless defined $real && $real =~ m{/\.claude/rules/};
+    }' "${rules[@]}" 2>>"$scan_errors")" || scan_ended "rule link"
+  if [ -n "$outside" ]; then
+    kept=()
+    for path in "${rules[@]}"; do
+      case $'\n'"$outside"$'\n' in
+        *$'\n'"$path"$'\n'*) fail "$path: links to a file outside every .claude/rules folder, which bin/commit never reviews or stamps" ;;
+        *) kept+=("$path") ;;
+      esac
+    done
+    rules=(${kept[@]+"${kept[@]}"})
+  fi
+fi
 
 while IFS= read -r line; do
   fail "$line"

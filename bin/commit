@@ -140,20 +140,16 @@ guard_cap() {
 }
 
 over_bounds() {
-  awk -v max_lines="$MAX_RULE_LINES" -v max_chars="$MAX_RULE_CHARS" '
-    { line[NR] = $0 }
-    END {
-      n = NR
-      while (n > 0 && line[n] == "") n--
-      count = 0
-      chars = 0
-      for (i = 1; i <= n; i++) {
-        if (index(line[i], "<!-- audited:") == 1) continue
-        chars += length(line[i]) + (count > 0 ? 1 : 0)
-        count++
-      }
-      exit !(count > max_lines || chars > max_chars)
-    }' "$1"
+  RULE_LINES="$MAX_RULE_LINES" RULE_CHARS="$MAX_RULE_CHARS" perl -MEncode=decode -e '
+    local $/;
+    my $body = <>;
+    $body = "" unless defined $body;
+    $body =~ s/\n<!-- audited: [0-9a-f]{12} -->\s*\z/\n/;
+    $body =~ s/\s*\z/\n/;
+    my $lines = ($body =~ tr/\n//);
+    my $chars = length decode("UTF-8", $body);
+    exit(($lines > $ENV{RULE_LINES} || $chars > $ENV{RULE_CHARS}) ? 0 : 1);
+  ' "$1"
 }
 
 corpus_files() {
@@ -281,8 +277,8 @@ Procedure:
    blocks; positive-form claims (a membership check against the allowed set,
    never a denylist); failure mode AND trigger named inline; imperative
    instruction-to-self voice; forward-facing present tense; terse — every
-   prose line at or under 80 characters, hard-wrapped at a word boundary
-   (markdownlint MD013 fails the gate on a longer line; a suggested fix's
+   line at or under 80 characters, hard-wrapped at a word boundary
+   (tests/guards fails the gate on a longer line; a suggested fix's
    text obeys the same cap); a root rule stated service-neutrally with a
    single service's mechanism only as its named example; correct scope
    folder.
@@ -351,9 +347,9 @@ within $MAX_RULE_LINES lines and $MAX_RULE_CHARS characters, audit stamp
 excluded — a fix that would grow a file past either bound must cut
 existing lines in the same edit to stay within it; an over-bound fix is
 discarded outright. Every
-prose line (outside a fenced code block) stays at or under 80
-characters — hard-wrap at a word boundary, never write one long
-unwrapped line; markdownlint's MD013 fails the gate on anything longer.
+line stays at or under 80 characters — hard-wrap at a word boundary,
+never write one long unwrapped line; tests/guards fails the gate on
+anything longer.
 
 ## Files you may change
 EOF

@@ -15,11 +15,12 @@ it governs; every new or edited rule is reviewed and stamped.
   every other mention cites that file. A rule covers only the topic its H1
   names; a statement on another topic is cut. Trigger: any new or edited
   rule; the review refuses a restatement or an off-topic statement.
-- A rule lives in the folder it governs: the root of `.claude/rules/` binds
-  the whole repo and a folder named for a repo directory binds that
-  subtree; a misplaced rule binds files it never governs. A rule opens with
-  its one H1; `tests/guards` fails frontmatter, a missing or second H1, and
-  a cited rule file that does not exist. Trigger: a new or moved rule.
+- A rule lives in the folder it governs: the root of `.claude/rules/` binds the
+  whole repo and a folder named for a repo directory binds that subtree; the
+  review refuses a rule outside the folder it governs. A rule opens with its one
+  H1; `tests/guards` fails frontmatter, a missing or second H1, a cited rule
+  file that does not exist and a rule whose real path, symlinks resolved, lies
+  outside every `.claude/rules/` folder. Trigger: a new or moved rule.
 - Every H2 is a constraint, a scope, a trigger or `## The Rule`;
   `tests/guards` fails one matching `NARRATIVE_HEADING`, and the review
   refuses the rest. Trigger: a new or edited heading.
@@ -27,8 +28,8 @@ it governs; every new or edited rule is reviewed and stamped.
   when; a verbatim command only one the hooks and permissions allow, such
   as `bin/*`; at most 40 lines and 8,000 characters bar the stamp, 80
   characters a line; code named by symbol or path, not line number.
-  `tests/guards` fails `BACKWARD_FACING` wording and either cap,
-  markdownlint fails a long line, and the review refuses the rest.
+  `tests/guards` fails `BACKWARD_FACING` wording, either cap and a line
+  over 80 characters, and the review refuses the rest.
   Trigger: any new or edited rule.
 - Every rule edit lands through `bin/commit`: a separate Claude session
   reviews the edited rules against this file, and a file that passed
@@ -37,4 +38,4 @@ it governs; every new or edited rule is reviewed and stamped.
   stands; a passing review stamps each file with `bin/stamp-rules`, and
   `tests/guards` fails a rule whose stamp does not match its body.
   Trigger: any change to a file under `.claude/rules/`.
-<!-- audited: cc879ce6d192 -->
+<!-- audited: 74179344ae60 -->
