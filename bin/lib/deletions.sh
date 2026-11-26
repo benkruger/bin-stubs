@@ -11,9 +11,17 @@ change_base() {
   fi
 }
 
+changed_listing() {
+  local listing
+  listing="$(git diff --name-only --relative "$(change_base)" -- . && git ls-files --others --exclude-standard -- .)" ||
+    return 1
+  printf '%s\n' "$listing" | sort -u
+}
+
 deleted_paths() {
-  local root_app=0 path top
+  local root_app=0 path top listing
   [ "$(pwd -P)" != "$(git rev-parse --show-toplevel 2>/dev/null)" ] || root_app=1
+  listing="$(git diff --name-only --no-renames --relative "$(change_base)" -- .)" || return 1
   while IFS= read -r path; do
     [ -n "$path" ] && [ ! -e "$path" ] && [ ! -L "$path" ] || continue
     case "$path" in
@@ -24,11 +32,12 @@ deleted_paths() {
       continue
     fi
     printf '%s\n' "$path"
-  done < <(git diff --name-only --no-renames --relative HEAD -- . 2>/dev/null)
+  done <<<"$listing"
 }
 
 deleted_twin_findings() {
-  local path src twin mirror
+  local path src twin mirror deleted
+  deleted="$(deleted_paths)" || return 1
   while IFS= read -r path; do
     if is_test "$path"; then
       src="$(source_for_test "$path")"
@@ -39,5 +48,5 @@ deleted_twin_findings() {
       mirror="$(test_for_source "$path")"
       [ ! -f "$mirror" ] || printf 'bin/changed: no source for test %s\n' "$mirror"
     fi
-  done < <(deleted_paths)
+  done <<<"$deleted"
 }

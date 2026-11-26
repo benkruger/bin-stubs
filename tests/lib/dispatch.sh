@@ -236,7 +236,7 @@ EOF
 
 test_git_failures() {
   say "a git listing that fails stops the script instead of passing on no files"
-  local repo stubs="$WORK/failing-git" real
+  local repo stubs="$WORK/failing-git" real lang
   real="$(command -v git)"
   repo="$(new_repo)"
   keep "$repo"
@@ -272,6 +272,24 @@ EOF
   assert_rc 128 "shell build whose git listing fails"
   run_log env PATH="$stubs:$PATH" APP_DIR="$repo/ios" "$repo/bin/_ios/lint" --all
   assert_rc 1 "iOS lint whose git listing fails"
+  for lang in typescript javascript python rails rust ios shell; do
+    run_log env PATH="$stubs:$PATH" APP_DIR="$repo/shell" "$repo/bin/_$lang/changed" --files
+    [ "${LAST_RC}" -ne 0 ] || die "$lang changed --files passed a git listing that failed"
+  done
+  run_log env PATH="$stubs:$PATH" APP_DIR="$repo/shell" "$repo/bin/_shell/lint"
+  [ "${LAST_RC}" -ne 0 ] || die "shell lint with no paths passed a git listing that failed"
+  run_log env PATH="$stubs:$PATH" APP_DIR="$repo/ios" "$repo/bin/_ios/lint"
+  [ "${LAST_RC}" -ne 0 ] || die "iOS lint with no paths passed a git listing that failed"
+  git -C "$repo" add -A
+  git -C "$repo" commit -q -m "apps"
+  rm "$repo/shell/test/run"
+  run_log env PATH="$stubs:$PATH" APP_DIR="$repo/shell" "$repo/bin/_shell/changed"
+  [ "${LAST_RC}" -ne 0 ] || die "shell changed on a deletion passed a git listing that failed"
+  mkdir -p "$repo/python"
+  printf '[project]\nname = "app"\n' >"$repo/python/pyproject.toml"
+  run_log env PATH="$stubs:$PATH" FLOW_CHECKED_APP="$(cd "$repo/python" && pwd)" APP_DIR="$repo/python" \
+    "$repo/bin/_python/build"
+  assert_rc 128 "python build whose git listing fails"
 }
 
 test_suite_seal() {
@@ -453,8 +471,7 @@ EOF
 
 test_interrupt() {
   say "Ctrl-C stops every process the dispatcher started"
-  local repo name pid rc=0 tries=0 left leaked tmp="$WORK/interrupt-tmp"
-  mkdir -p "$tmp"
+  local repo name pid rc tries left leaked tmp sig
   repo="$(new_repo)"
   keep "$repo"
   copy_dir "$HERE/../bin" "$repo/bin"
@@ -469,25 +486,61 @@ sleep 60 &
 printf '%s\n' "$$" "$!" "$PPID" >>"$PIDS"
 wait
 EOF
-  export PIDS="$WORK/pids"
-  TMPDIR="$tmp" perl -e 'setpgrp(0, 0); $SIG{INT} = "DEFAULT"; exec @ARGV' "$repo/bin/ci" --jobs 2 >/dev/null 2>&1 &
+  for sig in INT HUP; do
+    tmp="$WORK/interrupt-tmp-$sig"
+    mkdir -p "$tmp"
+    export PIDS="$WORK/pids-$sig"
+    TMPDIR="$tmp" perl -e 'setpgrp(0, 0); $SIG{INT} = "DEFAULT"; exec @ARGV' "$repo/bin/ci" --jobs 2 --force >/dev/null 2>&1 &
+    pid=$!
+    until [ -f "$PIDS" ] && [ "$(wc -l <"$PIDS")" -ge 6 ]; do
+      kill -0 "$pid" 2>/dev/null || die "bin/ci exited before both apps started"
+      sleep 0.1
+    done
+    kill "-$sig" -- "-$pid"
+    rc=0
+    wait "$pid" || rc=$?
+    assert_eq "$rc" 130 "the dispatcher's exit after SIG$sig"
+    tries=0
+    while left="$(ps -o pid= -p "$(paste -sd, - <"$PIDS")")"; do
+      tries=$((tries + 1))
+      [ "$tries" -le 50 ] || die "SIG$sig left $(printf '%s' "$left" | wc -l | tr -d ' ') process(es) running"
+      sleep 0.1
+    done
+    unset PIDS
+    leaked="$(find "$tmp" -mindepth 1)"
+    [ -z "$leaked" ] || die "SIG$sig left temp files: $(printf '%s' "$leaked" | tr '\n' ' ')"
+  done
+  slow_git_interrupt "$repo" "diff -z" lint "while listing the changed files"
+  slow_git_interrupt "$repo" "add -u" ci "while hashing an app's tree"
+}
+
+slow_git_interrupt() {
+  local repo="$1" on="$2" phase="$3" when="$4" stubs="$WORK/slow-git" tmp pid rc=0 leaked
+  tmp="$WORK/slow-tmp-$phase"
+  mkdir -p "$stubs" "$tmp"
+  cat >"$stubs/git" <<EOF
+#!/usr/bin/env bash
+case " \$* " in
+  *" $on "*)
+    : >"$WORK/slow-$phase"
+    exec sleep 60
+    ;;
+esac
+exec "$(command -v git)" "\$@"
+EOF
+  chmod +x "$stubs/git"
+  PATH="$stubs:$PATH" TMPDIR="$tmp" perl -e 'setpgrp(0, 0); $SIG{INT} = "DEFAULT"; exec @ARGV' "$repo/bin/$phase" \
+    >/dev/null 2>&1 &
   pid=$!
-  until [ -f "$PIDS" ] && [ "$(wc -l <"$PIDS")" -ge 6 ]; do
-    kill -0 "$pid" 2>/dev/null || die "bin/ci exited before both apps started"
+  until [ -f "$WORK/slow-$phase" ]; do
+    kill -0 "$pid" 2>/dev/null || die "bin/$phase exited before git was slow $when"
     sleep 0.1
   done
   kill -INT -- "-$pid"
   wait "$pid" || rc=$?
-  assert_eq "$rc" 130 "the dispatcher's exit after Ctrl-C"
-  tries=0
-  while left="$(ps -o pid= -p "$(paste -sd, - <"$PIDS")")"; do
-    tries=$((tries + 1))
-    [ "$tries" -le 50 ] || die "Ctrl-C left $(printf '%s' "$left" | wc -l | tr -d ' ') process(es) running"
-    sleep 0.1
-  done
-  unset PIDS
+  [ "$rc" -ne 0 ] || die "bin/$phase passed when interrupted $when"
   leaked="$(find "$tmp" -mindepth 1)"
-  [ -z "$leaked" ] || die "Ctrl-C left temp files: $(printf '%s' "$leaked" | tr '\n' ' ')"
+  [ -z "$leaked" ] || die "Ctrl-C $when left temp files: $(printf '%s' "$leaked" | tr '\n' ' ')"
 }
 
 test_ci_time() {

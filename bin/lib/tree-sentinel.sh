@@ -44,6 +44,8 @@ untracked_kept() {
 content_tree() {
   local dir real prefix tree rc=0
   dir="$(mktemp -d "${TMPDIR:-/tmp}/bin-lib-tree-sentinel.XXXXXX")"
+  trap 'rm -rf "$dir"' EXIT
+  trap 'exit 130' INT TERM HUP
   real="$(git rev-parse --path-format=absolute --git-path index)" || rc=$?
   [ "$rc" -ne 0 ] || [ ! -f "$real" ] || cp "$real" "$dir/index" || rc=$?
   prefix="$(git rev-parse --show-prefix)" || rc=$?
@@ -55,6 +57,7 @@ content_tree() {
       tree="$(GIT_INDEX_FILE="$dir/index" git write-tree ${prefix:+"--prefix=$prefix"})" || rc=$?
   fi
   rm -rf "$dir"
+  trap - EXIT INT TERM HUP
   [ "$rc" -eq 0 ] || return "$rc"
   printf '%s\n' "$tree"
 }

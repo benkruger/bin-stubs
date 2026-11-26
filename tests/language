@@ -491,6 +491,19 @@ EOF
       [ "$LAST_RC" -ne 0 ] || die "$lang test passed a run cut short while exporting coverage"
       [ ! -e "$app/.coverage.json" ] || die "$lang test left its coverage in the app when cut short"
       ! compgen -G "$WORK/cut-coverage/tmp/bin-ios-coverage.*" >/dev/null || die "$lang test left its coverage file when cut short"
+      mkdir -p "$WORK/cut-listing/stubs" "$WORK/cut-listing/tmp"
+      cat >"$WORK/cut-listing/stubs/git" <<EOF
+#!/usr/bin/env bash
+if [ "\$1" = ls-files ]; then
+  kill -INT 0
+fi
+exec "$(command -v git)" "\$@"
+EOF
+      chmod +x "$WORK/cut-listing/stubs/git"
+      run_log env PATH="$WORK/cut-listing/stubs:$PATH" TMPDIR="$WORK/cut-listing/tmp" APP_DIR="$app" \
+        perl -e "setpgrp(0, 0); \$SIG{INT} = 'DEFAULT'; exec @ARGV" "$(git -C "$app" rev-parse --show-toplevel)/bin/_$lang/lint" --all
+      [ "$LAST_RC" -ne 0 ] || die "$lang lint passed a run cut short while listing its files"
+      ! compgen -G "$WORK/cut-listing/tmp/bin-ios-files.*" >/dev/null || die "$lang lint left its file list when cut short"
       ;;
     python)
       printf 'def untyped(a):\n    return a\n' >"$app/src/untyped.py"

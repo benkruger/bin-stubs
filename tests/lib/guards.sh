@@ -158,6 +158,8 @@ EOF
     packages_check SimpleCov
   failing_scans "$repo" "$WORK/failing" grep "-nE -noE -LE" skip "matching line" "time limit value" update
   failing_scans "$repo" "$WORK/failing" grep "-lI" "text file"
+  failing_scans "$repo" "$WORK/failing" grep "-E -vE" rustfmt shellcheckrc setup.cfg
+  failing_scans "$repo" "$WORK/failing" awk "want=" "config section"
 }
 
 test_guards_tools() {
@@ -213,12 +215,16 @@ scan_plants() {
   printf '{ "jest": { "testTimeout": 5 } }\n' >"$repo/package.json"
   printf 'test.skip("a", () => {});\ntest("b", () => {}, { timeout: limit });\n' >"$repo/a.test.ts"
   printf 'VALUE = 1\n' >"$repo/value.rb"
+  printf '[pytest]\naddopts = -q\n' >"$repo/pytest.ini"
+  printf 'max_width = 100\n' >"$repo/rustfmt.toml"
+  printf 'source-path=SCRIPTDIR\n' >"$repo/.shellcheckrc"
+  printf '[metadata]\nname = app\n' >"$repo/setup.cfg"
 }
 
 failing_tool_stubs() {
   local stubs="$1" tool real
   mkdir -p "$stubs"
-  for tool in perl grep; do
+  for tool in perl grep awk; do
     real="$(command -v "$tool")"
     cat >"$stubs/$tool" <<EOF
 #!/usr/bin/env bash

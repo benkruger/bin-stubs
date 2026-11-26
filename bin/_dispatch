@@ -248,6 +248,7 @@ elif [ "$PHASE" = ci ]; then
   select_all=1
 else
   changed=()
+  trap 'rm -f "${changed_list:-}"; exit 130' INT TERM HUP
   changed_list="$(mktemp "${TMPDIR:-/tmp}/bin-dispatch.XXXXXX")"
   if ! collect_changed | sort -zu >"$changed_list"; then
     rm -f "$changed_list"
@@ -459,7 +460,7 @@ BG_STEPS=()
 BG_GROUP=()
 trap 'kill -TERM -- ${BG_GROUP[@]+"${BG_GROUP[@]}"} 2>/dev/null || true
   for log in ${BG_LOG[@]+"${BG_LOG[@]}"}; do rm -f "$log" "$log.rc"; done
-  exit 130' INT TERM
+  exit 130' INT TERM HUP
 
 if [ "$run_suite" -eq 1 ] && [ "$PHASE" != changed ]; then
   run_one "suite" "$REPO_ROOT" "$REPO_ROOT/$suite_leaf" "root-suite-sentinel"

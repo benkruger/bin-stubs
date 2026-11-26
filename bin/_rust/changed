@@ -13,31 +13,32 @@ if [ "$(pwd -P)" = "$(git rev-parse --show-toplevel)" ]; then
 fi
 
 changed_files() {
-  local path top
+  local path top listing
+  listing="$(changed_listing)" || return 1
   while IFS= read -r path; do
     [ -f "$path" ] || continue
+    case "$path" in
+      .flow-states/*) continue ;;
+    esac
     top="${path%%/*}"
     if [ "$root_app" -eq 1 ] && [ "$top" != "$path" ] && is_app_dir "$PWD/$top"; then
       continue
     fi
     printf '%s\n' "$path"
-  done < <(
-    {
-      git diff --name-only --relative "$(change_base)" -- .
-      git ls-files --others --exclude-standard -- .
-    } | { grep -v '^\.flow-states/' || true; } | sort -u
-  )
+  done <<<"$listing"
 }
 
 if [ "${1:-}" = "--files" ]; then
-  changed_files
+  changed_files || exit 1
   exit 0
 fi
 
 packages_check "$PWD" || exit 1
 export FLOW_CHECKED_APP="$PWD"
 
-if [ -z "$(changed_files)" ] && [ -z "$(deleted_paths)" ]; then
+listing="$(changed_files)"
+deleted="$(deleted_paths)"
+if [ -z "$listing" ] && [ -z "$deleted" ]; then
   exit 0
 fi
 "$here/format"

@@ -1,5 +1,8 @@
 #!/usr/bin/env bash
 
+APP_FILES_LISTED=""
+trap 'rm -f "${APP_FILES_LISTED:-}"' EXIT
+
 at_repo_root() {
   if [ "$(pwd -P)" = "$(git rev-parse --show-toplevel)" ]; then
     echo 1
@@ -20,23 +23,24 @@ app_file() {
 }
 
 app_files() {
-  local path root_app links="" listed
+  local path root_app links=""
   if [ "${1:-}" = --links ]; then
     links=1
     shift
   fi
   APP_FILES=()
   root_app="$(at_repo_root)"
-  listed="$(mktemp "${TMPDIR:-/tmp}/bin-ios-files.XXXXXX")"
-  if ! git ls-files -z --cached --others --exclude-standard -- "$@" >"$listed"; then
-    rm -f "$listed"
+  APP_FILES_LISTED="$(mktemp "${TMPDIR:-/tmp}/bin-ios-files.XXXXXX")"
+  if ! git ls-files -z --cached --others --exclude-standard -- "$@" >"$APP_FILES_LISTED"; then
+    rm -f "$APP_FILES_LISTED"
     return 1
   fi
   while IFS= read -r -d '' path; do
     app_file "$path" "$root_app" "$links" || continue
     APP_FILES+=("$path")
-  done <"$listed"
-  rm -f "$listed"
+  done <"$APP_FILES_LISTED"
+  rm -f "$APP_FILES_LISTED"
+  APP_FILES_LISTED=""
 }
 
 swift_files() {

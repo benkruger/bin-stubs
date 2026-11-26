@@ -19,6 +19,7 @@ if [ "$(pwd -P)" = "$(git rev-parse --show-toplevel)" ]; then
   root_app=1
 fi
 files=()
+git ls-files -z --cached --others --exclude-standard -- '*.py' '*.pyi' >"$PYTHONPYCACHEPREFIX/listed"
 while IFS= read -r -d '' path; do
   [ -f "$path" ] || continue
   case "$path" in
@@ -29,7 +30,7 @@ while IFS= read -r -d '' path; do
     continue
   fi
   files+=("$path")
-done < <(git ls-files -z --cached --others --exclude-standard -- '*.py' '*.pyi')
+done <"$PYTHONPYCACHEPREFIX/listed"
 if [ "${#files[@]}" -gt 0 ]; then
   uv run python -m compileall -q "${files[@]}"
   uv run python -m mypy --strict "${files[@]}"

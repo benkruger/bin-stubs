@@ -549,11 +549,12 @@ swift_format_ok() {
 }
 
 shellcheckrc_ok() {
-  ! grep -vE "^[[:space:]]*(#|$)|^[[:space:]]*($SHELLCHECKRC_KEYS)=" "$1" | grep -q .
+  local allowed="^[[:space:]]*(#|$)|^[[:space:]]*($SHELLCHECKRC_KEYS)="
+  [ -z "$(grep_scan shellcheckrc -vE "$allowed" "$1")" ]
 }
 
 rustfmt_ok() {
-  ! grep -qE '^[[:space:]]*(disable_all_formatting|ignore)[[:space:]]*=' "$1"
+  [ -z "$(grep_scan rustfmt -E '^[[:space:]]*(disable_all_formatting|ignore)[[:space:]]*=' "$1")" ]
 }
 
 cargo_config_ok() {
@@ -685,7 +686,7 @@ for path in "${files[@]}" ${links[@]+"${links[@]}"}; do
       fail "$path: mypy takes its settings from [tool.mypy] in pyproject.toml, so it has no config file"
       ;;
     setup.cfg)
-      if grep -q '^\[mypy' "$path"; then
+      if [ -n "$(grep_scan setup.cfg -E '^\[mypy' "$path")" ]; then
         fail "$path: mypy takes its settings from [tool.mypy] in pyproject.toml, so setup.cfg has no [mypy] section"
       fi
       ;;
@@ -779,7 +780,7 @@ section_key_lines() {
   awk -v want="$2" -v key="$3" '
     /^[[:space:]]*\[/ { section = $0; gsub(/[][[:space:]]/, "", section); next }
     section ~ want && $0 ~ ("^[[:space:]]*" key "[[:space:]]*=") { print NR }
-  ' "$1"
+  ' "$1" 2>>"$scan_errors" || scan_ended "config section"
 }
 
 matching_lines() {

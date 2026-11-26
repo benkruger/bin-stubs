@@ -60,32 +60,38 @@ done < <(jq -r --argjson flags "$STRICT_FLAGS" '.compilerOptions as $o
     ($flags[] | select($o[.] == false) | "\(.) is false"),
     (if $o.noCheck == true then "noCheck is true" else empty end)' "$config")
 
-app_sources() {
-  local path top
-  while IFS= read -r -d '' path; do
-    [ -f "$path" ] || continue
-    case "$path" in
-      node_modules/* | .venv/* | .flow-states/* | */node_modules/* | */.venv/* | */.flow-states/*) continue ;;
-    esac
-    top="${path%%/*}"
-    if [ "$root_app" -eq 1 ] && [ "$top" != "$path" ] && is_app_dir "$root/$top"; then
-      continue
-    fi
-    printf '%s\n' "$path"
-  done < <(git ls-files -z --cached --others --exclude-standard -- '*.ts' '*.tsx' '*.mts' '*.cts')
-}
+git ls-files -z --cached --others --exclude-standard -- '*.ts' '*.tsx' '*.mts' '*.cts' >"$scratch/sources"
+sources=()
+while IFS= read -r -d '' path; do
+  [ -f "$path" ] || continue
+  case "$path" in
+    node_modules/* | .venv/* | .flow-states/* | */node_modules/* | */.venv/* | */.flow-states/*) continue ;;
+  esac
+  top="${path%%/*}"
+  if [ "$root_app" -eq 1 ] && [ "$top" != "$path" ] && is_app_dir "$root/$top"; then
+    continue
+  fi
+  sources+=("$path")
+done <"$scratch/sources"
 
 jq -r '.files[]? | sub("^\\./"; "")' "$config" >"$listed"
-while IFS= read -r outside; do
-  echo "bin/build: $outside is outside tsconfig's files, so tsc never checks it" >&2
+outside=""
+if [ "${#sources[@]}" -gt 0 ]; then
+  outside="$(printf '%s\n' "${sources[@]}" | awk -v listed="$listed" '
+    BEGIN { while ((getline line < listed) > 0) seen[line] = 1 }
+    !($0 in seen)')"
+fi
+while IFS= read -r path; do
+  [ -n "$path" ] || continue
+  echo "bin/build: $path is outside tsconfig's files, so tsc never checks it" >&2
   status=1
-done < <(app_sources | awk -v listed="$listed" '
-  BEGIN { while ((getline line < listed) > 0) seen[line] = 1 }
-  !($0 in seen)')
+done <<<"$outside"
 if jq -e '.compilerOptions.skipLibCheck == true' "$config" >/dev/null; then
-  while IFS= read -r declared; do
-    echo "bin/build: skipLibCheck skips the app's own $declared" >&2
-    status=1
-  done < <(app_sources | grep -E '\.d\.[cm]?ts$' || true)
+  for path in "${sources[@]+"${sources[@]}"}"; do
+    if [[ "$path" =~ \.d\.[cm]?ts$ ]]; then
+      echo "bin/build: skipLibCheck skips the app's own $path" >&2
+      status=1
+    fi
+  done
 fi
 exit "$status"

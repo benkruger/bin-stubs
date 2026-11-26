@@ -719,6 +719,18 @@ EOF
       rm "$app/test/check_test.rb"
       mv "$WORK/add.keep" "$app/app/models/add.rb"
       mv "$WORK/add-test.keep" "$app/test/models/add_test.rb"
+      mkdir -p "$stubs"
+      cat >"$stubs/jq" <<EOF
+#!/usr/bin/env bash
+case "\$*" in
+  *"--arg real"*) exit 5 ;;
+esac
+exec "$(command -v jq)" "\$@"
+EOF
+      chmod +x "$stubs/jq"
+      PATH="$stubs:$PATH" expect_fail leaf "$app" "$lang" test --all
+      grep -qxF "bin/test: could not read coverage/.resultset.json" "${LAST_LOG}" ||
+        die "$lang passed a coverage report jq could not read"
       ;;
   esac
   return 0

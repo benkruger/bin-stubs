@@ -12,20 +12,16 @@ cd "$root"
 root_app="$(at_repo_root)"
 
 changed_files() {
-  local path
+  local path listing
+  listing="$(changed_listing)" || return 1
   while IFS= read -r path; do
     app_file "$path" "$root_app" || continue
     printf '%s\n' "$path"
-  done < <(
-    {
-      git diff --name-only --relative "$(change_base)" -- .
-      git ls-files --others --exclude-standard -- .
-    } | sort -u
-  )
+  done <<<"$listing"
 }
 
 if [ "${1:-}" = "--files" ]; then
-  changed_files
+  changed_files || exit 1
   exit 0
 fi
 
@@ -33,7 +29,8 @@ packages_check "$PWD" || exit 1
 export FLOW_CHECKED_APP="$PWD"
 
 listing="$(changed_files)"
-if [ -z "$listing" ] && [ -z "$(deleted_paths)" ]; then
+deleted="$(deleted_paths)"
+if [ -z "$listing" ] && [ -z "$deleted" ]; then
   exit 0
 fi
 files=()
