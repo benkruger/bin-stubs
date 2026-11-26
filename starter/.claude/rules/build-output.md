@@ -8,7 +8,7 @@ Only source goes into git; build and coverage output stays out.
   `dist/`, `build/`, `coverage/`, `.venv/`, `target/`, `.build/` and
   `.flow-states/`. `tests/guards` fails a missing `.gitignore` or one
   missing one of those lines, and a tracked or visible file under one of
-  those folders or under `vendor/bundle/`, where the Rails
-  `.bundle/config` installs gems, an `lcov.info` or a `.tsbuildinfo`.
+  those folders or under `vendor/bundle/`, an `lcov.info` or a
+  `.tsbuildinfo`.
   Trigger: any new output folder or `.gitignore` edit.
-<!-- audited: 54f2ea715f68 -->
+<!-- audited: 7c5c19abfab6 -->

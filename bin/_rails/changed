@@ -37,16 +37,12 @@ packages_check "$PWD" || exit 1
 export FLOW_CHECKED_APP="$PWD"
 
 quietly() {
-  local log rc=0
-  log="$(mktemp "${TMPDIR:-/tmp}/bin-rails-changed.XXXXXX")"
-  "$@" >"$log" 2>&1 || rc=$?
-  if [ "$rc" -ne 0 ]; then
-    cat "$log" >&2
-    rm -f "$log"
-    return "$rc"
-  fi
-  rm -f "$log"
-  return 0
+  local rc=0
+  quiet_log="$(mktemp "${TMPDIR:-/tmp}/bin-rails-changed.XXXXXX")"
+  trap 'rm -f "$quiet_log"' EXIT
+  "$@" >"$quiet_log" 2>&1 || rc=$?
+  [ "$rc" -eq 0 ] || cat "$quiet_log" >&2
+  return "$rc"
 }
 
 already() {

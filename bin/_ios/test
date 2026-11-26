@@ -110,15 +110,16 @@ done
 for binary in "${binaries[@]}"; do
   [ ! -d "$binary.dSYM" ] || mv "$binary.dSYM" "$binary.dSYM.aside"
 done
+coverage="$(mktemp "${TMPDIR:-/tmp}/bin-ios-coverage.XXXXXX")"
+trap 'rm -f "$coverage"' EXIT
 cov_rc=0
 roots="$(perl -e 'print join "|", map { quotemeta } @ARGV' "$(pwd -P)" "$PWD")"
 xcrun llvm-cov export "${binaries[0]}" ${objects[@]+"${objects[@]}"} -instr-profile "$prof" -format=text \
-  "-ignore-filename-regex=^($roots)/(Tests|\.build)/" >"$root/.coverage.json" || cov_rc=$?
+  "-ignore-filename-regex=^($roots)/(Tests|\.build)/" >"$coverage" || cov_rc=$?
 for binary in "${binaries[@]}"; do
   [ ! -d "$binary.dSYM.aside" ] || mv "$binary.dSYM.aside" "$binary.dSYM"
 done
 if [ "$cov_rc" -ne 0 ]; then
-  rm -f "$root/.coverage.json"
   echo "bin/test: llvm-cov could not export the coverage" >&2
   exit 1
 fi
@@ -127,6 +128,5 @@ required=""
 if [ "$whole" -eq 1 ]; then
   required="$(git ls-files --cached --others --exclude-standard -- 'Sources/*.swift')"
 fi
-coverage_ok "$root/.coverage.json" "$required" || cov_ok=$?
-rm -f "$root/.coverage.json"
+coverage_ok "$coverage" "$required" || cov_ok=$?
 exit "$cov_ok"

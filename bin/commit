@@ -7,8 +7,6 @@ CI_TIMEOUT_DEFAULT_MS=300000
 CI_SUMMARY_BYTE_CAP=262144
 STAMP_TIMEOUT_SECONDS=60
 SNAPSHOT_MAX_BYTES=1048576
-MAX_RULE_LINES=40
-MAX_RULE_CHARS=8000
 MAX_RULE_FILE_BYTES=65536
 MAX_INLINE_RULES_BYTES=262144
 MAX_PRIOR_FINDINGS=40
@@ -132,6 +130,13 @@ rule_edits() {
       .claude/rules/*.md | */.claude/rules/*.md) printf '%s\n' "$path" ;;
     esac
   done <"$WORK/status" | sort -u
+}
+
+guard_cap() {
+  local value
+  value="$(sed -n "s/^$1=\([0-9][0-9]*\)$/\1/p" tests/guards 2>/dev/null)"
+  [ -n "$value" ] || return 1
+  printf '%s\n' "$value"
 }
 
 over_bounds() {
@@ -342,9 +347,10 @@ included, is ignored. A file you leave out stays as it is.
 Judge each fix against the authority at
 $AUTHORITY —
 the same standard the auditor applied. HARD BOUND: a rule body stays
-within 40 lines and 8,000 characters, audit stamp excluded — a fix that
-would grow a file past either bound must cut existing lines in the same
-edit to stay within it; an over-bound fix is discarded outright. Every
+within $MAX_RULE_LINES lines and $MAX_RULE_CHARS characters, audit stamp
+excluded — a fix that would grow a file past either bound must cut
+existing lines in the same edit to stay within it; an over-bound fix is
+discarded outright. Every
 prose line (outside a fenced code block) stays at or under 80
 characters — hard-wrap at a word boundary, never write one long
 unwrapped line; markdownlint's MD013 fails the gate on anything longer.
@@ -498,6 +504,10 @@ review_rules() {
   fi
   read_files "$list"
   [ "${#files[@]}" -gt 0 ] || return 0
+  if ! MAX_RULE_LINES="$(guard_cap MAX_RULE_LINES)" || ! MAX_RULE_CHARS="$(guard_cap MAX_RULE_CHARS)"; then
+    printf '%s' "rule audit: tests/guards sets no MAX_RULE_LINES or MAX_RULE_CHARS" >"$WORK/review"
+    return 1
+  fi
   log="$PWD/.flow-states/$branch/commit-review/$(date +%Y%m%dT%H%M%S)"
   mkdir -p "$log"
   audit_prompt "${files[@]}" >"$WORK/audit-prompt"

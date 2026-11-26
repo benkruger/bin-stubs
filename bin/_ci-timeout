@@ -45,11 +45,11 @@ if [ "$branch" = main ]; then
 fi
 
 next="$(mktemp "${TMPDIR:-/tmp}/bin-ci-timeout.XXXXXX")"
+trap 'rm -f "$next"' EXIT
 if [ -f "$file" ]; then
   awk -v h="$host" -v s="$took" '$1 == h { print h " " s; done = 1; next } { print } END { if (!done) print h " " s }' "$file" >"$next"
 else
   printf '%s %s\n' "$host" "$took" >"$next"
 fi
 cat "$next" >"$file"
-rm -f "$next"
 echo "bin/ci: $app took ${took}s (limit ${limit:-none} for $host)"

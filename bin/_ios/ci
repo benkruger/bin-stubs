@@ -69,6 +69,10 @@ start_step build "$here/build"
 start_step test "$here/test"
 finish_steps || exit 1
 
+tally="$(awk '$1 == "Executed" { xc = $2; seen = 1 }
+  /Test run with [0-9]+ tests? .*passed/ { for (i = 1; i < NF; i++) if ($i == "with") st = $(i + 1); seen = 1 }
+  END { if (seen) print xc + st " passed" }' "$log")"
+
 mkdir -p "$(dirname "$sentinel")"
 printf '%s\n' "$pre_hash" >"$sentinel"
-echo "bin/ci: gate green ($branch) — sentinel written."
+echo "bin/ci: gate green ($branch)${tally:+ — $tally} — sentinel written."

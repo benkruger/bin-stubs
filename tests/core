@@ -686,6 +686,12 @@ copies_findings() {
     [ -x "$bin/_$lang/open" ] || echo "$lang bin/open is not executable"
     [ -x "$bin/_$lang/qa" ] || echo "$lang bin/qa is not executable"
   done
+  for lang in typescript javascript python rails; do
+    for script in changed test; do
+      grep -q '/lib/sources\.sh"$' "$bin/_$lang/$script" || echo "$lang $script does not source lib/sources.sh"
+      ! grep -q '^is_source() {' "$bin/_$lang/$script" || echo "$lang $script keeps its own is_source"
+    done
+  done
 }
 
 test_copies_match() {
@@ -696,9 +702,26 @@ test_copies_match() {
   copy_dir "$REPO/bin" "$plant"
   chmod -x "$plant/_rust/lint" "$plant/_rails/qa" "$plant/_typescript/open"
   grep -v '^finish_steps || ' "$REPO/bin/_shell/ci" >"$plant/_shell/ci"
+  printf '%s\n' 'is_source() {' '  return 0' '}' >>"$plant/_javascript/changed"
+  grep -v '/lib/sources\.sh"$' "$REPO/bin/_python/test" >"$plant/_python/test"
   want=$(printf '%s\n' "rust bin/lint is not executable" "shell ci does not run its steps through bin/lib/steps.sh" \
-    "typescript bin/open is not executable" "rails bin/qa is not executable")
+    "typescript bin/open is not executable" "rails bin/qa is not executable" \
+    "javascript changed keeps its own is_source" "python test does not source lib/sources.sh")
   assert_eq "$(copies_findings "$plant")" "$want" "planted copies"
+}
+
+test_failed_writes() {
+  say "a script whose write fails leaves no temp file behind"
+  local dir="$WORK/failed-writes" tmp="$WORK/failed-writes-tmp"
+  mkdir -p "$dir" "$tmp"
+  printf '# Locked\n\nA rule.\n' >"$dir/locked.md"
+  printf 'host 5\n' >"$dir/.ci-timeout"
+  chmod 444 "$dir/locked.md" "$dir/.ci-timeout"
+  run_log env TMPDIR="$tmp" "$REPO/bin/stamp-rules" "$dir/locked.md"
+  [ "$LAST_RC" -ne 0 ] || die "bin/stamp-rules passed a rule it could not write"
+  run_log env TMPDIR="$tmp" "$REPO/bin/_ci-timeout" app "$dir/.ci-timeout" 5
+  [ "$LAST_RC" -ne 0 ] || die "bin/_ci-timeout passed a time file it could not write"
+  [ -z "$(find "$tmp" -mindepth 1)" ] || die "a failed write left temp files: $(find "$tmp" -mindepth 1 | tr '\n' ' ')"
 }
 
 test_changed_empty() {
@@ -928,7 +951,7 @@ test_checked_once() {
 
 test_start() {
   say "bin/start opens a worktree with main's saved passes"
-  local repo wt sum
+  local repo wt sum fetched
   repo="$(new_repo)"
   KEEP="$repo"
   copy_dir "$REPO/bin" "$repo/bin"
@@ -975,6 +998,13 @@ test_start() {
   expect_ok "$repo/bin/ci"
   mkdir -p "$repo/web/node_modules/pkg"
   echo "module.exports = 1;" >"$repo/web/node_modules/pkg/index.js"
+  mkdir -p "$repo/ios/.build/checkouts/dep" "$repo/ios/.build/repositories/dep" "$repo/ios/.build/xcode-packages/checkouts" \
+    "$repo/ios/.build/debug"
+  printf '{ "object": { "dependencies": [] } }\n' >"$repo/ios/.build/workspace-state.json"
+  : >"$repo/ios/.build/checkouts/dep/Package.swift"
+  : >"$repo/ios/.build/repositories/dep/HEAD"
+  : >"$repo/ios/.build/xcode-packages/workspace-state.json"
+  : >"$repo/ios/.build/debug/App"
 
   expect_ok "$repo/bin/start" feature
   tail -n 1 "${LAST_LOG}" | grep -qxF "bin/start: next, run 'cd .worktrees/feature' on its own and make every edit and run every script there" ||
@@ -984,6 +1014,11 @@ test_start() {
   assert_eq "$(cd "$wt/python/.venv" && pwd -P)" "$(cd "$repo/python/.venv" && pwd -P)" "the linked .venv"
   [ -d "$wt/web/node_modules" ] && [ ! -L "$wt/web/node_modules" ] || die "bin/start did not copy node_modules as a folder"
   assert_eq "$(cat "$wt/web/node_modules/pkg/index.js")" "module.exports = 1;" "the cloned node_modules"
+  assert_eq "$(cat "$wt/ios/.build/workspace-state.json")" '{ "object": { "dependencies": [] } }' "the cloned Swift package state"
+  for fetched in checkouts/dep/Package.swift repositories/dep/HEAD xcode-packages/workspace-state.json; do
+    [ -f "$wt/ios/.build/$fetched" ] || die "bin/start did not clone the Swift packages' $fetched"
+  done
+  [ ! -e "$wt/ios/.build/debug" ] || die "bin/start cloned main's Swift build products"
   [ -z "$(git -C "$wt" status --porcelain)" ] || die "the worktree's packages show up in git"
   assert_eq "$(git -C "$wt" branch --show-current)" "feature" "the worktree's branch"
   assert_eq "$(git -C "$wt" rev-parse HEAD)" "$(git -C "$repo" rev-parse main)" "the worktree's base"
@@ -1209,7 +1244,7 @@ run_test() {
 }
 
 run_all "$WORK/logs" run_test test_settings test_scan test_root_format test_open test_qa test_query \
-  test_hooks test_starter test_bare_guards test_guards_scans test_guards_markdownlint test_commit test_commit_review test_commit_fix test_commit_rounds test_commit_stops test_commit_gate test_commit_failures test_copies_match test_changed_empty test_parts \
+  test_hooks test_starter test_bare_guards test_guards_scans test_guards_markdownlint test_commit test_commit_review test_commit_fix test_commit_rounds test_commit_stops test_commit_gate test_commit_failures test_copies_match test_failed_writes test_changed_empty test_parts \
   test_dispatch test_dispatch_select test_dispatch_paths test_dispatch_path_args test_git_failures test_suite_seal test_unborn test_suite_missing test_root_check \
   test_shellcheck_cache test_no_installs test_checked_once test_dependencies_once test_steps test_jobs test_interrupt test_start test_merge test_cleanup test_complete test_ci_time test_root_app test_root_js test_root_shell test_root_changed test_die_fixture \
   test_app_language

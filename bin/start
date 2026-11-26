@@ -64,5 +64,18 @@ while IFS= read -r -d '' modules; do
   cloned=$((cloned + 1))
 done < <(find . \( -path ./.worktrees -o -name .venv \) -prune -o -type d -name node_modules -print0 -prune)
 
-echo "bin/start: $branch at $worktree from main ${base:0:12}, with main's saved passes from $copied folder(s), $linked .venv link(s) and $cloned node_modules clone(s)"
+fetched=0
+while IFS= read -r -d '' build; do
+  rel="${build#./}"
+  found=0
+  for part in checkouts repositories workspace-state.json xcode-packages; do
+    [ -e "$build/$part" ] || continue
+    found=1
+    mkdir -p "$worktree/$rel"
+    cp -cR "$build/$part" "$worktree/$rel/$part" 2>/dev/null || cp -R "$build/$part" "$worktree/$rel/$part"
+  done
+  fetched=$((fetched + found))
+done < <(find . \( -path ./.worktrees -o -name node_modules -o -name .venv \) -prune -o -type d -name .build -print0 -prune)
+
+echo "bin/start: $branch at $worktree from main ${base:0:12}, with main's saved passes from $copied folder(s), $linked .venv link(s), $cloned node_modules clone(s) and $fetched Swift package clone(s)"
 echo "bin/start: next, run 'cd $worktree' on its own and make every edit and run every script there"

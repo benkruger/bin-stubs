@@ -3,19 +3,19 @@ set -euo pipefail
 
 stamp_one() {
   f="$1"
-  tmp="$(mktemp "${TMPDIR:-/tmp}/bin-stamp-rules.XXXXXX")"
   perl -0777 -pe 's/\n<!-- audited: [0-9a-f]{12} -->\s*\z/\n/; s/\s*\z/\n/' \
     "$f" >"$tmp"
   h="$(shasum -a 256 "$tmp" | cut -c1-12)"
   printf '<!-- audited: %s -->\n' "$h" >>"$tmp"
   cat "$tmp" >"$f"
-  rm -f "$tmp"
 }
 
 if [ "$#" -eq 0 ]; then
   echo "usage: bin/stamp-rules <rule file>..." >&2
   exit 2
 fi
+tmp="$(mktemp "${TMPDIR:-/tmp}/bin-stamp-rules.XXXXXX")"
+trap 'rm -f "$tmp"' EXIT
 for f in "$@"; do
   stamp_one "$f"
 done

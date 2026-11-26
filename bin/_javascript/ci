@@ -87,7 +87,7 @@ if ! wait "$audit_pid"; then
 fi
 [ "$red" -eq 0 ] || exit 1
 
-tally="$(grep -E '^# pass [0-9]+|Suites: [0-9]+' "$log" | tail -n1 || true)"
+tally="$(awk '($1 == "ℹ" || $1 == "#") && $2 == "pass" { n = $3 } END { if (n != "") print n " passed" }' "$log")"
 
 mkdir -p "$(dirname "$sentinel")"
 printf '%s\n' "$pre_hash" >"$sentinel"

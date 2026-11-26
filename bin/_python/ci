@@ -77,7 +77,7 @@ start_step build "$here/build"
 start_step test "$here/test" --all
 finish_steps || exit 1
 
-tally="$(grep -E '[0-9]+ passed' "$log" | tail -n1 || true)"
+tally="$(grep -oE '[0-9]+ passed' "$log" | tail -n1 || true)"
 
 mkdir -p "$(dirname "$sentinel")"
 printf '%s\n' "$pre_hash" >"$sentinel"

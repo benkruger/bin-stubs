@@ -297,6 +297,23 @@ test_commit_fix() {
   commit FAKE_AUDIT="$finding" FAKE_FIX=grow -- main "$msg"
   assert_rc 0 "an over-bound fix"
   [ "$(grep -c -- "- more" "$rule" || true)" -eq 0 ] || die "an over-bound fix was kept"
+
+  commit_case
+  printf '# Probe\n\nA BAD rule.\n' >"$rule"
+  sed 's/^MAX_RULE_CHARS=8000$/MAX_RULE_CHARS=20/' "$repo/tests/guards" >"$WORK/guards.capped"
+  cat "$WORK/guards.capped" >"$repo/tests/guards"
+  commit FAKE_AUDIT="$finding" FAKE_FIX=good -- main "$msg"
+  assert_rc 0 "a fix over the cap tests/guards sets"
+  grep -q "A GOOD rule." "$rule" && die "bin/commit kept a fix over the character cap tests/guards sets"
+
+  commit_case
+  printf '# Probe\n\nA BAD rule.\n' >"$rule"
+  grep -v '^MAX_RULE_CHARS=' "$repo/tests/guards" >"$WORK/guards.uncapped"
+  cat "$WORK/guards.uncapped" >"$repo/tests/guards"
+  commit FAKE_AUDIT="$finding" FAKE_FIX=good -- main "$msg"
+  assert_rc 1 "a rule review with no cap in tests/guards"
+  assert_eq "$(commit_json .detail)" "rule audit: tests/guards sets no MAX_RULE_LINES or MAX_RULE_CHARS" \
+    "a rule review with no cap in tests/guards"
 }
 
 test_commit_rounds() {

@@ -46,7 +46,7 @@ while IFS= read -r path; do
     node_modules/* | .venv/* | .flow-states/* | */node_modules/* | */.venv/* | */.flow-states/*)
       continue
       ;;
-    *.py | *.pyi) ;;
+    *.py | *.pyi | *.ipynb) ;;
     *) continue ;;
   esac
   top="${path%%/*}"

@@ -107,6 +107,10 @@ EOF
   grep -q "bin/ci: \[1/4\] format" "${LAST_LOG}" || die "$lang did not print the format step"
   grep -q "bin/ci: \[4/4\] test" "${LAST_LOG}" || die "$lang did not print the test step"
   grep -q "sentinel written" "${LAST_LOG}" || die "$lang first run did not write a sentinel"
+  if [ "$lang" != shell ]; then
+    grep -qE "^bin/ci: gate green \([^)]*\) — [1-9][0-9]* passed — sentinel written\.$" "${LAST_LOG}" ||
+      die "$lang did not count its passing tests on green"
+  fi
   sent="$(sentinel_file "$app")"
   [ -f "$sent" ] || die "$lang sentinel missing"
   hash="$(cat "$sent")"
@@ -392,6 +396,8 @@ EOF
         "$(git -C "$app" rev-parse --show-toplevel)/bin/_$lang/lint" --all
       assert_rc 0 "$lang lint on a clean app"
       [ ! -e "$WORK/lint-tmp/node-compile-cache" ] || die "$lang lint left a compile cache in TMPDIR"
+      expect_ok leaf "$app" "$lang" test --all --test-reporter=tap
+      grep -q "^TAP version 13" "${LAST_LOG}" || die "$lang test dropped an option meant for its runner"
       cp "$app/package.json" "$WORK/package.keep"
       (cd "$app" && npm pkg set "scripts.build=echo the-build-script-ran")
       printf '%s\n' 'export const broken = (;' >"$app/src/broken.js"
@@ -400,6 +406,7 @@ EOF
       grep -q "src/broken.js:1" "${LAST_LOG}" || die "$lang build did not name the file node cannot parse"
       grep -q "SyntaxError" "${LAST_LOG}" || die "$lang build let a build script stand in for node --check"
       mv "$WORK/package.keep" "$app/package.json"
+      expect_ok leaf "$app" "$lang" build src/index.js
       expect_fail leaf "$app" "$lang" format src/broken.js
       grep -q "src/broken.js" "${LAST_LOG}" || die "$lang format passed a file Biome cannot parse"
       rm "$app/src/broken.js"
@@ -459,6 +466,20 @@ EOF
       expect_fail leaf "$app" "$lang" test
       grep -q "LoadTests.swift: 0%" "${LAST_LOG}" || die "$lang let a source named like a test escape coverage"
       rm "$app/Sources/App/LoadTests.swift"
+      mkdir -p "$WORK/cut-coverage/stubs" "$WORK/cut-coverage/tmp"
+      cat >"$WORK/cut-coverage/stubs/xcrun" <<EOF
+#!/usr/bin/env bash
+if [ "\$1 \$2" = "llvm-cov export" ]; then
+  kill -INT 0
+fi
+exec "$(command -v xcrun)" "\$@"
+EOF
+      chmod +x "$WORK/cut-coverage/stubs/xcrun"
+      run_log env PATH="$WORK/cut-coverage/stubs:$PATH" TMPDIR="$WORK/cut-coverage/tmp" APP_DIR="$app" \
+        perl -e "setpgrp(0, 0); \$SIG{INT} = 'DEFAULT'; exec @ARGV" "$(git -C "$app" rev-parse --show-toplevel)/bin/_$lang/test"
+      [ "$LAST_RC" -ne 0 ] || die "$lang test passed a run cut short while exporting coverage"
+      [ ! -e "$app/.coverage.json" ] || die "$lang test left its coverage in the app when cut short"
+      ! compgen -G "$WORK/cut-coverage/tmp/bin-ios-coverage.*" >/dev/null || die "$lang test left its coverage file when cut short"
       ;;
     python)
       printf 'def untyped(a):\n    return a\n' >"$app/src/untyped.py"
@@ -471,6 +492,14 @@ EOF
       grep -q "name 'value' is assigned to before global declaration" "${LAST_LOG}" ||
         die "$lang build let a file Python cannot compile through"
       rm "$app/src/late.py"
+      jq -n '{cells: [{cell_type: "code", execution_count: null, metadata: {}, outputs: [],
+        source: ["import os\n", "x=1\n"]}], metadata: {language_info: {name: "python"}}, nbformat: 4,
+        nbformat_minor: 5}' >"$app/notes.ipynb"
+      expect_fail leaf "$app" "$lang" format --check notes.ipynb
+      grep -q "notes.ipynb" "${LAST_LOG}" || die "$lang format skipped a notebook"
+      expect_fail leaf "$app" "$lang" lint notes.ipynb
+      grep -q "F401" "${LAST_LOG}" || die "$lang lint skipped a notebook"
+      rm "$app/notes.ipynb"
       mv "$app/src" "$app/lib"
       mkdir -p "$app/build/x"
       printf 'def (\n' >"$app/build/x/broken.py"
@@ -615,6 +644,29 @@ EOF
       expect_fail leaf "$app" "$lang" test
       grep -q "rails (db:test:prepare)" "${LAST_LOG}" || die "$lang tested an app with a database without preparing it"
       rm "$app/config/database.yml"
+      mkdir -p "$WORK/cut-quiet/stubs" "$WORK/cut-quiet/tmp"
+      cat >"$WORK/cut-quiet/stubs/bundle" <<EOF
+#!/usr/bin/env bash
+case "\$*" in
+  "exec rails zeitwerk:check" | "exec rails test "*)
+    kill -INT 0
+    sleep 1
+    exit 130
+    ;;
+esac
+exec "$(command -v bundle)" "\$@"
+EOF
+      chmod +x "$WORK/cut-quiet/stubs/bundle"
+      for script in build changed; do
+        cp "$app/test/models/add_test.rb" "$WORK/add-test.keep"
+        printf '\n' >>"$app/test/models/add_test.rb"
+        run_log env PATH="$WORK/cut-quiet/stubs:$PATH" TMPDIR="$WORK/cut-quiet/tmp" APP_DIR="$app" \
+          perl -e "setpgrp(0, 0); \$SIG{INT} = 'DEFAULT'; exec @ARGV" "$(git -C "$app" rev-parse --show-toplevel)/bin/_$lang/$script"
+        mv "$WORK/add-test.keep" "$app/test/models/add_test.rb"
+        [ "$LAST_RC" -ne 0 ] || die "$lang $script passed a run cut short"
+        ! compgen -G "$WORK/cut-quiet/tmp/run-quiet.*" >/dev/null || die "$lang $script left its quiet logs when cut short"
+        ! compgen -G "$WORK/cut-quiet/tmp/bin-rails-changed.*" >/dev/null || die "$lang $script left its log when cut short"
+      done
       ;;
   esac
 

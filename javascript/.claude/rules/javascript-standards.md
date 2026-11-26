@@ -5,9 +5,9 @@ Biome and the app's own tests under c8 hold the JavaScript app at full strength.
 ## The Rule
 
 - A source is a `.js`, `.mjs`, `.cjs` or `.jsx` file below a directory;
-  `is_source` in `bin/_javascript/test` and `bin/_javascript/changed` names
-  the directories it leaves out. Root-level files are configuration, and
-  `e2e/` holds `bin/qa`'s specs, which are neither sources nor tests.
+  `is_source`, which `bin/changed` and `bin/test` share, names the
+  directories it leaves out. Root-level files are configuration, and `e2e/`
+  holds `bin/qa`'s specs, which are neither sources nor tests.
 - Every source has a twin test named `tests/<path>.test.<ext>`,
   `tests/<path>.spec.<ext>`, `<dir>/<name>.test.<ext>`,
   `<dir>/<name>.spec.<ext>` or `<dir>/test-<name>.<ext>`, where `<ext>` is
@@ -38,4 +38,4 @@ Biome and the app's own tests under c8 hold the JavaScript app at full strength.
   matching `npm warn`, `DeprecationWarning` or a line starting `Warning:`
   and a space, any case; a failed test fails `bin/qa`.
 - Trigger: any change to a JavaScript `bin/` script.
-<!-- audited: c326a3e6257f -->
+<!-- audited: 63e3767f66fd -->
