@@ -13,11 +13,22 @@ deleted.
   leaving test files out of pytest's collection. It scans
   every `.rs` file and each file `skip_pattern_of` classes as a test by its
   path, and fails a line that matches the pattern it picks: `SKIP_JS`
-  (Vitest, Jest, node:test), `SKIP_PY` (pytest, unittest), `SKIP_RUBY`
-  (Minitest, RSpec), `SKIP_RUST` (cargo test) and `SKIP_SWIFT` (XCTest,
-  Swift Testing). It also fails any key in `PYTEST_COLLECTION`, whatever its
-  value, under pytest's section of a `pyproject.toml`, `pytest.ini`,
-  `tox.ini` or `setup.cfg`: a key that sets which directories, files,
-  classes or functions pytest collects. Trigger: any new or edited test,
-  `.rs` file or pytest config.
-<!-- audited: d7dd3edde1a5 -->
+  (Vitest, Jest, node:test, Playwright), `SKIP_PY` (pytest, unittest),
+  `SKIP_RUBY` (Minitest, RSpec), `SKIP_RUST` (cargo test) and `SKIP_SWIFT`
+  (XCTest, Swift Testing). In a JS test file, `js_test_calls` fails a
+  `skip`, `only`, `todo` or `fails` key not set to `false` in an object
+  passed to a `test`, `it`, `describe` or `suite` call, on whatever line
+  it sits. It also fails any key in `PYTEST_COLLECTION`, whatever its
+  value, quoting or `=` or `:` separator, under pytest's section, its
+  header's quotes ignored, of a `pyproject.toml`, `pytest.toml`,
+  `.pytest.toml`, `pytest.ini`, `.pytest.ini`, `tox.ini` or `setup.cfg`: a
+  key that sets which directories, files, classes or functions pytest
+  collects. Trigger: any new or edited test, `.rs` file or pytest config.
+- Every test target runs: `tests/guards` fails a `.xcscheme` or
+  `.xctestplan` line matching `TEST_SELECTION_XCODE` (a skipped testable,
+  skipped or selected tests or tags, a target that is not enabled), and a
+  `Cargo.toml` line `cargo_test_targets` finds: `autotests` under
+  `[package]`, `test` under `[lib]`, `[[bin]]` or `[[test]]`, or `harness`
+  under `[[test]]`, set to `false`. Trigger: any new or edited scheme,
+  test plan or `Cargo.toml`.
+<!-- audited: f6818a0a0d76 -->

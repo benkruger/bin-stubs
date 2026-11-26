@@ -22,9 +22,18 @@ plant_bad_configs() {
   local cfg="$1" repo="$2" dir mdtoken pytoken rbtoken
   for dir in files formatter assist variable shorthand member computed local package dynamic require config .cargo mypy \
     linked inline quoted levels plugin simplecov options overrides formatteroff linteroff linteropts allcops newcops \
-    ruffkey; do
+    ruffkey rcpair rcdotless dotbiome rustdq rustsq plugdot plugquote; do
     mkdir -p "$cfg/$dir"
   done
+  printf '[tool]\nmypy.plugins = ["loosen"]\n' >"$cfg/plugdot/pyproject.toml"
+  printf '[tool."mypy"]\nplugins = [\n  "loosen",\n]\n' >"$cfg/plugquote/pyproject.toml"
+  printf 'LOOSE = 1\n' | tee "$cfg/plugdot/loosen.py" >"$cfg/plugquote/loosen.py"
+  printf '"disable_all_formatting" = true\n' >"$cfg/rustdq/rustfmt.toml"
+  printf "'ignore' = [\"src/legacy.rs\"]\n" >"$cfg/rustsq/.rustfmt.toml"
+  printf '{ "linter": { "enabled": false } }\n' >"$cfg/dotbiome/.biome.json"
+  printf '{ "formatter": { "enabled": false } }\n' >"$cfg/dotbiome/.biome.jsonc"
+  printf 'source-path=SCRIPTDIR disable=SC2086\n' >"$cfg/rcpair/.shellcheckrc"
+  printf 'disable=SC2034\n' >"$cfg/rcdotless/shellcheckrc"
   ln -s ../assist/biome.json "$cfg/linked/biome.json"
   printf '[tool]\nruff = { lint = { ignore = ["F"] } }\nmypy = { ignore_errors = true }\n' >"$cfg/inline/pyproject.toml"
   printf '[tool."ruff".lint]\n%signore%s = ["F"]\n' "'" "'" >"$cfg/quoted/pyproject.toml"
@@ -116,6 +125,8 @@ check_bad_configs() {
     "pyproject.toml: Ruff settings outside its list" \
     ".swift-format: turns a swift-format rule off" \
     ".shellcheckrc: holds a directive other than" \
+    "rcpair/.shellcheckrc: holds a directive other than" \
+    "rcdotless/shellcheckrc: holds a directive other than" \
     ".markdownlint.json: markdownlint runs with its default rules" \
     "brakeman.ignore: Brakeman ignores no warning" \
     ".prettierignore: Prettier formats every file, so it has no ignore file" \
@@ -125,6 +136,8 @@ check_bad_configs() {
     "overrides/biome.json: Biome settings outside its list" \
     "formatteroff/biome.json: Biome settings outside its list" \
     "linteroff/biome.json: Biome settings outside its list" \
+    "dotbiome/.biome.json: Biome settings outside its list" \
+    "dotbiome/.biome.jsonc: Biome settings outside its list" \
     "linteropts/eslint.config.js: sets an ESLint rule to anything but a bare error" \
     "allcops/.rubocop.yml: RuboCop settings outside its list" \
     "newcops/.rubocop.yml: RuboCop settings outside its list" \
@@ -143,6 +156,8 @@ check_bad_configs() {
     "config/brakeman.yml: Brakeman runs with bin/lint's options" \
     "clippy.toml: Clippy runs with its default settings" \
     "rustfmt.toml: turns rustfmt off" \
+    "rustdq/rustfmt.toml: turns rustfmt off" \
+    "rustsq/.rustfmt.toml: turns rustfmt off" \
     ".cargo/config.toml: sets a lint level in rustflags" \
     "quiet.rs:1: a Rust attribute or cfg! that" \
     "quiet.rs:7: a Rust attribute or cfg! that" \
@@ -159,6 +174,8 @@ check_bad_configs() {
     "quoted/pyproject.toml: Ruff settings outside its list" \
     "levels/Cargo.toml: a lint level other than warn, deny or forbid" \
     "plugin/pyproject.toml: loads a mypy plugin from the app's own code" \
+    "plugdot/pyproject.toml: loads a mypy plugin from the app's own code" \
+    "plugquote/pyproject.toml: loads a mypy plugin from the app's own code" \
     "simplecov/test_helper.rb:3: leaves files out of coverage" \
     ".simplecov: SimpleCov starts in test/test_helper.rb"; do
     grep -qF "cfg/bad/$msg" "${LAST_LOG}" || die "lint configuration not checked: $msg"

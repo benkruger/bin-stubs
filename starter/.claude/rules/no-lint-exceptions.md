@@ -19,10 +19,10 @@ is fixed in the code it flags, never silenced.
   `AllCops` keys in `RUBOCOP_ALLCOPS_KEYS`, NewCops enable; `require` and
   `plugins` gem names. Ruff: keys in `RUFF_KEYS`, lint keys in
   `RUFF_LINT_KEYS`, any `format` key. mypy: `[tool.mypy]` keys in `MYPY_KEYS`,
-  no plugin from the app's own code. `.shellcheckrc`: keys in
-  `SHELLCHECKRC_KEYS`. ESLint: no `linterOptions`, every `rules` entry a bare
-  `error` or `2`, with no options, in an object literal, imports only from
-  `ESLINT_PACKAGES`. Cargo: warn, deny or forbid for every lint in a
+  no plugin from the app's own code. `.shellcheckrc` or `shellcheckrc`: each
+  directive in `SHELLCHECKRC_KEYS`. ESLint: no `linterOptions`, every `rules`
+  entry a bare `error` or `2`, with no options, in an object literal, imports
+  only from `ESLINT_PACKAGES`. Cargo: warn, deny or forbid for every lint in a
   `[lints]` entry; no `-A`, `--allow` or `--cap-lints` in a config's
   `rustflags`. swift-format: every rule true. rustfmt: on for every file.
   `tests/guards` fails the file that does not. A markdownlint, Clippy or
@@ -38,4 +38,4 @@ is fixed in the code it flags, never silenced.
   attribute or `cfg!` matching `RUST_QUIET_ATTRS`, which allows or expects a
   lint, ignores a test, skips rustfmt or hides code from coverage.
   Trigger: any edit to a file it scans.
-<!-- audited: c563fcfd1acd -->
+<!-- audited: 1abf2840b9aa -->

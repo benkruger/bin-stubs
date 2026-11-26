@@ -461,6 +461,17 @@ EOF
   form+="ip"
   printf 'test("a", { %s: true }, () => {});\nexpect(add({ %s: "buy milk" })).toEqual(1);\ntest("b", { %s: "later" }, () => {});\n' \
     "$form" "to""do" "to""do" >"$skips/c.test.ts"
+  printf 'test("a", { %s: true }, () => {});\ntest(\n  "a long name",\n  { %s: true },\n  () => {},\n);\ntest("c", { %s: process.env.CI !== undefined }, () => {});\ntest("d", { %s: false }, () => {});\n' \
+    "fa""ils" "$form" "$form" "$form" >"$skips/d.test.ts"
+  printf 'test.%s("a", async () => {});\ntest("b", async () => {\n  test.%s();\n});\n' "fix""me" "fa""il" >"$skips/e.spec.ts"
+  printf 'test("t", () => {\n  const t = { %s: "buy milk" };\n  expect(t.%s).toBe("buy milk");\n});\n' "to""do" "to""do" >"$skips/f.test.ts"
+  mkdir -p "$skips/rust" "$skips/ios/App.xcodeproj/xcshareddata/xcschemes"
+  printf '%s\n' '[package]' 'name = "app"' 'autotests = false' '' '[lib]' 'test = false' '' '[[test]]' 'name = "it"' \
+    'harness = false' '' '[[bench]]' 'name = "speed"' 'harness = false' >"$skips/rust/Cargo.toml"
+  printf '%s\n' '<TestableReference skipped = "YES">' '<SkippedTests>' '<Test Identifier = "ATests/testA()"/>' \
+    '</SkippedTests>' '<TestableReference skipped = "NO">' >"$skips/ios/App.xcodeproj/xcshareddata/xcschemes/App.xcscheme"
+  printf '%s\n' '{' '  "testTargets" : [' '    {' '      "enabled" : false,' '      "skippedTests" : ["ATests/testA()"],' \
+    '      "selectedTags" : ["fast"]' '    }' '  ]' '}' >"$skips/ios/App.xctestplan"
   form="pend"
   form+="ing"
   printf 'class BTest\n  def test_b\n    %s = 1\n    assert_equal 1, %s\n  end\n\n  def test_c\n    %s "later"\n  end\nend\n' \
@@ -474,7 +485,8 @@ EOF
   printf 'vitest run --testTimeout 60000\n' >"$slow/bin/_typescript/test"
   mkdir -p "$slow/bin/_javascript" "$slow/bin/_python"
   printf 'vitest run --hookTimeout 60000\nvitest run --teardownTimeout 60000\n' >"$slow/bin/_javascript/test"
-  printf 'uv run pytest -o timeout=600\nuv run pytest --override-ini=timeout=600\n' >"$slow/bin/_python/test"
+  printf 'uv run pytest -o timeout=600\nuv run pytest --override-ini=timeout=600\nuv run pytest -o "timeout=600"\nuv run pytest -o %s\nPYTEST_TIMEOUT=600 uv run pytest\n' \
+    "'timeout=600'" >"$slow/bin/_python/test"
   printf '{ "jest": { "testTimeout": 60000 } }\n' >"$slow/package.json"
   printf 'export default { test: { testTimeout: 60000 } };\n' >"$slow/vitest.config.ts"
   printf '[test]\ntimeout = 60000\n' >"$slow/bunfig.toml"
@@ -484,8 +496,19 @@ EOF
   printf '[tool.pytest.ini_options]\nnorecursedirs = ["slow"]\n\n[tool.pytest]\npython_files = ["check_*.py"]\n' \
     >"$skips/py/pyproject.toml"
   printf '[pytest]\npython_functions = check_*\n' >"$skips/py/pytest.ini"
+  mkdir -p "$skips/py2" "$skips/py3" "$slow/toml" "$slow/quoted"
+  printf '[pytest]\npython_files = ["check_*.py"]\n' >"$skips/py2/pytest.toml"
+  printf '[pytest]\nnorecursedirs: slow\n' >"$skips/py2/.pytest.ini"
+  printf '[tool."pytest".ini_options]\n"python_classes" = ["Check"]\n' >"$skips/py3/pyproject.toml"
+  printf '[pytest]\npython_functions = ["check_*"]\n' >"$skips/py3/.pytest.toml"
+  printf '[pytest]\ntimeout = 600\n' >"$slow/toml/pytest.toml"
+  printf '[pytest]\ntimeout: 600\n' >"$slow/toml/.pytest.ini"
+  printf '[pytest]\ntimeout = 600\n' >"$slow/quoted/.pytest.toml"
+  printf "[tool.'pytest'.ini_options]\n'timeout' = 60\n" >"$slow/quoted/pyproject.toml"
   printf 'test("a", () => {}, { timeout: 10_000 });\nvi.setConfig({ testTimeout: 60000 });\ntest("b", () => {}, { timeout: 2 * 60000 });\n' >"$slow/a.test.ts"
   printf '[pytest]\naddopts = --timeout=60\n' >"$slow/pytest.ini"
+  printf '%s\n' 'test("c", () => {}, 10 * 60_000);' 'test("d", () => {}, 5_000);' 'test("e", { retry: 1 }, handler);' \
+    'test("f", async () => {' '  await run();' '}, LIMIT);' >"$slow/b.test.ts"
   printf 'import pytest\n\n\n@pytest.mark.timeout(10)\ndef test_a():\n    pass\n\n\n@pytest.mark.timeout(LIMIT)\ndef test_b():\n    pass\n' >"$slow/tests/test_slow.py"
   printf 'final class SlowTests: XCTestCase {\n  override func setUp() { executionTimeAllowance = 600 }\n}\n' >"$slow/ios/Tests/SlowTests.swift"
   printf '{ "defaultOptions": { "defaultTestExecutionTimeAllowance": 600 } }\n' >"$slow/App.xctestplan"
@@ -514,6 +537,11 @@ EOF
   printf 'bundle lock\n' >>"$repo/bin/_rails/build"
   printf 'cargo generate-lockfile\n' >>"$repo/bin/_rust/build"
   printf 'xcodebuild -resolvePackageDependencies\n' >>"$repo/bin/_ios/build"
+  printf 'npm --prefix "app" install\n' >>"$repo/bin/_javascript/build"
+  printf 'uv --directory app sync\n' >>"$repo/bin/_python/build"
+  printf 'cargo --locked fetch\n' >>"$repo/bin/_rust/lint"
+  printf 'bundle --verbose install\n' >>"$repo/bin/_rails/lint"
+  printf 'swift package --package-path app resolve\n' >>"$repo/bin/_ios/lint"
   printf 'uv sync\n' >>"$repo/bin/_python/dependencies"
   sed 's/^npm update$/npm ci/' "$REPO/bin/_typescript/dependencies" >"$repo/bin/_typescript/dependencies"
   grep -v packages_check "$REPO/bin/_python/lint" >"$repo/bin/_python/lint"
@@ -564,6 +592,10 @@ cat <<eof
 eof
 read -r w <<<word
 # flagged after a here-string
+[ -z "$(grep -vE "^(#|$)" f)" ] || echo found
+n="$(( $(wc -l <f) + 1 )) #"
+echo "$(printf '%s' "a
+#b")" # flagged
 EOF
   cat >"$notes/r.rb" <<'EOF'
 # frozen_string_literal: true
@@ -597,9 +629,14 @@ EOF
   printf '%s\n' '// swift-tools-version: 6.0 flagged outside Package.swift' 'export const b = 1;' >"$notes/b.ts"
   printf '%s\n' '//! flagged' "fn f<'a>(s: &'a str) -> &'a str { s }" 'const U: &str = "http://x";' '/// flagged' \
     "fn g() -> &'static str { \"x\" } // flagged" "const C: char = '\"';" '// flagged' \
-    'const M: &str = "first' 'second // not a comment";' '// flagged' >"$notes/lib.rs"
+    'const M: &str = "first' 'second // not a comment";' '// flagged' \
+    'pub const BODY: &str = r#"{"url": "http://example.com"}"#;' 'const P: &str = r"C:\dir\";' \
+    'const Q: &str = "x // y";' 'const R: &[u8] = br##"a "# // b"##;' '// flagged' >"$notes/lib.rs"
+  printf '%s\n' 'let body = #"{"url": "http://example.com"}"#' 'let multi = #"""' '  "x" // inside' '  """#' \
+    'let deep = ##"a "# // b"##' '// flagged' >"$notes/Body.swift"
   printf '%s\n' 'a { background: url(http://x); }' '/* flagged */' >"$notes/s.css"
   printf '%s\n' '# flagged' 'dist/' >"$notes/.gitignore"
+  printf '%s\n' '# flagged' 'source-path=SCRIPTDIR' >"$notes/shellcheckrc"
   printf '%s\n' '#!/usr/bin/env python3' 'value = "#"  # flagged' >"$notes/pytool"
   printf '%s\n' '#!/usr/bin/env ruby' '# flagged' "puts '#'" >"$notes/rbtool"
   printf '%s\n' '#!/bin/sh' 'echo "#" # flagged' >"$notes/shtool"
@@ -634,24 +671,36 @@ EOF
   grep -q "probe.py:1: suppression comment" "${LAST_LOG}" || die "suppression ban not enforced"
   check_bad_configs
   for msg in a.test.ts:1 b.spec.js:1 tests/test_a.py:4 test/a_test.rb:3 src/lib.rs:1 ios/Tests/ATests.swift:2 \
-    c.test.ts:1 c.test.ts:3 test/b_test.rb:8 ios/Tests/BTests.swift:1; do
+    c.test.ts:1 c.test.ts:3 test/b_test.rb:8 ios/Tests/BTests.swift:1 d.test.ts:1 d.test.ts:4 d.test.ts:7 \
+    e.spec.ts:1 e.spec.ts:3; do
     grep -qF "skips/$msg: a test that does not run" "${LAST_LOG}" || die "a test that does not run was not caught: $msg"
   done
-  for msg in a.test.ts:2 c.test.ts:2 test/b_test.rb:3 test/b_test.rb:4 ios/Tests/BTests.swift:2; do
+  for msg in a.test.ts:2 c.test.ts:2 test/b_test.rb:3 test/b_test.rb:4 ios/Tests/BTests.swift:2 d.test.ts:8 f.test.ts; do
     if grep -qF "skips/$msg:" "${LAST_LOG}"; then
       die "a test that runs was flagged: $msg"
     fi
   done
-  for msg in py/pyproject.toml:2 py/pyproject.toml:5 py/pytest.ini:2; do
+  for msg in rust/Cargo.toml:3 rust/Cargo.toml:6 rust/Cargo.toml:10 ios/App.xcodeproj/xcshareddata/xcschemes/App.xcscheme:1 \
+    ios/App.xcodeproj/xcshareddata/xcschemes/App.xcscheme:2 ios/App.xctestplan:4 ios/App.xctestplan:5 ios/App.xctestplan:6; do
+    grep -qF "skips/$msg: leaves tests out of the run" "${LAST_LOG}" || die "a test left out of the run was not caught: $msg"
+  done
+  for msg in rust/Cargo.toml:14 ios/App.xcodeproj/xcshareddata/xcschemes/App.xcscheme:5; do
+    if grep -qF "skips/$msg:" "${LAST_LOG}"; then
+      die "a setting that runs its tests was flagged: $msg"
+    fi
+  done
+  for msg in py/pyproject.toml:2 py/pyproject.toml:5 py/pytest.ini:2 py2/pytest.toml:2 py2/.pytest.ini:2 \
+    py3/pyproject.toml:2 py3/.pytest.toml:2; do
     grep -qF "skips/$msg: leaves test files out of pytest's collection" "${LAST_LOG}" ||
       die "a pytest setting that narrows collection was not caught: $msg"
   done
   for msg in bin/_typescript/test:1 bin/_javascript/test:1 bin/_javascript/test:2 bin/_python/test:1 bin/_python/test:2 \
-    package.json:1 vitest.config.ts:1 bunfig.toml:2 pyproject.toml:2 native/pyproject.toml:2 \
-    pytest.ini:2 a.test.ts:2 a.test.ts:3 tests/test_slow.py:9 ios/Tests/SlowTests.swift:2 App.xctestplan:1; do
+    bin/_python/test:3 bin/_python/test:4 bin/_python/test:5 package.json:1 vitest.config.ts:1 bunfig.toml:2 pyproject.toml:2 native/pyproject.toml:2 \
+    pytest.ini:2 a.test.ts:2 a.test.ts:3 tests/test_slow.py:9 ios/Tests/SlowTests.swift:2 App.xctestplan:1 \
+    toml/pytest.toml:2 toml/.pytest.ini:2 quoted/.pytest.toml:2 quoted/pyproject.toml:2 b.test.ts:1 b.test.ts:6; do
     grep -qF "timeouts/$msg: raises the test time limit" "${LAST_LOG}" || die "a raised time limit was not caught: $msg"
   done
-  for msg in a.test.ts:1 tests/test_slow.py:4; do
+  for msg in a.test.ts:1 tests/test_slow.py:4 b.test.ts:2 b.test.ts:3; do
     if grep -qF "timeouts/$msg:" "${LAST_LOG}"; then
       die "a fixed time limit on one test was flagged: $msg"
     fi
@@ -671,8 +720,8 @@ EOF
   grep -qF "web/bin/ci: a gate script inside an app" "${LAST_LOG}" || die "a gate script inside an app was not caught"
   grep -qF "bin/_root/test: the root app runs from bin/_<language>/" "${LAST_LOG}" || die "a bin/_root script was not caught"
   local missed=""
-  for lang in typescript rails rust ios; do
-    grep -qE "bin/_$lang/build:[0-9]+: installs packages; only bin/dependencies does" "${LAST_LOG}" || missed+=" $lang"
+  for lang in typescript/build rails/build rust/build ios/build javascript/build python/build rust/lint rails/lint ios/lint; do
+    grep -qE "bin/_$lang:[0-9]+: installs packages; only bin/dependencies does" "${LAST_LOG}" || missed+=" $lang"
   done
   [ -z "$missed" ] || die "a gate script that installs was not caught:$missed"
   grep -q "bin/_python/dependencies:[0-9]*: installs packages" "${LAST_LOG}" && die "bin/dependencies was refused for installing"
@@ -680,7 +729,7 @@ EOF
     die "a bin/dependencies that only installs was not caught"
   grep -qF "bin/_python/lint: never runs packages_check" "${LAST_LOG}" ||
     die "a gate script that skips packages_check was not caught"
-  for plant in a.ts c.tsx b.ts s.sh r.rb p.py t.toml y.yml Package.swift lib.rs s.css .gitignore pytool rbtool shtool; do
+  for plant in a.ts c.tsx b.ts s.sh r.rb p.py t.toml y.yml Package.swift Body.swift lib.rs s.css .gitignore shellcheckrc pytool rbtool shtool; do
     expected="$(grep -n flagged "$notes/$plant" | cut -d: -f1 | tr '\n' ' ')"
     actual="$(sed -nE "s|^guards: comment-plants/$plant:([0-9]+): a comment.*|\1|p" "${LAST_LOG}" | tr '\n' ' ')"
     assert_eq "$actual" "$expected" "comments found in $plant"
@@ -888,6 +937,17 @@ test_shellcheck_cache() {
   printf 'true\n' >>"$repo/tests/run"
   expect_ok env PATH="$stub:$PATH" XDG_CACHE_HOME="$WORK/cache" "$repo/tests/guards"
   [ -s "$calls" ] || die "the guards skipped shellcheck after a script changed"
+  mkdir -p "$repo/sub" "$WORK/xdg" "$WORK/home"
+  printf 'enable=require-variable-braces\n' >"$repo/sub/.shellcheckrc"
+  expect_ok env PATH="$stub:$PATH" XDG_CACHE_HOME="$WORK/cache" "$repo/tests/guards"
+  mv "$repo/sub/.shellcheckrc" "$repo/.shellcheckrc"
+  expect_fail env PATH="$stub:$PATH" XDG_CACHE_HOME="$WORK/cache" "$repo/tests/guards"
+  grep -q "SC2250" "${LAST_LOG}" || die "the guards replayed a pass after a .shellcheckrc moved"
+  mv "$repo/.shellcheckrc" "$WORK/xdg/shellcheckrc"
+  expect_ok env PATH="$stub:$PATH" XDG_CACHE_HOME="$WORK/cache" HOME="$WORK/home" "$repo/tests/guards"
+  expect_fail env PATH="$stub:$PATH" XDG_CACHE_HOME="$WORK/cache" HOME="$WORK/home" XDG_CONFIG_HOME="$WORK/xdg" \
+    "$repo/tests/guards"
+  grep -q "SC2250" "${LAST_LOG}" || die "the guards replayed a pass after the user's shellcheckrc changed"
   cat >"$repo/loose" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -897,6 +957,8 @@ EOF
   expect_fail env PATH="$stub:$PATH" XDG_CACHE_HOME="$WORK/cache" "$repo/tests/guards"
   expect_fail env PATH="$stub:$PATH" XDG_CACHE_HOME="$WORK/cache" "$repo/tests/guards"
   grep -q "SC2086" "${LAST_LOG}" || die "the guards cached a shellcheck finding"
+  expect_fail env PATH="$stub:$PATH" XDG_CACHE_HOME="$WORK/cache" SHELLCHECK_OPTS="-e SC2086" "$repo/tests/guards"
+  grep -q "SC2086" "${LAST_LOG}" || die "SHELLCHECK_OPTS silenced a shellcheck finding"
 }
 
 test_rust_offline() {

@@ -19,6 +19,8 @@ plant_bad_rules() {
   printf '# One\n\n# Two\n' >"$rules/twice.md"
   printf '# Fenced\n\n\x60\x60\x60bash\n# build\n\x60\x60\x60\n\n~~~~\n# also\n~~~~\n' >"$rules/fenced.md"
   printf '# Old\n\nThis rule %s apply.\n' "used to" >"$rules/old.md"
+  printf '# Moved\n\nThis rule was %s flow.\n' "ported from" >"$rules/moved.md"
+  printf '# Present\n\nIt takes the port from \x60PORT\x60, which is %s pick it.\n' "used to" >"$rules/present.md"
   printf -- '---\nname: front\n---\n\n# Front\n' >"$rules/front.md"
   printf '# Story\n\n## %s\n\nText.\n' Why >"$rules/story.md"
   printf '# Cite\n\nSee \x60%s\x60, \x60%s\x60 and \x60%s\x60.\n' nowhere.md starter/.claude/rules/gone.md \
@@ -34,7 +36,7 @@ check_bad_rules() {
   local msg missed=""
   for msg in "wide.md: 8109 characters (cap 8000)" "wide.md:3: 8100 characters (cap 80)" "wrap.md:3: 120 characters (cap 80)" \
     "late.md: does not lead with an H1" "twice.md: 2 H1 headings (want 1)" \
-    "old.md: backward-facing wording" "front.md: frontmatter" "story.md: narrative heading" \
+    "old.md: backward-facing wording" "moved.md: backward-facing wording" "front.md: frontmatter" "story.md: narrative heading" \
     "cite.md: cites missing nowhere.md" "cite.md: cites missing starter/.claude/rules/gone.md" \
     "linked.md: links to a file outside every .claude/rules folder, which bin/commit never reviews or stamps"; do
     grep -qxF "guards: .claude/rules/$msg" "${LAST_LOG}" || missed+=" [$msg]"
@@ -45,6 +47,7 @@ check_bad_rules() {
   ! grep -qF "linked.md: no audit stamp" "${LAST_LOG}" || die "a rule linked outside the rules folders was asked for a stamp"
   ! grep -qF "web/api.md: cites missing" "${LAST_LOG}" || die "a nested rule citing its sibling or a top-level rule was failed"
   ! grep -qE "fenced\.md: [0-9]+ H1 headings" "${LAST_LOG}" || die "a # line inside a code fence counted as an H1"
+  ! grep -qF "present.md: backward-facing wording" "${LAST_LOG}" || die "present-tense wording was failed as backward-facing"
 }
 
 plant_bad_claude() {
@@ -154,12 +157,16 @@ EOF
   failing_scans "$repo" "$WORK/failing" perl "sh|bash" "bash script"
   failing_scans "$repo" "$WORK/failing" perl "entry point is not executable" "entry point"
   failing_scans "$repo" "$WORK/failing" perl "audited:" rule
+  failing_scans "$repo" "$WORK/failing" perl "split_args" "JS test call"
   failing_scans "$repo" "$WORK/failing" grep "-nIHE -lE -nHE -Lw -l" suppression "skip candidate" "time limit" install \
     packages_check SimpleCov
-  failing_scans "$repo" "$WORK/failing" grep "-nE -noE -LE" skip "matching line" "time limit value" update
+  failing_scans "$repo" "$WORK/failing" grep "-nE -noE -LE" skip "matching line" "time limit value" update \
+    "Xcode test selection"
+  failing_scans "$repo" "$WORK/failing" awk "autotests" "Cargo test target"
   failing_scans "$repo" "$WORK/failing" grep "-lI" "text file"
-  failing_scans "$repo" "$WORK/failing" grep "-E -vE" rustfmt shellcheckrc setup.cfg
+  failing_scans "$repo" "$WORK/failing" grep "-E -vE" rustfmt setup.cfg
   failing_scans "$repo" "$WORK/failing" awk "want=" "config section"
+  failing_scans "$repo" "$WORK/failing" awk "keys=" shellcheckrc
 }
 
 test_guards_tools() {
@@ -219,6 +226,8 @@ scan_plants() {
   printf 'max_width = 100\n' >"$repo/rustfmt.toml"
   printf 'source-path=SCRIPTDIR\n' >"$repo/.shellcheckrc"
   printf '[metadata]\nname = app\n' >"$repo/setup.cfg"
+  printf '[package]\nname = "app"\n' >"$repo/Cargo.toml"
+  printf '{}\n' >"$repo/App.xctestplan"
 }
 
 failing_tool_stubs() {

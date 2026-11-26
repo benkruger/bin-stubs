@@ -18,7 +18,7 @@ GENERATED_NAMES=(
 EXEMPT_PATHS=()
 
 BANNED_SUPPRESSIONS='shellcheck[ ]disable|eslint[-](disable|enable)|@ts[-](ignore|expect-error|nocheck)|(istanbul|v8|c8)[ ]ignore|biome[-]ignore|rubocop[:](disable|todo)|:no[c]ov:|#[ ]*no[q]a|type[:][ ]*ignore|no[_]type[_]check|pragma[:] no cover|prettier[-]ignore|markdownlint[-](disable|configure[-]file)|#!?\[(al[l]ow|expec[t])\(|swift[-]format[-]ignore|swiftlint[:]disable|[$](VERBOS[E]|-[vw])[[:space:]]*=[[:space:]]*(nil|false)|Warning\[[^]]*\][[:space:]]*=[[:space:]]*(nil|false)'
-BACKWARD_FACING='\bwe hit\b|during PR #|after the fix|\bused to\b|\bno longer\b|\b(previously|formerly)\b|in the past|removed in PR|\bport(ed)? (of|from)\b'
+BACKWARD_FACING='\bwe hit\b|during PR #|after the fix|(?<!\bis )(?<!\bare )(?<!\bbe )(?<!\bbeen )(?<!\bwas )(?<!\bwere )\bused to\b|\bno longer\b|\b(previously|formerly)\b|in the past|removed in PR|\bported (of|from)\b'
 NARRATIVE_HEADING='^##[[:space:]]+(why|rationale|background|history|cross-references?|how to apply)\b'
 
 failures=0
@@ -108,7 +108,7 @@ sub kind_of {
   return 'python' if $path =~ /\.pyi?\z/;
   return 'toml' if $path =~ /\.toml\z/;
   return 'yaml' if $path =~ /\.ya?ml\z/;
-  return 'line' if $path =~ /(?:\A|\/)\.(?:gitignore|gitattributes|shellcheckrc)\z/;
+  return 'line' if $path =~ /(?:\A|\/)(?:\.gitignore|\.gitattributes|\.?shellcheckrc)\z/;
   return 'shell' if $path =~ /\.(?:sh|bash)\z/;
   return 'ruby' if $first =~ /\A#!.*\bruby\b/;
   return 'python' if $first =~ /\A#!.*\bpython/;
@@ -242,6 +242,15 @@ sub slash_lines {
       $i = $end < 0 ? $n : $end;
     } elsif (!$block_only && $c eq '/' && allows_regex($text, $i)) {
       $i = skip_regex($text, $i);
+    } elsif ($rust && $c =~ /[bcr]/ && ($i == 0 || substr($text, $i - 1, 1) !~ /\w/)
+      && substr($text, $i, 260) =~ /\A[bc]?r(#*)"/) {
+      my $close = '"' . $1;
+      my $end = index($text, $close, $i + length $&);
+      $i = $end < 0 ? $n : $end + length $close;
+    } elsif ($swift && $c eq '#' && substr($text, $i, 260) =~ /\A(#+)("(?:"")?)/) {
+      my $close = $2 . $1;
+      my $end = index($text, $close, $i + length $&);
+      $i = $end < 0 ? $n : $end + length $close;
     } elsif ($rust && $c eq "'") {
       my $rest = substr($text, $i, 16);
       $i += $rest =~ /\A'(?:\\(?:u\{[0-9a-fA-F]{1,6}\}|x[0-9a-fA-F]{2}|.)|[^\\'\n])'/ ? length $& : 1;
@@ -285,6 +294,7 @@ sub hash_lines {
   my ($text, $kind) = @_;
   my @found;
   my ($quote, $heredoc, $block, $leading, $scalar) = ('', '', 0, 1, -1);
+  my (@outer, @depth);
   my @lines = split /\n/, $text, -1;
   for my $k (0 .. $#lines) {
     my ($line, $no) = ($lines[$k], $k + 1);
@@ -318,6 +328,13 @@ sub hash_lines {
           $i += 2;
           next;
         }
+        if ($kind eq 'shell' && $quote eq '"' && $c eq '$' && substr($line, $i + 1, 1) eq '(') {
+          push @outer, $quote;
+          push @depth, 0;
+          $quote = '';
+          $i += 2;
+          next;
+        }
         $quote = '' if $c eq substr($quote, -1);
       } elsif ($c eq '\\') {
         $i += 2;
@@ -325,6 +342,15 @@ sub hash_lines {
       } elsif ((($c eq "'" || $c eq '"') && ($kind ne 'yaml' || substr($line, 0, $i) =~ /(?:\A|[:,\[{-])\s*\z/))
         || ($c eq '`' && ($kind eq 'shell' || $kind eq 'ruby'))) {
         $quote = $kind eq 'shell' && $c eq "'" && $i > 0 && substr($line, $i - 1, 1) eq '$' ? "\$'" : $c;
+      } elsif (@outer && $c eq '(') {
+        $depth[-1]++;
+      } elsif (@outer && $c eq ')') {
+        if ($depth[-1]) {
+          $depth[-1]--;
+        } else {
+          pop @depth;
+          $quote = pop @outer;
+        }
       } elsif ($kind eq 'ruby' && $c eq '/'
         && substr($line, 0, $i) =~ /(?:\A|[=~(,|&!;{\[]|\b(?:if|unless|when|and|or|not|return))\s*\z/) {
         my ($j, $class) = ($i + 1, 0);
@@ -549,12 +575,16 @@ swift_format_ok() {
 }
 
 shellcheckrc_ok() {
-  local allowed="^[[:space:]]*(#|$)|^[[:space:]]*($SHELLCHECKRC_KEYS)="
-  [ -z "$(grep_scan shellcheckrc -vE "$allowed" "$1")" ]
+  local bad
+  bad="$(awk -v keys="^($SHELLCHECKRC_KEYS)=" '
+    /^[[:space:]]*#/ { next }
+    { for (i = 1; i <= NF; i++) if ($i !~ keys) { print NR; next } }
+  ' "$1" 2>>"$scan_errors")" || scan_ended shellcheckrc
+  [ -z "$bad" ]
 }
 
 rustfmt_ok() {
-  [ -z "$(grep_scan rustfmt -E '^[[:space:]]*(disable_all_formatting|ignore)[[:space:]]*=' "$1")" ]
+  [ -z "$(grep_scan rustfmt -E '^[[:space:]]*["'"'"']?(disable_all_formatting|ignore)["'"'"']?[[:space:]]*=' "$1")" ]
 }
 
 cargo_config_ok() {
@@ -627,9 +657,20 @@ my $path = shift;
 my $dir = dirname($path);
 open my $fh, '<', $path or exit 1;
 my $text = do { local $/; <$fh> };
-my ($section) = $text =~ /^\[tool\.mypy\]\s*\n(.*?)(?=^\[|\z)/ms;
-exit 0 unless defined $section;
-my ($value) = $section =~ /^\s*plugins\s*=\s*(\[[^\]]*\]|"[^"]*"|'[^']*')/m;
+my ($section, $at, $value) = ('', 0);
+for my $line (split /^/, $text) {
+  $at += length $line;
+  if ($line =~ /^\s*\[/) {
+    ($section = $line) =~ s/[\[\]\s"']//g;
+    next;
+  }
+  next unless $line =~ /^\s*([^=]+?)\s*=/;
+  my ($key, $start) = ($1, $at - length($line) + $+[0]);
+  $key =~ s/[\s"']//g;
+  next unless ($section eq '' ? $key : "$section.$key") eq 'tool.mypy.plugins';
+  ($value) = substr($text, $start) =~ /\A\s*(\[[^\]]*\]|"[^"]*"|'[^']*')/;
+  last;
+}
 exit 0 unless defined $value;
 for my $name ($value =~ /["']([^"']*)["']/g) {
   exit 1 if $name =~ m{[/\\]|\.py\z};
@@ -645,7 +686,7 @@ PERL
 rust_files=()
 for path in "${files[@]}" ${links[@]+"${links[@]}"}; do
   case "${path##*/}" in
-    biome.json | biome.jsonc)
+    biome.json | biome.jsonc | .biome.json | .biome.jsonc)
       biome_ok "$path" ||
         fail "$path: Biome settings outside its list (\$schema, vcs, files maxSize or ignoreUnknown, formatter style keys with enabled true, assist on, linter.enabled true, linter.rules preset all or a group at error)"
       ;;
@@ -697,7 +738,7 @@ for path in "${files[@]}" ${links[@]+"${links[@]}"}; do
     .swift-format)
       swift_format_ok "$path" || fail "$path: turns a swift-format rule off"
       ;;
-    .shellcheckrc)
+    .shellcheckrc | shellcheckrc)
       shellcheckrc_ok "$path" ||
         fail "$path: holds a directive other than source-path, external-sources or enable"
       ;;
@@ -727,7 +768,7 @@ if [ "${#rust_files[@]}" -gt 0 ]; then
   done <<<"$hits"
 fi
 
-SKIP_JS="\\b(test|it|describe|suite|t|c|ctx|context)([[:space:]]*\\.[[:space:]]*[A-Za-z]+)*[[:space:]]*\\.[[:space:]]*(skip|only|todo|skipIf|runIf|fails|failing)\\b|\\b(xit|xtest|xdescribe|fit|fdescribe)[[:space:]]*\\(|\\b(test|it|describe|suite)[[:space:]]*\\(.*\\b(skip|only|todo)[[:space:]]*:[[:space:]]*(true\\b|[\"'\`])"
+SKIP_JS="\\b(test|it|describe|suite)([[:space:]]*\\.[[:space:]]*[A-Za-z]+)*[[:space:]]*\\.[[:space:]]*(skip|only|todo|skipIf|runIf|fails|failing)\\b|\\b(t|c|ctx|context)([[:space:]]*\\.[[:space:]]*[A-Za-z]+)*[[:space:]]*\\.[[:space:]]*(skip|only|todo|skipIf|runIf|fails|failing)[[:space:]]*\\(|\\b(test|describe)([[:space:]]*\\.[[:space:]]*[A-Za-z]+)*[[:space:]]*\\.[[:space:]]*(fixme|fail)\\b|\\b(xit|xtest|xdescribe|fit|fdescribe)[[:space:]]*\\("
 SKIP_PY='\bmark\.(skip|skipif|xfail)\b|\bpytest\.(skip|xfail|importorskip)[[:space:]]*\(|@unittest\.(skip|skipIf|skipUnless|expectedFailure)\b|\.skipTest[[:space:]]*\(|\bcollect_ignore(_glob)?\b|\bSkipTest\b|^[[:space:]]*@(skip|skipIf|skipUnless|expectedFailure)\b|\bpytest_ignore_collect\b'
 SKIP_RUBY='^[[:space:]]*(skip|skip_until|pending|xit|xdescribe|xcontext|xspecify|xexample|fit|fdescribe|fcontext|fspecify|fexample|focus)([[:space:]]*\(|[[:space:]]+[^-=+*/%&|<>![:space:]]|[[:space:]]*$)|^[[:space:]]*(it|specify|example|scenario|describe|context|feature)\b.*(\b(skip|focus|pending)[[:space:]]*:[[:space:]]*(true\b|["'"'"'])|,[[:space:]]*:(skip|focus|pending)\b)'
 SKIP_RUST='#\[[[:space:]]*ignore[[:space:]]*[]=(]'
@@ -746,10 +787,78 @@ skip_pattern_of() {
   esac
 }
 
+js_test_calls() {
+  perl - "$@" <<'PERL'
+use strict;
+use warnings;
+
+sub split_args {
+  my ($text, $at) = @_;
+  my ($depth, $quoted, $start, @args) = (1, '', $at);
+  while ($depth > 0 && $at < length $text) {
+    my $c = substr($text, $at++, 1);
+    if ($quoted ne '') {
+      if ($c eq '\\') {
+        $at++;
+      } elsif ($c eq $quoted) {
+        $quoted = '';
+      }
+    } elsif ($c eq '"' || $c eq "'" || $c eq '`') {
+      $quoted = $c;
+    } elsif ($c =~ /[\[{(]/) {
+      $depth++;
+    } elsif ($c =~ /[\]})]/) {
+      $depth--;
+    } elsif ($c eq ',' && $depth == 1) {
+      push @args, [$start, $at - 1 - $start];
+      $start = $at;
+    }
+  }
+  push @args, [$start, $at - 1 - $start] if $depth == 0;
+  return @args;
+}
+
+my $call = qr/(?<![\w\$.])(?:(?:t|c|ctx|context)\s*\.\s*)?(?:test|it|describe|suite)(?:\s*\.\s*\w+)*\s*\(/;
+my $flag = qr/["\x27]?(?:skip|only|todo|fails)["\x27]?/;
+my $function = qr/\A\s*(?:async\b|function\b|\([^)]*\)\s*=>|[\w\$]+\s*=>)/;
+for my $path (@ARGV) {
+  open my $fh, '<', $path or die "$path: $!\n";
+  my $text = do { local $/; <$fh> };
+  close $fh;
+  my $line_at = sub { (substr($text, 0, $_[0]) =~ tr/\n//) + 1 };
+  while ($text =~ /$call/g) {
+    my $resume = pos $text;
+    my @args = split_args($text, $resume);
+    my @bodies = map { substr($text, $_->[0], $_->[1]) } @args;
+    for my $i (0 .. $#args) {
+      next unless $bodies[$i] =~ /\A\s*\{/;
+      for my $entry (split_args($text, $args[$i][0] + $+[0])) {
+        my ($at, $size) = @$entry;
+        next unless substr($text, $at, $size) =~ /\A(\s*)$flag\s*(?::\s*(.*?))?\s*\z/s;
+        next if defined $2 && $2 eq 'false';
+        print "skip $path:", $line_at->($at + length $1), "\n";
+      }
+    }
+    if (@args >= 3 && $bodies[2] =~ /\A(\s*)\S/) {
+      my $lead = length $1;
+      my $limit = $bodies[2];
+      my $bare = $limit =~ /\A\s*[\w\$.]+\s*\z/ && $bodies[1] !~ $function;
+      unless ($limit =~ $function || $limit =~ /\A\s*\{/ || $bare || $limit =~ /\A\s*[0-9][0-9_]*\s*\z/) {
+        print "limit $path:", $line_at->($args[2][0] + $lead), "\n";
+      }
+    }
+    pos($text) = $resume;
+  }
+}
+PERL
+}
+
 test_files=()
+js_tests=()
 for path in "${files[@]}"; do
   skip_pattern_of "$path"
   [ -z "$skip_pattern" ] || test_files+=("$path")
+  [ "$skip_pattern" != "$SKIP_JS" ] || js_tests+=("$path")
 done
 skip_candidates=$'\n'
 if [ "${#test_files[@]}" -gt 0 ]; then
@@ -767,8 +876,17 @@ for path in "${test_files[@]+"${test_files[@]}"}"; do
     fail "$path:$line: a test that does not run (skipped, focused, todo or expected to fail)"
   done < <(grep_scan skip -nE "$skip_pattern" "$path" | cut -d: -f1)
 done
+if [ "${#js_tests[@]}" -gt 0 ]; then
+  hits="$(js_test_calls "${js_tests[@]}")" || fail "the JS test call scan did not finish"
+  while IFS=' ' read -r kind hit; do
+    case "$kind" in
+      skip) fail "$hit: a test that does not run (skipped, focused, todo or expected to fail)" ;;
+      limit) fail "$hit: raises the test time limit beyond the runner's default; only a fixed number on one test is allowed" ;;
+    esac
+  done <<<"$hits"
+fi
 
-TIMEOUT_FLAGS='(--(test|hook|teardown)-?[tT]imeout|--timeout)\b|(-o|--override-ini)[[:space:]=]*timeout[[:space:]]*=|-(default|maximum)-test-execution-time-allowance\b|-test-timeouts-enabled\b'
+TIMEOUT_FLAGS='(--(test|hook|teardown)-?[tT]imeout|--timeout)\b|(-o|--override-ini)[[:space:]=]*["'"'"']?timeout[[:space:]]*=|\bPYTEST_TIMEOUT\b|-(default|maximum)-test-execution-time-allowance\b|-test-timeouts-enabled\b'
 TIMEOUT_JS_CONFIG='\b(testTimeout|hookTimeout|teardownTimeout)\b'
 TIMEOUT_JS_CODE='\b(jest\.setTimeout|vi\.setConfig|setDefaultTimeout)[[:space:]]*\('
 TIMEOUT_JS_LIMIT='\btimeout[[:space:]]*:[^,})]*'
@@ -778,8 +896,8 @@ TIMEOUT_XCTESTPLAN='"(defaultTestExecutionTimeAllowance|maximumTestExecutionTime
 
 section_key_lines() {
   awk -v want="$2" -v key="$3" '
-    /^[[:space:]]*\[/ { section = $0; gsub(/[][[:space:]]/, "", section); next }
-    section ~ want && $0 ~ ("^[[:space:]]*" key "[[:space:]]*=") { print NR }
+    /^[[:space:]]*\[/ { section = $0; gsub(/[][[:space:]"\047]/, "", section); next }
+    section ~ want && $0 ~ ("^[[:space:]]*[\"\047]?" key "[\"\047]?[[:space:]]*[:=]") { print NR }
   ' "$1" 2>>"$scan_errors" || scan_ended "config section"
 }
 
@@ -808,8 +926,12 @@ timeout_lines() {
       section_key_lines "$1" '^tool\.pytest(\.ini_options)?$' timeout
       matching_lines "$TIMEOUT_FLAGS" "$1"
       ;;
-    */pytest.ini | */tox.ini | */setup.cfg)
+    */pytest.ini | */.pytest.ini | */tox.ini | */setup.cfg)
       section_key_lines "$1" '^(pytest|tool:pytest)$' timeout
+      matching_lines "$TIMEOUT_FLAGS" "$1"
+      ;;
+    */pytest.toml | */.pytest.toml)
+      section_key_lines "$1" '^pytest$' timeout
       matching_lines "$TIMEOUT_FLAGS" "$1"
       ;;
     *.xctestplan) matching_lines "$TIMEOUT_XCTESTPLAN" "$1" ;;
@@ -825,7 +947,7 @@ timeout_lines() {
   esac
 }
 
-TIMEOUT_ANY="$TIMEOUT_FLAGS|$TIMEOUT_JS_CONFIG|$TIMEOUT_JS_CODE|$TIMEOUT_JS_LIMIT|$TIMEOUT_PY_LIMIT|$TIMEOUT_SWIFT_CODE|$TIMEOUT_XCTESTPLAN|^[[:space:]]*timeout[[:space:]]*="
+TIMEOUT_ANY="$TIMEOUT_FLAGS|$TIMEOUT_JS_CONFIG|$TIMEOUT_JS_CODE|$TIMEOUT_JS_LIMIT|$TIMEOUT_PY_LIMIT|$TIMEOUT_SWIFT_CODE|$TIMEOUT_XCTESTPLAN|^[[:space:]]*[\"']?timeout[\"']?[[:space:]]*[:=]"
 
 while IFS= read -r path; do
   while IFS= read -r line; do
@@ -838,13 +960,42 @@ PYTEST_COLLECTION='(norecursedirs|python_files|python_classes|python_functions)'
 for path in "${files[@]}"; do
   case "/$path" in
     */pyproject.toml) want='^tool\.pytest(\.ini_options)?$' ;;
-    */pytest.ini | */tox.ini | */setup.cfg) want='^(pytest|tool:pytest)$' ;;
+    */pytest.ini | */.pytest.ini | */tox.ini | */setup.cfg) want='^(pytest|tool:pytest)$' ;;
+    */pytest.toml | */.pytest.toml) want='^pytest$' ;;
     *) continue ;;
   esac
   while IFS= read -r line; do
     [ -n "$line" ] || continue
     fail "$path:$line: leaves test files out of pytest's collection"
   done < <(section_key_lines "$path" "$want" "$PYTEST_COLLECTION")
+done
+
+TEST_SELECTION_XCODE='skipped[[:space:]]*=[[:space:]]*"YES"|<(SkippedTests|SelectedTests)\b|"(skippedTests|selectedTests|skippedTags|selectedTags)"[[:space:]]*:|"enabled"[[:space:]]*:[[:space:]]*false\b'
+
+cargo_test_targets() {
+  awk '
+    /^[[:space:]]*\[/ { section = $0; gsub(/[][[:space:]"\047]/, "", section); next }
+    /=/ {
+      key = $0; sub(/[[:space:]]*=.*/, "", key); gsub(/[[:space:]"\047]/, "", key)
+      value = $0; sub(/^[^=]*=[[:space:]]*/, "", value); sub(/[[:space:]]*$/, "", value)
+      full = section == "" ? key : section "." key
+      if (value == "false" && full ~ /^(package\.autotests|(lib|bin|test)\.test|test\.harness)$/) print NR
+    }
+  ' "$1" 2>>"$scan_errors" || scan_ended "Cargo test target"
+}
+
+for path in "${files[@]}"; do
+  case "/$path" in
+    */Cargo.toml) lines="$(cargo_test_targets "$path")" ;;
+    *.xcscheme | *.xctestplan)
+      lines="$(grep_scan "Xcode test selection" -nE "$TEST_SELECTION_XCODE" "$path" | cut -d: -f1)"
+      ;;
+    *) continue ;;
+  esac
+  while IFS= read -r line; do
+    [ -n "$line" ] || continue
+    fail "$path:$line: leaves tests out of the run"
+  done <<<"$lines"
 done
 
 OUTPUT_DIRS=(node_modules dist build coverage .venv target .build .flow-states)
@@ -880,7 +1031,8 @@ for path in "${files[@]}"; do
   esac
 done
 
-INSTALL_COMMANDS='\b(npm|pnpm|yarn|bun)[[:space:]]+(install|i|ci|add|update|upgrade)\b|\buv[[:space:]]+(sync|add|lock|pip)\b|\bbundle[[:space:]]+(install|update|add|lock)\b|\bcargo[[:space:]]+(fetch|update|add|generate-lockfile)\b|\bswift[[:space:]]+package[[:space:]]+(update|resolve)\b|\bxcodebuild\b.*[[:space:]]-resolvePackageDependencies\b'
+INSTALL_OPTIONS='([[:space:]]+-[^[:space:]]*([[:space:]]+[^-[:space:]][^[:space:]]*)?)*[[:space:]]+'
+INSTALL_COMMANDS="\\b(npm|pnpm|yarn|bun)$INSTALL_OPTIONS(install|i|ci|add|update|upgrade)\\b|\\buv$INSTALL_OPTIONS(sync|add|lock|pip)\\b|\\bbundle$INSTALL_OPTIONS(install|update|add|lock)\\b|\\bcargo$INSTALL_OPTIONS(fetch|update|add|generate-lockfile)\\b|\\bswift$INSTALL_OPTIONS""package$INSTALL_OPTIONS(update|resolve)\\b|\\bxcodebuild\\b.*[[:space:]]-resolvePackageDependencies\\b"
 
 leaf_scripts=()
 for path in "${files[@]}"; do
@@ -1001,13 +1153,23 @@ done < <(printf '%s\n' "${files[@]}" |
 SHELLCHECK_PASSES="${XDG_CACHE_HOME:-$HOME/.cache}/flow-guards/shellcheck"
 
 shellcheck_key() {
-  local path
+  local path dir="$ROOT" rcs=("$HOME/.shellcheckrc" "${XDG_CONFIG_HOME:-$HOME/.config}/shellcheckrc")
+  while [ "$dir" != / ]; do
+    dir="$(dirname "$dir")"
+    rcs+=("$dir/.shellcheckrc" "$dir/shellcheckrc")
+  done
+  for path in "${files[@]}"; do
+    case "$path" in
+      .shellcheckrc | */.shellcheckrc | shellcheckrc | */shellcheckrc) rcs+=("$path") ;;
+    esac
+  done
   {
     shellcheck --version
-    for path in "${files[@]}" "$HOME/.shellcheckrc"; do
-      case "$path" in
-        .shellcheckrc | */.shellcheckrc) [ ! -f "$path" ] || cat "$path" ;;
-      esac
+    for path in "${rcs[@]}"; do
+      if [ -f "$path" ]; then
+        printf '%s\n' "$path"
+        cat "$path"
+      fi
     done
     shasum -a 256 "$@"
   } | shasum -a 256 | cut -d' ' -f1
@@ -1020,7 +1182,7 @@ if [ "${#scripts[@]}" -gt 0 ]; then
     key="$(shellcheck_key "${scripts[@]}")"
     if [ ! -e "$SHELLCHECK_PASSES/$key" ]; then
       if printf '%s\0' "${scripts[@]}" |
-        xargs -0 -n 16 -P "$(getconf _NPROCESSORS_ONLN)" shellcheck -x -P SCRIPTDIR >&2; then
+        xargs -0 -n 16 -P "$(getconf _NPROCESSORS_ONLN)" env -u SHELLCHECK_OPTS shellcheck -x -P SCRIPTDIR >&2; then
         { mkdir -p "$SHELLCHECK_PASSES" && : >"$SHELLCHECK_PASSES/$key"; } 2>/dev/null || true
       else
         fail "shellcheck reported findings (above)"

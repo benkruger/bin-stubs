@@ -13,9 +13,9 @@ match it or its lockfile.
   `install`, `i`, `ci`, `add`, `update` or `upgrade`; uv `sync`, `add`,
   `lock` or `pip`; bundle `install`, `update`, `add` or `lock`; cargo
   `fetch`, `update`, `add` or `generate-lockfile`; `swift package update`
-  or `resolve`; `xcodebuild -resolvePackageDependencies`), and none
-  matching `UPDATE_COMMANDS`, an `update`,
-  `upgrade` or `--upgrade` argument. It fails a line matching
+  or `resolve`; `xcodebuild -resolvePackageDependencies`; each with any
+  options before its subcommand), and none matching `UPDATE_COMMANDS`, an
+  `update`, `upgrade` or `--upgrade` argument. It fails a line matching
   `INSTALL_COMMANDS` in any other script directly under such a folder.
   Trigger: any change to a gate script.
 - Every other gate script of a language whose
@@ -26,4 +26,4 @@ match it or its lockfile.
   directly under that `bin/_<language>/` folder that never names
   `packages_check`. Trigger: any change to how a gate script gets its
   packages.
-<!-- audited: 03cdfbfcec28 -->
+<!-- audited: 0526649cf5fc -->
