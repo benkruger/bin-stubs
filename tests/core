@@ -86,6 +86,18 @@ test_root_format() {
   grep -q "sourced.sh" "${LAST_LOG}" || die "format --check skipped a .sh file with no shebang"
   grep -qx "if true;then" "$repo/messy" || die "bin/format --check rewrote the script"
   grep -qx "#Heading without a space" "$repo/notes.md" || die "bin/format --check rewrote the Markdown"
+  mkdir -p "$repo/a/test"
+  printf '%s\n' '#!/usr/bin/env bash' 'set -euo pipefail' 'true' >"$repo/a/test/run"
+  chmod +x "$repo/a/test/run"
+  expect_ok "$repo/bin/format" a/test/run
+  grep -qE '^  suite +: SKIP$' "${LAST_LOG}" || die "bin/format on an app's file ran the repo-level formatter"
+  grep -qx "if true;then" "$repo/messy" || die "bin/format on an app's file rewrote a repo-level script"
+  expect_ok "$repo/bin/format" notes.md
+  assert_eq "$(row_of suite "$(summary)")" "PASS" "bin/format on a repo-level file"
+  grep -qx "#Heading without a space" "$repo/notes.md" && die "bin/format notes.md left it unformatted"
+  grep -qx "if true;then" "$repo/messy" || die "bin/format notes.md rewrote a script it was not given"
+  printf '%s\n' '# Notes' '' '#Heading without a space' >"$repo/notes.md"
+  rm -r "$repo/a"
   printf '{ broken\n' >"$repo/.markdownlint.jsonc"
   expect_fail "$repo/bin/format"
   assert_eq "$(row_of suite "$(summary)")" "FAIL" "format hid a markdownlint failure"

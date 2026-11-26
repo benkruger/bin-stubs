@@ -58,6 +58,7 @@ for d in "$REPO_ROOT"/*/; do
     bin | tests | checks | node_modules | vendor | target) continue ;;
   esac
   [[ "$name" == .* ]] && continue
+  ! git check-ignore -q "$name/" 2>/dev/null || continue
   if leaf_of "${d%/}" >/dev/null; then
     targets+=("$name")
   fi
@@ -100,13 +101,35 @@ is_selector() {
   return 1
 }
 
+REPO_REAL="$(pwd -P)"
+
+repo_path() {
+  local a="$1"
+  while [[ "$a" == *//* ]]; do
+    a="${a//\/\//\/}"
+  done
+  case "$a" in
+    "$REPO_ROOT"/*) a="${a#"$REPO_ROOT"/}" ;;
+    "$REPO_REAL"/*) a="${a#"$REPO_REAL"/}" ;;
+  esac
+  while [[ "$a" == ./* ]]; do
+    a="${a#./}"
+  done
+  while [[ "$a" == ?*/ ]]; do
+    a="${a%/}"
+  done
+  printf '%s\n' "${a:-.}"
+}
+
 picks=()
 leaf_args=()
 for arg in "${rest[@]+"${rest[@]}"}"; do
   if is_selector "$arg"; then
     picks+=("${arg#--}")
-  else
+  elif [[ "$arg" == -* ]]; then
     leaf_args+=("$arg")
+  else
+    leaf_args+=("$(repo_path "$arg")")
   fi
 done
 
@@ -159,6 +182,8 @@ select_all=0
 selected=()
 run_root_app=0
 run_suite=0
+from_paths=0
+suite_paths=()
 
 git_config_count="${GIT_CONFIG_COUNT:-0}"
 export "GIT_CONFIG_KEY_$git_config_count=core.quotePath" "GIT_CONFIG_VALUE_$git_config_count=false"
@@ -171,6 +196,21 @@ collect_changed() {
   git -C "$REPO_ROOT" diff -z --name-only --no-renames "$base" || return 1
   git -C "$REPO_ROOT" ls-files -z --others --exclude-standard || return 1
 }
+
+if [ "$PHASE" = changed ] && [ "${#picks[@]}" -eq 0 ] && [[ " ${leaf_args[*]-} " == *" --files "* ]]; then
+  if ! listing="$(collect_changed | sort -zu | tr '\0' '\n')"; then
+    echo "bin/changed: git could not list the changed files" >&2
+    exit 1
+  fi
+  while IFS= read -r path; do
+    [ -n "$path" ] && [ -f "$path" ] || continue
+    case "$path" in
+      .ci-timeout | */.ci-timeout | .flow-states/* | */.flow-states/*) continue ;;
+    esac
+    printf '%s\n' "$path"
+  done <<<"$listing"
+  exit 0
+fi
 
 if [ "${#picks[@]}" -gt 0 ]; then
   for t in "${targets[@]+"${targets[@]}"}"; do
@@ -187,6 +227,7 @@ if [ "${#picks[@]}" -gt 0 ]; then
 elif [ "$force" -eq 1 ] || [ "$PHASE" = "dependencies" ]; then
   select_all=1
 elif [ "$PHASE" != changed ] && named_paths; then
+  from_paths=1
   for a in "${leaf_args[@]}"; do
     case "$a" in
       -*) continue ;;
@@ -194,12 +235,17 @@ elif [ "$PHASE" != changed ] && named_paths; then
     owner="$(owner_of "$a" || true)"
     if [ -n "$owner" ]; then
       already_selected "$owner" || selected+=("$owner")
+    elif [ -n "$suite_leaf" ] && { [ "$has_root_app" -eq 0 ] || { is_corpus "$a" && [[ "$a" != tests/* ]]; }; }; then
+      run_suite=1
+      suite_paths+=("$a")
     elif [ "$has_root_app" -eq 1 ]; then
       run_root_app=1
     else
       select_all=1
     fi
   done
+elif [ "$PHASE" = ci ]; then
+  select_all=1
 else
   changed=()
   changed_list="$(mktemp "${TMPDIR:-/tmp}/bin-dispatch.XXXXXX")"
@@ -257,7 +303,7 @@ if [ "$select_all" -eq 1 ]; then
   fi
 fi
 
-if [ "${#picks[@]}" -eq 0 ]; then
+if [ "${#picks[@]}" -eq 0 ] && [ "$from_paths" -eq 0 ]; then
   if [ "$PHASE" = "ci" ] || [ "$PHASE" = "test" ]; then
     if [ "${#selected[@]}" -gt 0 ] || [ "$run_root_app" -eq 1 ]; then
       if [ -n "$suite_leaf" ]; then
@@ -305,6 +351,13 @@ consider_paths() {
       -*)
         FILTERED+=("$a")
         ;;
+      "$name")
+        case "$PHASE" in
+          format | lint | build | test) FILTERED+=(--all) ;;
+        esac
+        paths=$((paths + 1))
+        mine=$((mine + 1))
+        ;;
       "$name"/*)
         FILTERED+=("${a#"$name"/}")
         paths=$((paths + 1))
@@ -338,7 +391,7 @@ consider_paths() {
 
 run_one() {
   local display="$1" folder="$2" leaf="$3" sname="${4:-ci-sentinel}"
-  local sentinel="" mt_before="" rc=0 result args=() began
+  local sentinel="" mt_before="" rc=0 result args=() began only_checks
   FILTERED=()
   if [ "$display" = "suite" ]; then
     for a in "${leaf_args[@]+"${leaf_args[@]}"}"; do
@@ -346,6 +399,15 @@ run_one() {
         "ci --clean" | "format --check") FILTERED+=("$a") ;;
       esac
     done
+    if [ "$PHASE" = format ]; then
+      FILTERED+=(${suite_paths[@]+"${suite_paths[@]}"})
+    elif [ "$PHASE" = test ] && [ "${#suite_paths[@]}" -gt 0 ]; then
+      only_checks=1
+      for a in "${suite_paths[@]}"; do
+        [[ "$a" == checks/?* ]] || only_checks=0
+      done
+      [ "$only_checks" -eq 0 ] || FILTERED+=("${suite_paths[@]}")
+    fi
   elif [ "$display" = "root" ]; then
     if ! consider_paths "__root__"; then
       NAMES+=("$display")
@@ -399,7 +461,7 @@ trap 'kill -TERM -- ${BG_GROUP[@]+"${BG_GROUP[@]}"} 2>/dev/null || true
   for log in ${BG_LOG[@]+"${BG_LOG[@]}"}; do rm -f "$log" "$log.rc"; done
   exit 130' INT TERM
 
-if [ "$run_suite" -eq 1 ]; then
+if [ "$run_suite" -eq 1 ] && [ "$PHASE" != changed ]; then
   run_one "suite" "$REPO_ROOT" "$REPO_ROOT/$suite_leaf" "root-suite-sentinel"
 fi
 
@@ -528,6 +590,10 @@ while [ "$i" -lt "${#BG_PID[@]}" ]; do
   TIMES+=("$secs")
   i=$((i + 1))
 done
+
+if [ "$run_suite" -eq 1 ] && [ "$PHASE" = changed ]; then
+  run_one "suite" "$REPO_ROOT" "$REPO_ROOT/$suite_leaf" "root-suite-sentinel"
+fi
 
 duration() {
   local secs="$1"

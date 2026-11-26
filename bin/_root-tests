@@ -5,12 +5,12 @@ cd "$ROOT"
 
 force=0
 clean=0
-single=""
+named=()
 for arg in "$@"; do
   case "$arg" in
     --force) force=1 ;;
     --clean) clean=1 ;;
-    checks/*) single="$arg" ;;
+    checks/*) named+=("$arg") ;;
     *)
       echo "root-suite: unknown argument: $arg" >&2
       exit 2
@@ -33,9 +33,16 @@ dated() {
   fi
 }
 
-if [ -n "$single" ]; then
-  dated "$ROOT/$single" || exit 1
-  exec "$ROOT/$single"
+if [ "${#named[@]}" -gt 0 ]; then
+  failed=0
+  for check in "${named[@]}"; do
+    dated "$ROOT/$check" || failed=1
+    if ! "$ROOT/$check"; then
+      echo "root-suite: $check failed" >&2
+      failed=1
+    fi
+  done
+  exit "$failed"
 fi
 
 branch="$(git symbolic-ref -q --short HEAD 2>/dev/null || git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")"

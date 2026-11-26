@@ -54,6 +54,14 @@ test_dispatch() {
   assert_eq "$(row_of shell "$sum")" "SKIP" "clean tree shell"
   assert_eq "$(row_of suite "$sum")" "SKIP" "clean tree suite"
   [ -f "$repo/.flow-states/main/root-suite-sentinel" ] || die "the suite saved no pass"
+  rm -rf "$repo/python/.flow-states/main"
+  printf 'true\n' >>"$repo/shell/add"
+  expect_ok "$repo/bin/ci"
+  sum="$(summary)"
+  assert_eq "$(row_of python "$sum")" "PASS" "a clean app that never passed, beside a dirty one"
+  expect_ok "$repo/bin/ci" --clean
+  [ ! -f "$repo/python/.flow-states/main/ci-sentinel" ] || die "bin/ci --clean beside a dirty app left python's saved pass"
+  expect_ok "$repo/bin/ci"
   expect_ok "$repo/bin/ci" --clean
   [ ! -f "$repo/.flow-states/main/root-suite-sentinel" ] || die "bin/ci --clean left the suite's saved pass"
   [ ! -f "$repo/python/.flow-states/main/ci-sentinel" ] || die "bin/ci --clean left python's saved pass"
@@ -83,22 +91,28 @@ test_dispatch_select() {
   assert_eq "$(row_of shell "$sum")" "PASS" "edited shell script"
   assert_eq "$(row_of python "$sum")" "SKIP" "shell script left python"
   mkdir -p "$repo/tests"
-  printf '%s\n' '#!/usr/bin/env bash' 'set -euo pipefail' 'echo "tests/guards ran"' >"$repo/tests/guards"
+  printf '%s\n' '#!/usr/bin/env bash' 'set -euo pipefail' 'echo "tests/guards ran"' \
+    '! grep -q "if true;then" shell/add' >"$repo/tests/guards"
   chmod +x "$repo/tests/guards"
   git -C "$repo" add tests/guards
   git -C "$repo" commit -q -a -m "shell script"
   expect_ok "$repo/bin/ci"
-  printf 'true\n' >>"$repo/shell/add"
+  printf '%s\n' 'if true;then' '  true' 'fi' >>"$repo/shell/add"
   expect_ok "$repo/bin/changed"
   sum="$(summary)"
   assert_eq "$(row_of shell "$sum")" "PASS" "changed shell"
   assert_eq "$(row_of python "$sum")" "SKIP" "changed leaves python"
   assert_eq "$(row_of suite "$sum")" "PASS" "changed runs the guards"
   grep -q "tests/guards ran" "${LAST_LOG}" || die "bin/changed on an app edit did not run tests/guards"
+  printf '# Notes\n' >"$repo/notes.md"
+  expect_ok "$repo/bin/changed" --files
+  assert_eq "$(cat "${LAST_LOG}")" "$(printf '%s\n' notes.md shell/add)" "bin/changed --files at the root"
+  rm "$repo/notes.md"
   expect_ok "$repo/bin/test" shell/test/add
   sum="$(summary)"
   assert_eq "$(row_of shell "$sum")" "PASS" "filtered test"
   assert_eq "$(row_of python "$sum")" "SKIP" "filter withheld python"
+  grep -qE '^  suite +: SKIP$' "${LAST_LOG}" || die "bin/test on an app's file ran the repo suite"
   expect_ok "$repo/bin/ci" --force --python --suite
   sum="$(summary)"
   assert_eq "$(row_of python "$sum")" "PASS" "selected python"
@@ -156,6 +170,14 @@ EOF
   expect_ok "$repo/bin/build"
   assert_eq "$(tr '\n' ' ' <"$log")" "root " "a root-level path with a root app"
   rm "$repo/loose.txt"
+  mkdir -p "$repo/dist/test"
+  printf '%s\n' '#!/usr/bin/env bash' >"$repo/dist/test/run"
+  chmod +x "$repo/dist/test/run"
+  : >"$log"
+  expect_ok "$repo/bin/build" --force
+  grep -qE '^  dist +:' "${LAST_LOG}" && die "the dispatcher ran a git-ignored folder as an app"
+  grep -qx "dist/" "$log" && die "a git-ignored folder's build ran"
+  rm -r "$repo/dist"
   unset BUILT
   printf '%s\n' '#!/usr/bin/env bash' 'kill -KILL 0' >"$repo/bin/_shell/build"
   printf 'x\n' >"$repo/a/x.txt"
@@ -182,6 +204,18 @@ test_dispatch_path_args() {
   sum="$(summary)"
   assert_eq "$(row_of b "$sum")" "PASS" "the app a path argument names"
   assert_eq "$(row_of a "$sum")" "SKIP" "a dirty app no path argument names"
+  cat >"$repo/b/test/run" <<'EOF'
+#!/usr/bin/env bash
+echo "ran b with: $*"
+EOF
+  for form in b b/ ./b/test/run "$repo/b/test/run"; do
+    expect_ok "$repo/bin/test" "$form"
+    sum="$(summary)"
+    assert_eq "$(row_of b "$sum")" "PASS" "bin/test $form"
+    assert_eq "$(row_of a "$sum")" "SKIP" "bin/test $form left a"
+    grep -q "^ran b with:" "${LAST_LOG}" || die "bin/test $form did not run b's tests"
+  done
+  printf '%s\n' '#!/usr/bin/env bash' 'exit 0' >"$repo/b/test/run"
   mkdir -p "$repo/test"
   printf '%s\n' '#!/usr/bin/env bash' 'exit 0' >"$repo/test/run"
   chmod +x "$repo/test/run"
@@ -327,6 +361,10 @@ test_root_check() {
   grep -qx "passing-check-ran" "${LAST_LOG}" || die "bin/_root-tests did not run the named check"
   grep -q "failing-check-ran" "${LAST_LOG}" && die "bin/_root-tests ran a check it was not named"
   [ ! -e "$repo/suite.ran" ] || die "bin/_root-tests ran tests/run for one check"
+  expect_ok "$repo/bin/test" checks/pass
+  grep -qx "passing-check-ran" "${LAST_LOG}" || die "bin/test checks/<name> did not run the named check"
+  grep -q "failing-check-ran" "${LAST_LOG}" && die "bin/test checks/<name> ran a check it was not named"
+  [ ! -e "$repo/suite.ran" ] || die "bin/test checks/<name> ran tests/run"
   expect_fail "$repo/bin/_root-tests" checks/fail
   grep -qx "failing-check-ran" "${LAST_LOG}" || die "bin/_root-tests passed a failing named check"
   rm "$repo/checks/fail"
@@ -636,13 +674,14 @@ test_app_language() {
   # shellcheck source=../../bin/lib/apps.sh
   . "$HERE/../bin/lib/apps.sh"
   for spec in "rails Gemfile" "rust Cargo.toml" "ios Package.swift" "ios App.xcodeproj" "python pyproject.toml" \
-    "typescript package.json tsconfig.json" "javascript package.json" "shell test/run"; do
+    "typescript package.json tsconfig.json" "javascript package.json" "shell test/run" \
+    "ios App.xcodeproj Gemfile" "ios Package.swift Gemfile" "ios App.xcworkspace Gemfile"; do
     read -r -a parts <<<"$spec"
     files=("${parts[@]:1}")
     dir="$(mktemp -d "$WORK/app.XXXXXX")"
     for file in "${files[@]}"; do
       case "$file" in
-        *.xcodeproj) mkdir -p "$dir/$file" ;;
+        *.xcodeproj | *.xcworkspace) mkdir -p "$dir/$file" ;;
         test/run)
           mkdir -p "$dir/test"
           printf '#!/usr/bin/env bash\n' >"$dir/test/run"
@@ -657,6 +696,17 @@ test_app_language() {
   dir="$(mktemp -d "$WORK/app.XXXXXX")"
   is_app_dir "$dir" && die "an empty folder counts as an app"
   app_language "$dir" && die "an empty folder has a language"
+  dir="$(mktemp -d "$WORK/workspace.XXXXXX")"
+  printf '%s\n' '[package]' 'name = "root"' '' '[workspace]' 'members = [' '  "core",' "  'tools/*'," '  "c*",' ']' \
+    'exclude = ["cli"]' >"$dir/Cargo.toml"
+  for file in core cli other; do
+    mkdir -p "$dir/$file"
+    printf '[package]\nname = "%s"\n' "$file" >"$dir/$file/Cargo.toml"
+  done
+  is_app_dir "$dir/core" && die "a member of the root's Cargo workspace counts as its own app"
+  app_language "$dir/core" && die "a member of the root's Cargo workspace has its own language"
+  is_app_dir "$dir/cli/" || die "a crate the root's workspace excludes is not an app"
+  is_app_dir "$dir/other" || die "a crate outside the root's workspace is not an app"
   return 0
 }
 
