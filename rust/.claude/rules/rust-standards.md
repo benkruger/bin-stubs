@@ -21,11 +21,15 @@ coverage.
   `packages.md` states; `packages_check` fails when
   `cargo fetch --offline --locked` fails: a crate is missing or
   `Cargo.lock` does not match `Cargo.toml`.
-- `rust-toolchain.toml` pins the toolchain; for a numbered channel, outside
-  CI, `bin/ci` fails unless that rustc is active. Every Rust script,
+- `bin/build`, `bin/lint` and `bin/test` run cargo offline, with
+  `CARGO_NET_OFFLINE=true`, so only `bin/dependencies` reaches the network;
+  `tests/run` fails one that runs cargo without it.
+- `rust-toolchain.toml` pins the toolchain. Outside CI, `bin/ci` fails when
+  the file is missing or names no channel and, for a numbered channel,
+  unless that rustc is active. Every Rust script,
   `bin/dependencies` included, runs with `RUSTUP_AUTO_INSTALL=0`, so
   rustup never installs the pinned toolchain; `tests/run` fails when
   `bin/dependencies` or the scripts' shared toolchain setup leaves it
   unset.
 - Trigger: any change to a Rust `bin/` script.
-<!-- audited: c221b6aaac8f -->
+<!-- audited: 372e6b2dafdd -->

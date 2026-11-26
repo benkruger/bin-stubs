@@ -592,6 +592,14 @@ EOF
       grep -q "tests/needless.rs" "${LAST_LOG}" || die "$lang lint skipped an integration test target"
       grep -q "needless_return" "${LAST_LOG}" || die "$lang lint ran without Clippy's default lints on a test target"
       rm "$app/tests/needless.rs"
+      mv "$app/rust-toolchain.toml" "$WORK/toolchain.keep"
+      CI="" expect_fail leaf "$app" "$lang" ci --force
+      grep -qF "toolchain: rust-toolchain.toml is missing" "${LAST_LOG}" || die "$lang ci ran with no pinned toolchain"
+      printf '[toolchain]\ncomponents = ["llvm-tools-preview"]\n' >"$app/rust-toolchain.toml"
+      CI="" expect_fail leaf "$app" "$lang" ci --force
+      grep -qF "toolchain: rust-toolchain.toml has no channel" "${LAST_LOG}" ||
+        die "$lang ci ran on a toolchain file that pins no channel"
+      mv "$WORK/toolchain.keep" "$app/rust-toolchain.toml"
       ;;
     rails)
       cp "$app/.rubocop.yml" "$WORK/rubocop.keep"

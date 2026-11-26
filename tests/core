@@ -864,6 +864,23 @@ EOF
   grep -q "SC2086" "${LAST_LOG}" || die "the guards cached a shellcheck finding"
 }
 
+test_rust_offline() {
+  say "Rust's build, lint and test never reach the network"
+  local stubs="$WORK/offline-cargo" app="$WORK/offline-app" script
+  mkdir -p "$stubs" "$app"
+  cat >"$stubs/cargo" <<'EOF'
+#!/usr/bin/env bash
+printf 'CARGO_NET_OFFLINE=%s\n' "${CARGO_NET_OFFLINE:-}"
+EOF
+  chmod +x "$stubs/cargo"
+  for script in build lint test; do
+    run_log env -u CARGO_NET_OFFLINE PATH="$stubs:$PATH" APP_DIR="$app" "$REPO/bin/_rust/$script"
+    grep -qx "CARGO_NET_OFFLINE=true" "${LAST_LOG}" || die "Rust bin/$script let cargo reach the network"
+    grep -qx "CARGO_NET_OFFLINE=" "${LAST_LOG}" && die "Rust bin/$script ran cargo online"
+  done
+  return 0
+}
+
 test_no_installs() {
   say "the gate and bin/dependencies never install a toolchain"
   local stubs="$WORK/no-install" app="$WORK/no-install-app"
@@ -1255,5 +1272,5 @@ run_test() {
 run_all "$WORK/logs" run_test test_settings test_scan test_root_format test_open test_qa test_query \
   test_hooks test_starter test_bare_guards test_guards_scans test_guards_tools test_guards_markdownlint test_commit test_commit_review test_commit_fix test_commit_rounds test_commit_stops test_commit_gate test_commit_failures test_copies_match test_failed_writes test_changed_empty test_parts \
   test_dispatch test_dispatch_select test_dispatch_paths test_dispatch_path_args test_git_failures test_suite_seal test_unborn test_suite_missing test_root_check \
-  test_shellcheck_cache test_no_installs test_checked_once test_dependencies_once test_steps test_jobs test_interrupt test_start test_merge test_cleanup test_complete test_ci_time test_root_app test_root_js test_root_shell test_root_changed test_die_fixture \
+  test_shellcheck_cache test_rust_offline test_no_installs test_checked_once test_dependencies_once test_steps test_jobs test_interrupt test_start test_merge test_cleanup test_complete test_ci_time test_root_app test_root_js test_root_shell test_root_changed test_die_fixture \
   test_app_language

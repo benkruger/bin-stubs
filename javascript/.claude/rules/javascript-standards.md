@@ -13,8 +13,8 @@ Biome and the app's own tests under c8 hold the JavaScript app at full strength.
   `<dir>/<name>.spec.<ext>` or `<dir>/test-<name>.<ext>`, where `<ext>` is
   `js`, `mjs`, `cjs` or `jsx`; `bin/changed` and `bin/test` share that one
   list, so a changed test holds its source too. `bin/changed` fails a changed
-  source with no twin; `bin/ci` fails any source with none, and `bin/test`
-  fails a test whose source does not exist and runs a named source's twin.
+  source with no twin, `bin/ci` any, and `bin/test` a named one; `bin/test`
+  runs a named source's twin and fails a test whose source does not exist.
 - Every source is at 100% functions, lines, branches and statements under
   c8. `bin/ci` checks every source; `bin/changed` checks the changed ones.
 - `bin/lint` skips `node_modules/` and `.flow-states/` at any depth, a top-level
@@ -38,4 +38,4 @@ Biome and the app's own tests under c8 hold the JavaScript app at full strength.
   matching `npm warn`, `DeprecationWarning` or a line starting `Warning:`
   and a space, any case; a failed test fails `bin/qa`.
 - Trigger: any change to a JavaScript `bin/` script.
-<!-- audited: 63e3767f66fd -->
+<!-- audited: d1e319dd39ff -->

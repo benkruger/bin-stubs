@@ -470,6 +470,12 @@ test_ci_time() {
   run_log env PATH="$WORK/no-host:$PATH" "$HERE/../bin/_ci-timeout" app "$limits" 5
   assert_rc 2 "a machine with no hostname"
   grep -qxF "bin/_ci-timeout: no hostname" "${LAST_LOG}" || die "a machine with no hostname was not named"
+  mkdir -p "$WORK/numbered-host"
+  printf '%s\n' '#!/usr/bin/env bash' 'echo box-12' >"$WORK/numbered-host/hostname"
+  chmod +x "$WORK/numbered-host/hostname"
+  printf 'elsewhere 1\n' >"$limits"
+  expect_ok env PATH="$WORK/numbered-host:$PATH" "$HERE/../bin/_ci-timeout" app "$limits" 5
+  grep -qx "box 5" "$limits" || die "a host's numbered suffix stayed in its time line"
 
   repo="$(new_repo)"
   keep "$repo"

@@ -5,7 +5,8 @@ recorded time on each machine.
 
 ## The Rule
 
-- Each app's `.ci-timeout` holds one `<host> <seconds>` line per machine.
+- Each app's `.ci-timeout` holds one `<host> <seconds>` line per machine,
+  `<host>` being `hostname -s` less any trailing `-<number>`.
   After a root `bin/ci` runs all four of an app's steps and they pass,
   `bin/_ci-timeout` fails when the run's time or that machine's line is
   not a whole number of seconds, it finds no hostname, or the run is more
@@ -20,4 +21,4 @@ recorded time on each machine.
   time, a fifth more and 5 seconds, so a hung app or suite never holds a
   commit open; it then refuses the commit with `gate timed out after
   <N>s`. Trigger: any change to how `bin/commit` bounds `bin/ci`.
-<!-- audited: 8f0cf1fc03da -->
+<!-- audited: 1e4962246b03 -->
