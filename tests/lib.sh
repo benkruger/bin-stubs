@@ -45,7 +45,7 @@ die() {
     cat "${LAST_LOG}" >&2
   fi
   local kept
-  if [ -n "${KEEP:-}" ] && [ -d "$KEEP" ] && kept="$(mktemp -d "${TMPDIR:-/tmp}/bin-stubs-fixture.XXXXXX")" &&
+  if [ -n "${KEEP:-}" ] && [ -d "$KEEP" ] && kept="$(mktemp -d "${FIXTURE_DIR:-${TMPDIR:-/tmp}}/bin-stubs-fixture.XXXXXX")" &&
     mv "$KEEP" "$kept/"; then
     echo "fixture: $kept/${KEEP##*/}" >&2
   fi
@@ -55,12 +55,7 @@ die() {
 keep() { KEEP="$1"; }
 
 run_log() {
-  if [ -n "${WORK:-}" ] && [ -n "${BASHPID:-}" ]; then
-    RUN_LOGS=$((${RUN_LOGS:-0} + 1))
-    LAST_LOG="$WORK/run-log.$BASHPID.$RUN_LOGS"
-  else
-    LAST_LOG="$(mktemp "${TMPDIR:-/tmp}/bin-stubs-log.XXXXXX")"
-  fi
+  LAST_LOG="$(mktemp "${WORK:?}/run-log.XXXXXX")"
   if "$@" >"${LAST_LOG}" 2>&1; then
     LAST_RC=0
   else
@@ -113,8 +108,11 @@ sweep_work() {
 }
 
 start_work() {
-  WORK="$(mktemp -d "${TMPDIR:-/tmp}/bin-stubs-tests.XXXXXX")"
+  FIXTURE_DIR="${TMPDIR:-/tmp}"
+  WORK="$(mktemp -d "$FIXTURE_DIR/bin-stubs-tests.XXXXXX")"
   export NODE_COMPILE_CACHE="$WORK/node-compile-cache"
+  export TMPDIR="$WORK/tmp"
+  mkdir -p "$TMPDIR"
   trap 'stop_spin; sweep_work' EXIT
   set -o errtrace
   trap 'echo "FAIL: ${SAY:-suite}: line $LINENO exited $?: $BASH_COMMAND" >&2' ERR

@@ -7,6 +7,7 @@ cd "$root"
 . "$here/lib/toolchain.sh"
 # shellcheck source=../lib/deletions.sh
 . "$here/../lib/deletions.sh"
+diff_listing || exit 1
 # shellcheck source=lib/files.sh
 . "$here/lib/files.sh"
 root_app="$(at_repo_root)"

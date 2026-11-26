@@ -841,7 +841,7 @@ test_changed_empty() {
 
 test_parts() {
   say "tests/run reruns only the parts whose inputs changed, all at once"
-  local repo log run
+  local repo log run left tool
   repo="$(new_repo)"
   KEEP="$repo"
   log="$repo/parts.log"
@@ -895,18 +895,22 @@ test_parts() {
   : >"$log"
   expect_ok "$repo/tests/run"
   assert_eq "$(sort "$log" | tr '\n' ' ')" "guards rust " "a rerun after a forced run failed one part on unchanged inputs"
-  mkdir -p "$WORK/tool-stub"
-  printf '%s\n' '#!/usr/bin/env bash' "cat \"$run.shfmt\"" >"$WORK/tool-stub/shfmt"
-  chmod +x "$WORK/tool-stub/shfmt"
-  echo "shfmt 1" >"$run.shfmt"
-  expect_ok env PATH="$WORK/tool-stub:$PATH" "$repo/tests/run"
+  mkdir -p "$WORK/tool-stub/bin"
+  for tool in shfmt rg bin/cargo-llvm-cov llvm-cov; do
+    printf '%s\n' '#!/usr/bin/env bash' "cat \"$run.${tool#bin/}\"" >"$WORK/tool-stub/$tool"
+    chmod +x "$WORK/tool-stub/$tool"
+    echo "$tool 1" >"$run.${tool#bin/}"
+  done
+  expect_ok env PATH="$WORK/tool-stub:$PATH" CARGO_HOME="$WORK/tool-stub" "$repo/tests/run"
   : >"$log"
-  expect_ok env PATH="$WORK/tool-stub:$PATH" "$repo/tests/run"
+  expect_ok env PATH="$WORK/tool-stub:$PATH" CARGO_HOME="$WORK/tool-stub" "$repo/tests/run"
   assert_eq "$(sort "$log" | tr '\n' ' ')" "guards " "an unchanged toolchain"
-  echo "shfmt 2" >"$run.shfmt"
-  : >"$log"
-  expect_ok env PATH="$WORK/tool-stub:$PATH" "$repo/tests/run"
-  assert_eq "$(sort "$log" | tr '\n' ' ')" "core guards ios javascript python rails rust shell typescript " "a shfmt update"
+  for tool in shfmt rg cargo-llvm-cov llvm-cov; do
+    echo "$tool 2" >"$run.$tool"
+    : >"$log"
+    expect_ok env PATH="$WORK/tool-stub:$PATH" CARGO_HOME="$WORK/tool-stub" "$repo/tests/run"
+    assert_eq "$(sort "$log" | tr '\n' ' ')" "core guards ios javascript python rails rust shell typescript " "a $tool update"
+  done
   printf '#!/bin/sh\necho posix\n' >"$repo/bin/posix"
   expect_fail "$repo/tests/run"
   grep -qF "bin/posix: shebang is #!/bin/sh" "${LAST_LOG}" || die "tests/run passed a kit script that is not bash"
@@ -916,6 +920,20 @@ test_parts() {
   expect_fail "$repo/tests/run"
   grep -qF "bin/scratch:3: mktemp with no template ignores TMPDIR on macOS" "${LAST_LOG}" ||
     die "tests/run passed a kit script whose mktemp ignores TMPDIR"
+  rm "$repo/bin/scratch"
+  mkdir -p "$WORK/parts-tmp"
+  expect_ok env -u NODE_COMPILE_CACHE TMPDIR="$WORK/parts-tmp" "$repo/tests/run" --force
+  left="$(find "$WORK/parts-tmp" -mindepth 1 -maxdepth 1 | tr '\n' ' ')"
+  [ -z "$left" ] || die "tests/run left files in TMPDIR: $left"
+  mkdir -p "$WORK/work-tmp"
+  printf '%s\n' '#!/usr/bin/env bash' 'set -euo pipefail' ". \"$HERE/lib.sh\"" 'start_work' \
+    "mktemp \"\${TMPDIR:?}/tool.XXXXXX\" >/dev/null" >"$WORK/leaves-tmp"
+  chmod +x "$WORK/leaves-tmp"
+  expect_ok env TMPDIR="$WORK/work-tmp" "$WORK/leaves-tmp"
+  [ -z "$(find "$WORK/work-tmp" -mindepth 1 -maxdepth 1)" ] || die "a test's tool left files in the caller's TMPDIR"
+  expect_ok env -u NODE_COMPILE_CACHE TMPDIR="$WORK/parts-tmp" /bin/bash "$repo/tests/run" --force
+  left="$(find "$WORK/parts-tmp" -mindepth 1 -maxdepth 1 | tr '\n' ' ')"
+  [ -z "$left" ] || die "tests/run under /bin/bash left files in TMPDIR: $left"
 }
 
 test_shellcheck_cache() {

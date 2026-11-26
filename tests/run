@@ -21,14 +21,21 @@ LANGUAGES=(typescript javascript python rails rust ios shell)
 SHARED=(bin starter tests/lib.sh tests/lib tests/run tests/picomatch-ghsa-fc5q-39xc-vjpf.patch)
 PASSES="$REPO/.flow-states/$(git -C "$REPO" rev-parse --abbrev-ref HEAD)/tests"
 
+llvm_cov_version() {
+  local cov
+  cov="$(command -v llvm-cov || printf '%s/bin/llvm-cov' "$(brew --prefix llvm 2>/dev/null)")"
+  "$cov" --version 2>&1 || echo missing
+}
+
 tool_versions() {
   local probe cmd=()
   for probe in "node --version" "npm --version" "uv --version" "uv python find" "ruby --version" "bundle --version" \
-    "rustc --version" "cargo --version" "swift --version" "xcodebuild -version" "shellcheck --version" \
-    "shfmt --version" "jq --version"; do
+    "rustc --version" "cargo --version" "cargo llvm-cov --version" "swift --version" "xcodebuild -version" \
+    "shellcheck --version" "shfmt --version" "jq --version" "rg --version"; do
     read -r -a cmd <<<"$probe"
     printf '%s: %s\n' "$probe" "$("${cmd[@]}" 2>&1 || echo missing)"
   done
+  printf 'llvm-cov: %s\n' "$(llvm_cov_version)"
   printf 'markdownlint-cli2: %s\n' "$(readlink -f "$(command -v markdownlint-cli2)" 2>/dev/null || echo missing)"
 }
 
@@ -90,7 +97,7 @@ run_part() {
   esac
 }
 
-TOOLS="$(tool_versions)"
 WORK="$(mktemp -d "${TMPDIR:-/tmp}/bin-stubs-run.XXXXXX")"
 trap 'stop_spin; rm -rf "$WORK"' EXIT
+TOOLS="$(TMPDIR="$WORK" NODE_DISABLE_COMPILE_CACHE=1 tool_versions)"
 run_all "$WORK/logs" run_part guards core "${LANGUAGES[@]}"

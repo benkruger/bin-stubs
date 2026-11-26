@@ -9,6 +9,7 @@ cd "$REPO_ROOT"
 . "$HERE/lib/sources.sh"
 # shellcheck source=../lib/deletions.sh
 . "$HERE/../lib/deletions.sh"
+diff_listing || exit 1
 
 changed_files() {
   local path listing

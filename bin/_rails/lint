@@ -14,10 +14,14 @@ packages_check "$PWD" || exit 1
 . "$HERE/_run_quiet"
 
 all=0
+layout=()
 paths=()
 for arg in "$@"; do
   case "$arg" in
-    --all) all=1 ;;
+    --all)
+      all=1
+      layout=(--except Layout)
+      ;;
     *) paths+=("$arg") ;;
   esac
 done
@@ -41,9 +45,11 @@ elif [ "${#NESTED_APPS[@]}" -gt 0 ]; then
 fi
 
 if [ "$all" -eq 1 ]; then
-  start_quiet "rails (rubocop)" bundle exec rubocop --no-parallel --enable-pending-cops --format quiet --display-cop-names
+  start_quiet "rails (rubocop)" bundle exec rubocop --no-parallel --enable-pending-cops --format quiet --display-cop-names \
+    ${layout[@]+"${layout[@]}"}
 elif [ "${#rb_files[@]}" -gt 0 ]; then
-  start_quiet "rails (rubocop)" bundle exec rubocop --no-parallel --enable-pending-cops --force-exclusion --format quiet --display-cop-names "${rb_files[@]}"
+  start_quiet "rails (rubocop)" bundle exec rubocop --no-parallel --enable-pending-cops --force-exclusion --format quiet --display-cop-names \
+    ${layout[@]+"${layout[@]}"} "${rb_files[@]}"
 fi
 start_quiet "rails (brakeman)" bundle exec brakeman --quiet --no-pager --exit-on-warn --exit-on-error
 

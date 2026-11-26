@@ -6,6 +6,7 @@ cd "$root"
 
 # shellcheck source=../lib/deletions.sh
 . "$here/../lib/deletions.sh"
+diff_listing || exit 1
 root_app=0
 if [ "$(pwd -P)" = "$(git rev-parse --show-toplevel)" ]; then
   root_app=1

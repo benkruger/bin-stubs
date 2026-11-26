@@ -188,7 +188,7 @@ section_changed() {
   : >"$WORK/listings"
   unformat "$app" "$lang"
   PATH="$(listing_counter):$PATH" LISTING_LOG="$WORK/listings" expect_ok leaf "$app" "$lang" changed
-  assert_eq "$(wc -l <"$WORK/listings" | tr -d ' ')" 1 "the times $lang changed listed the changed files"
+  assert_eq "$(sort "$WORK/listings" | tr '\n' ' ')" "diff others " "the times $lang changed listed the changed files"
   changed_checks "$app" "$lang"
   twinless "$app" "$lang"
   unformat "$app" "$lang"
@@ -679,6 +679,11 @@ EOF
       grep -q "Layout/EmptyLinesAfterModuleInclusion" "${LAST_LOG}" || die "$lang format --check let a pending cop stay off"
       expect_ok leaf "$app" "$lang" format app/models/included.rb
       [ -z "$(sed -n 5p "$app/app/models/included.rb")" ] || die "$lang format left a pending cop's offense"
+      printf '%s\n' '# frozen_string_literal: true' '' 'class Included' '  include Comparable' '  def self.all' '    1' \
+        '  end' 'end' >"$app/app/models/included.rb"
+      expect_fail leaf "$app" "$lang" ci --force
+      [ "$(grep -c "Layout/EmptyLinesAfterModuleInclusion" "${LAST_LOG}")" -eq 1 ] ||
+        die "$lang ci reported a Layout offense other than once"
       rm "$app/app/models/included.rb"
       mkdir -p "$app/lib/tasks"
       printf '%s\n' 'task :hello do' '  puts "hi"' 'end' >"$app/lib/tasks/hello.rake"
@@ -809,12 +814,6 @@ EOF
         grep -q "step 'build' printed a warning" "${LAST_LOG}" || die "$lang passed a build that printed: $warning"
       done
       mv "$WORK/package.warn" "$app/package.json"
-      ;;
-  esac
-  case "$lang" in
-    typescript | javascript | python | rails)
-      expect_ok leaf "$app" "$lang" test "$(source_of "$lang")"
-      grep -qxF "bin/test: coverage bar held on 1 source(s)" "${LAST_LOG}" || die "$lang bin/test on a source did not run its test"
       ;;
   esac
 

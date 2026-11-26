@@ -536,7 +536,8 @@ listing_counter() {
     cat >"$dir/git" <<EOF
 #!/usr/bin/env bash
 case " \$* " in
-  *" diff -z --name-only --relative "*) printf 'listing\n' >>"\$LISTING_LOG" ;;
+  *" diff "*) printf 'diff\n' >>"\$LISTING_LOG" ;;
+  *" ls-files -z --others --exclude-standard -- . "*) printf 'others\n' >>"\$LISTING_LOG" ;;
 esac
 exec "$real" "\$@"
 EOF

@@ -794,4 +794,11 @@ test_die_fixture() {
   assert_rc 1 "a test that dies"
   kept="$(sed -n 's/^fixture: //p' "${LAST_LOG}")"
   [ -n "$kept" ] && [ -f "$kept/marker" ] || die "a failed test's fixture was gone: $kept"
+  printf '%s\n' '#!/usr/bin/env bash' 'set -euo pipefail' ". \"$HERE/lib.sh\"" 'start_work' "repo=\"\$(new_repo)\"" \
+    "keep \"\$repo\"" "echo kept >\"\$repo/marker\"" 'fails() { die "on purpose"; }' "TMPDIR=\"\$WORK/inner\" fails" \
+    >"$script"
+  run_log env TMPDIR="$WORK/kept" "$script"
+  assert_rc 1 "a test that dies under a TMPDIR inside its work folder"
+  kept="$(sed -n 's/^fixture: //p' "${LAST_LOG}")"
+  [ -n "$kept" ] && [ -f "$kept/marker" ] || die "a fixture kept under a test's own TMPDIR was swept: $kept"
 }

@@ -11,18 +11,23 @@ change_base() {
   fi
 }
 
+diff_listing() {
+  [ -z "${DIFF_LISTED:-}" ] || return 0
+  DIFF_LISTING="$(git diff -z --name-only --no-renames --relative "$(change_base)" -- . | tr '\0' '\n')" || return 1
+  DIFF_LISTED=1
+}
+
 changed_listing() {
-  local listing
-  listing="$({
-    git diff -z --name-only --relative "$(change_base)" -- . && git ls-files -z --others --exclude-standard -- .
-  } | tr '\0' '\n')" || return 1
-  printf '%s\n' "$listing" | sort -u
+  local others
+  diff_listing || return 1
+  others="$(git ls-files -z --others --exclude-standard -- . | tr '\0' '\n')" || return 1
+  printf '%s\n%s\n' "$DIFF_LISTING" "$others" | sort -u
 }
 
 deleted_paths() {
-  local root_app=0 path top listing
+  local root_app=0 path top
   [ "$(pwd -P)" != "$(git rev-parse --show-toplevel 2>/dev/null)" ] || root_app=1
-  listing="$(git diff -z --name-only --no-renames --relative "$(change_base)" -- . | tr '\0' '\n')" || return 1
+  diff_listing || return 1
   while IFS= read -r path; do
     [ -n "$path" ] && [ ! -e "$path" ] && [ ! -L "$path" ] || continue
     case "$path" in
@@ -33,7 +38,7 @@ deleted_paths() {
       continue
     fi
     printf '%s\n' "$path"
-  done <<<"$listing"
+  done <<<"$DIFF_LISTING"
 }
 
 deleted_twin_findings() {
