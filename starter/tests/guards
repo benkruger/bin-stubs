@@ -1045,7 +1045,7 @@ done
 if [ "${#leaf_scripts[@]}" -gt 0 ]; then
   while IFS= read -r hit; do
     fail "$hit: installs packages; only bin/dependencies does"
-  done < <(grep_scan install -nHE "$INSTALL_COMMANDS" -- "${leaf_scripts[@]}" | cut -d: -f1,2)
+  done < <(grep_scan "gate script install" -nHE "$INSTALL_COMMANDS" -- "${leaf_scripts[@]}" | cut -d: -f1,2)
 fi
 
 UPDATE_COMMANDS='[[:space:]](update|upgrade|--upgrade)([[:space:]]|$)'
@@ -1061,7 +1061,7 @@ installing=()
 if [ "${#dependency_scripts[@]}" -gt 0 ]; then
   while IFS= read -r path; do
     installing+=("$path")
-  done < <(grep_scan install -lE "$INSTALL_COMMANDS" -- "${dependency_scripts[@]}")
+  done < <(grep_scan "dependencies install" -lE "$INSTALL_COMMANDS" -- "${dependency_scripts[@]}")
 fi
 if [ "${#installing[@]}" -gt 0 ]; then
   while IFS= read -r path; do

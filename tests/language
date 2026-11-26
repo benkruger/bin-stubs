@@ -8,6 +8,8 @@ REPO="$(cd "$HERE/.." && pwd)"
 . "$HERE/lib/seeds.sh"
 # shellcheck source=lib/xcode.sh
 . "$HERE/lib/xcode.sh"
+# shellcheck source=lib/root.sh
+. "$HERE/lib/root.sh"
 start_work
 
 fresh_app() {
@@ -54,7 +56,7 @@ section_installed() {
     rails) run_all "$WORK/logs" run_section changed whole plants audit root spaced ;;
     ios) run_all "$WORK/logs" run_section changed plants xcode root ;;
     shell) run_all "$WORK/logs" run_section changed whole plants ;;
-    *) run_all "$WORK/logs" run_section changed plants ;;
+    *) run_all "$WORK/logs" run_section changed plants root ;;
   esac
 }
 
@@ -218,20 +220,20 @@ section_plants() {
     else
       echo "1.0.0" >"$pin"
     fi
-    expect_fail leaf "$app" "$lang" ci --force
+    CI="" expect_fail leaf "$app" "$lang" ci --force
     grep -q "toolchain: " "${LAST_LOG}" || die "$lang did not enforce its toolchain pin"
     case "$lang" in
       typescript | javascript)
         for script in changed format lint build test dependencies open qa; do
-          expect_fail leaf "$app" "$lang" "$script"
+          CI="" expect_fail leaf "$app" "$lang" "$script"
           grep -q "toolchain: " "${LAST_LOG}" || die "$lang bin/$script did not enforce its toolchain pin"
         done
         nvm_stub "$WORK/nvm"
-        NVM_DIR="$WORK/nvm" expect_ok leaf "$app" "$lang" build
+        CI="" NVM_DIR="$WORK/nvm" expect_ok leaf "$app" "$lang" build
         ;;
     esac
     rm "$pin"
-    expect_fail leaf "$app" "$lang" ci --force
+    CI="" expect_fail leaf "$app" "$lang" ci --force
     grep -q "toolchain: ${pin##*/} is missing" "${LAST_LOG}" || die "$lang ran with no toolchain pin"
     mv "$pin.keep" "$pin"
   fi
@@ -255,8 +257,11 @@ EOF
     rm "$app/loose"
     mkdir -p "$app/lib"
     printf '%s\n' '#!/usr/bin/env bash' 'helper() { echo hi; }' >"$app/lib/helper.sh"
+    printf '%s\n' '#!/usr/bin/env bash' 'quiet() { echo quiet; }' >"$app/_run_quiet"
+    mkdir -p "$app/tests"
+    printf '%s\n' '#!/usr/bin/env bash' 'helper() { echo hi; }' >"$app/tests/lib.sh"
     expect_ok leaf "$app" "$lang" build
-    rm -r "${app:?}/lib"
+    rm -r "${app:?}/lib" "$app/_run_quiet" "$app/tests"
     printf '%s\n' '#!/usr/bin/env bash' 'if true; then' '  echo x' >"$app/broken"
     chmod +x "$app/broken"
     expect_fail leaf "$app" "$lang" build
@@ -603,6 +608,21 @@ EOF
       expect_fail leaf "$app" "$lang" test --all
       grep -q "DeprecationWarning: old" "${LAST_LOG}" || die "$lang test let a warning through"
       mv "$WORK/test_add.keep" "$app/tests/test_add.py"
+      cp "$app/src/add.py" "$WORK/add.keep"
+      mv "$app/src/add.py" "$app/add.py"
+      rmdir "$app/src"
+      git -C "$repo" add -A
+      git -C "$repo" commit -q -m "no src"
+      expect_ok leaf "$app" "$lang" test --all
+      grep -qxF "bin/test: coverage bar held on 1 source(s)" "${LAST_LOG}" || die "$lang test --all missed a source outside src/"
+      printf 'def add(a: int, b: int) -> int:\n    return b + a\n' >"$app/add.py"
+      expect_ok leaf "$app" "$lang" changed
+      grep -qxF "bin/test: coverage bar held on 1 source(s)" "${LAST_LOG}" || die "$lang changed missed a source outside src/"
+      mkdir -p "$app/src"
+      mv "$WORK/add.keep" "$app/src/add.py"
+      rm "$app/add.py"
+      git -C "$repo" add -A
+      git -C "$repo" commit -q -m "src"
       ;;
     rust)
       cp "$app/Cargo.toml" "$WORK/cargo.keep"
@@ -683,7 +703,15 @@ EOF
         "  test 'runs only under bin/qa' do" "    flunk 'bin/changed ran a system test'" '  end' 'end' \
         >"$app/test/system/home_test.rb"
       expect_ok leaf "$app" "$lang" changed
-      rm -r "$app/test/system"
+      mkdir -p "$app/test/integration"
+      printf '%s\n' '# frozen_string_literal: true' '' "require 'test_helper'" '' 'class HomeTest < ActiveSupport::TestCase' \
+        "  test 'home' do" '    assert_equal 1, 1' '  end' 'end' >"$app/test/system/home_test.rb"
+      printf '%s\n' '# frozen_string_literal: true' '' "require 'test_helper'" '' 'class FlowTest < ActiveSupport::TestCase' \
+        "  test 'flow' do" '    assert_equal 1, 1' '  end' 'end' >"$app/test/integration/flow_test.rb"
+      expect_ok leaf "$app" "$lang" test --all
+      grep -qxF "bin/test: coverage bar held on 1 source(s)" "${LAST_LOG}" ||
+        die "$lang test --all failed an integration or system test that has no source"
+      rm -r "$app/test/system" "$app/test/integration"
       cp "$app/test/test_helper.rb" "$WORK/helper.keep"
       perl -0pi -e "s/(  enable_coverage :branch\n)/\$1  skip '\/app\/'\n/" "$app/test/test_helper.rb"
       expect_fail leaf "$app" "$lang" test --all
@@ -943,81 +971,7 @@ section_spaced() {
 }
 
 section_root() {
-  local repo app own ext loose lint_body build_body
-  repo="$(new_repo)"
-  KEEP="$repo"
-  app="$repo"
-  copy_dir "$REPO/bin" "$repo/bin"
-  case "$lang" in
-    typescript | javascript)
-      cp -cR "$TEMPLATE/$lang/." "$app" 2>/dev/null || cp -R "$TEMPLATE/$lang/." "$app"
-      [ ! -L "$app/node_modules/picomatch" ] || ln -sfn "$PICOMATCH_DIR" "$app/node_modules/picomatch"
-      ;;
-    rails)
-      cp "$repo/.gitignore" "$WORK/root.gitignore"
-      seed_of "$lang" "$app"
-      cat "$WORK/root.gitignore" >>"$app/.gitignore"
-      cp "$TEMPLATE/$lang/Gemfile.lock" "$app/Gemfile.lock"
-      ;;
-    python)
-      seed_of "$lang" "$app"
-      expect_ok leaf "$app" "$lang" dependencies
-      ;;
-    *) seed_of "$lang" "$app" ;;
-  esac
-  build_body=""
-  case "$lang" in
-    typescript | javascript)
-      own=src ext=ts loose='export const loose = {a:1}' lint_body=$'const unused = 1;\nexport const kept = 2;'
-      build_body='export const wrong: number = "text";'
-      if [ "$lang" = javascript ]; then
-        ext=js build_body='export const broken = (;'
-      fi
-      ;;
-    python) own=src ext=py loose='x=1' lint_body='import os' build_body=$'def untyped(a):\n    return a' ;;
-    rails) own=app/models ext=rb loose='loose = 1' lint_body='loose = 1' ;;
-    ios) own=Sources/App ext=swift loose='let  spaced=1' lint_body='let Bad_Name = 1' ;;
-  esac
-  mkdir -p "$app/web"
-  printf '{ "name": "web", "private": true }\n' >"$app/web/package.json"
-  printf '%s\n' "$loose" >"$app/web/loose.$ext"
-  printf '%s\n' "$lint_body" >"$app/web/lint.$ext"
-  [ -z "$build_body" ] || printf '%s\n' "$build_body" >"$app/web/build.$ext"
-  printf '%s\n' '#Loose' >"$app/web/loose.md"
-  if [ "$lang" = typescript ]; then
-    mkdir -p "$app/node_modules/@types/plant"
-    printf 'declare const plantGlobal: number;\n' >"$app/node_modules/@types/plant/index.d.ts"
-    jq '.compilerOptions.types = ["plant"]' "$app/tsconfig.json" >"$WORK/tsconfig.plant"
-    mv "$WORK/tsconfig.plant" "$app/tsconfig.json"
-  fi
-  run_log leaf "$app" "$lang" changed --files
-  grep -q "^web/" "${LAST_LOG}" && die "a root $lang app's changed listed a sibling app's file"
-  expect_ok leaf "$app" "$lang" format --all
-  [ "$(cat "$app/web/loose.$ext")" = "$loose" ] || die "a root $lang app's format rewrote a sibling app's file"
-  expect_ok leaf "$app" "$lang" format --check --all
-  expect_ok leaf "$app" "$lang" lint --all
-  if [ -n "$build_body" ]; then
-    expect_ok leaf "$app" "$lang" build --all
-    printf '%s\n' "$build_body" >"$app/$own/build.$ext"
-    expect_fail leaf "$app" "$lang" build --all
-    grep -qE "(^|[ /])$own/build.$ext" "${LAST_LOG}" || die "a root $lang app's build skipped its own file"
-    grep -q "web/build" "${LAST_LOG}" && die "a root $lang app's build checked a sibling app's file"
-    rm "$app/$own/build.$ext"
-  fi
-  case "$lang" in
-    typescript | javascript)
-      mkdir -p "$app/web/tests"
-      printf 'throw new Error("a nested app test ran in the root app");\n' >"$app/web/tests/fail.test.$ext"
-      expect_ok leaf "$app" "$lang" test --all
-      grep -qxF "bin/test: coverage bar held on 1 source(s)" "${LAST_LOG}" || die "a root $lang app's test did not hold its own source"
-      rm -r "$app/web/tests"
-      ;;
-  esac
-  printf '%s\n' "$lint_body" >"$app/$own/lint.$ext"
-  expect_fail leaf "$app" "$lang" lint --all
-  grep -q "$own/lint.$ext" "${LAST_LOG}" || die "a root $lang app's lint skipped its own file"
-  grep -q "web/lint" "${LAST_LOG}" && die "a root $lang app's lint checked a sibling app's file"
-  return 0
+  root_section "$lang"
 }
 
 section_xcode() {

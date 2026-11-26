@@ -714,6 +714,18 @@ EOF
       PATH="$stubs:$PATH" expect_fail leaf "$app" "$lang" test --all
       grep -qxF "bin/test: swift test left no coverage data to check" "${LAST_LOG}" ||
         die "$lang passed a swift test that wrote no coverage"
+      cp "$app/Package.swift" "$WORK/package.keep"
+      mv "$app/Sources" "$WORK/sources.keep"
+      mv "$app/Tests/AppTests/AddTests.swift" "$WORK/add-tests.keep"
+      printf '%s\n' '// swift-tools-version: 6.0' 'import PackageDescription' '' 'let package = Package(' \
+        '    name: "App",' '    targets: [.testTarget(name: "AppTests")]' ')' >"$app/Package.swift"
+      printf '%s\n' 'import Testing' '' '@Test func checks() {' '    #expect(1 == 1)' '}' >"$app/Tests/AppTests/CheckTests.swift"
+      expect_fail leaf "$app" "$lang" test --all
+      grep -qxF "bin/test: llvm-cov measured no source" "${LAST_LOG}" || die "$lang passed a run that measured no source"
+      rm "$app/Tests/AppTests/CheckTests.swift"
+      mv "$WORK/add-tests.keep" "$app/Tests/AppTests/AddTests.swift"
+      mv "$WORK/sources.keep" "$app/Sources"
+      mv "$WORK/package.keep" "$app/Package.swift"
       ;;
     rails)
       cp "$app/test/test_helper.rb" "$WORK/helper.keep"

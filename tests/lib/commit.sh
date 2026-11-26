@@ -508,6 +508,15 @@ EOF
   perl -pi -e 's/!= 300 \]/!= 1025 ]/' "$hurry/sleep"
   commit FLOW_CI_TIMEOUT_MS= PATH="$hurry:$FAKE_CLAUDE:$PATH" -- main "$msg"
   assert_eq "$(commit_json .detail)" "gate timed out after 1025s" "bin/ci bounded by this machine's .ci-timeout line"
+  commit_case
+  mkdir -p "$repo/checks" "$repo/a" "$repo/b"
+  printf '%s\n' '#!/usr/bin/env bash' 'sleep 1' >"$repo/checks/slow"
+  chmod +x "$repo/checks/slow"
+  printf '%s 600\n' "$host" >"$repo/a/.ci-timeout"
+  printf '%s 100\n' "$host" >"$repo/b/.ci-timeout"
+  perl -pi -e 's/!= 1025 \]/!= 1150 ]/' "$hurry/sleep"
+  commit FLOW_CI_TIMEOUT_MS= PATH="$hurry:$FAKE_CLAUDE:$PATH" -- main "$msg"
+  assert_eq "$(commit_json .detail)" "gate timed out after 1150s" "bin/ci bounded by every app's .ci-timeout line"
 
   commit_case
   printf '\nMore.\n' >>"$repo/notes.md"

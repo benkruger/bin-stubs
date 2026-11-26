@@ -436,6 +436,7 @@ EOF
   printf 'value = 1  # %s\n' "$token" >"$probe"
 
   plant_bad_configs "$cfg/bad" "$repo"
+  plant_guard_branches "$repo"
 
   local skips="$repo/skips" form
   mkdir -p "$skips/tests" "$skips/test" "$skips/src" "$skips/ios/Tests"
@@ -670,6 +671,7 @@ EOF
   grep -q "big.md: 70010 bytes, over the 65536-byte cap" "${LAST_LOG}" || die "size cap not enforced"
   grep -q "probe.py:1: suppression comment" "${LAST_LOG}" || die "suppression ban not enforced"
   check_bad_configs
+  check_guard_branches "$repo"
   for msg in a.test.ts:1 b.spec.js:1 tests/test_a.py:4 test/a_test.rb:3 src/lib.rs:1 ios/Tests/ATests.swift:2 \
     c.test.ts:1 c.test.ts:3 test/b_test.rb:8 ios/Tests/BTests.swift:1 d.test.ts:1 d.test.ts:4 d.test.ts:7 \
     e.spec.ts:1 e.spec.ts:3; do
@@ -927,6 +929,8 @@ test_shellcheck_cache() {
   real="$(command -v shellcheck)"
   mkdir -p "$stub"
   printf '%s\n' '#!/usr/bin/env bash' 'set -euo pipefail' \
+    "if [ \"\${1:-}\" = --version ] && [ -n \"\${FAKE_SHELLCHECK_VERSION:-}\" ]; then" \
+    "  echo \"version: \$FAKE_SHELLCHECK_VERSION\"" '  exit 0' 'fi' \
     "[ \"\${1:-}\" = --version ] || echo called >>\"$calls\"" "exec \"$real\" \"\$@\"" >"$stub/shellcheck"
   chmod +x "$stub/shellcheck"
   expect_ok env PATH="$stub:$PATH" XDG_CACHE_HOME="$WORK/cache" "$repo/tests/guards"
@@ -948,6 +952,14 @@ test_shellcheck_cache() {
   expect_fail env PATH="$stub:$PATH" XDG_CACHE_HOME="$WORK/cache" HOME="$WORK/home" XDG_CONFIG_HOME="$WORK/xdg" \
     "$repo/tests/guards"
   grep -q "SC2250" "${LAST_LOG}" || die "the guards replayed a pass after the user's shellcheckrc changed"
+  mkdir -p "$WORK/home2"
+  cp "$WORK/xdg/shellcheckrc" "$WORK/home2/.shellcheckrc"
+  expect_fail env PATH="$stub:$PATH" XDG_CACHE_HOME="$WORK/cache" HOME="$WORK/home2" "$repo/tests/guards"
+  grep -q "SC2250" "${LAST_LOG}" || die "the guards replayed a pass after ~/.shellcheckrc changed"
+  : >"$calls"
+  expect_ok env PATH="$stub:$PATH" XDG_CACHE_HOME="$WORK/cache" HOME="$WORK/home" FAKE_SHELLCHECK_VERSION=99 \
+    "$repo/tests/guards"
+  [ -s "$calls" ] || die "the guards replayed a pass under another shellcheck version"
   cat >"$repo/loose" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -1021,23 +1033,20 @@ EOF
 
 test_dependencies_once() {
   say "bin/dependencies never re-checks what its update just installed"
-  local stubs="$WORK/deps-once" app="$WORK/deps-once-app"
+  local stubs="$WORK/deps-once" app="$WORK/deps-once-app" calls="$WORK/deps-once-calls" tool
   mkdir -p "$stubs" "$app"
-  cat >"$stubs/uv" <<'EOF'
-#!/usr/bin/env bash
-printf 'uv %s\n' "$*"
-EOF
-  cat >"$stubs/bundle" <<'EOF'
-#!/usr/bin/env bash
-printf 'bundle %s\n' "$*"
-EOF
-  chmod +x "$stubs/uv" "$stubs/bundle"
+  for tool in uv bundle; do
+    printf '%s\n' '#!/usr/bin/env bash' "printf '$tool %s\\n' \"\$*\" >>\"$calls\"" >"$stubs/$tool"
+    chmod +x "$stubs/$tool"
+  done
+  : >"$calls"
   expect_ok env CI=1 HOME="$app" PATH="$stubs:$PATH" APP_DIR="$app" "$REPO/bin/_python/dependencies"
-  grep -q "^uv lock" "${LAST_LOG}" && die "Python bin/dependencies checked the lock its update just wrote"
-  grep -q "^uv sync --upgrade" "${LAST_LOG}" || die "Python bin/dependencies did not update"
+  assert_eq "$(cat "$calls")" "uv sync --upgrade --compile-bytecode" "the tools Python bin/dependencies ran"
+  : >"$calls"
   expect_ok env PATH="$stubs:$PATH" APP_DIR="$app" "$REPO/bin/_rails/dependencies"
-  grep -q "^bundle check" "${LAST_LOG}" && die "Rails bin/dependencies checked the gems its update just installed"
-  grep -q "^bundle update --all" "${LAST_LOG}" || die "Rails bin/dependencies did not update"
+  assert_eq "$(sort "$calls" | tr '\n' ';')" \
+    "bundle exec brakeman --quiet --no-pager --exit-on-warn --exit-on-error;bundle exec bundler-audit check --update;bundle update --all;" \
+    "the tools Rails bin/dependencies ran"
 }
 
 test_checked_once() {

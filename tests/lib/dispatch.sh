@@ -80,8 +80,12 @@ test_dispatch_select() {
   expect_ok "$repo/bin/ci"
   sum="$(summary)"
   assert_eq "$(row_of suite "$sum")" "PASS" "corpus selects the suite"
-  assert_eq "$(row_of python "$sum")" "SKIP" "corpus leaves python"
-  assert_eq "$(row_of shell "$sum")" "SKIP" "corpus leaves shell"
+  echo "corpus edit" >"$repo/CLAUDE.md"
+  expect_ok "$repo/bin/changed"
+  sum="$(summary)"
+  assert_eq "$(row_of suite "$sum")" "PASS" "a corpus edit under bin/changed selects the suite"
+  printf '%s\n' "$sum" | grep -qE '^  python +: SKIP$' || die "a corpus edit under bin/changed ran python"
+  printf '%s\n' "$sum" | grep -qE '^  shell +: SKIP$' || die "a corpus edit under bin/changed ran shell"
   git -C "$repo" add CLAUDE.md
   git -C "$repo" commit -q -m "corpus"
   expect_ok "$repo/bin/ci"
@@ -403,15 +407,19 @@ test_root_check() {
 
 test_steps() {
   say "bin/ci runs an app's four steps at once"
-  local repo name
+  local repo name lang app serial="" stubs="$WORK/steps-stubs"
   repo="$(new_repo)"
   keep "$repo"
   copy_dir "$HERE/../bin" "$repo/bin"
-  mkdir -p "$repo/shell/test"
-  printf '%s\n' '#!/usr/bin/env bash' >"$repo/shell/test/run"
-  chmod +x "$repo/shell/test/run"
-  for name in format lint build test; do
-    cat >"$repo/bin/_shell/$name" <<'EOF'
+  mkdir -p "$stubs"
+  printf '%s\n' '#!/usr/bin/env bash' 'exit 0' >"$stubs/npm"
+  chmod +x "$stubs/npm"
+  export RUNNING="$WORK/steps-running"
+  for lang in typescript javascript python rails rust ios shell; do
+    mkdir -p "$repo/$lang" "$RUNNING"
+    printf '%s\n' "$lang" >"$repo/$lang/app.txt"
+    for name in format lint build test; do
+      cat >"$repo/bin/_$lang/$name" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 touch "$RUNNING/$$"
@@ -419,12 +427,14 @@ sleep 1
 find "$RUNNING" -type f | wc -l >>"$RUNNING.counts"
 rm "$RUNNING/$$"
 EOF
+    done
+    rm -f "$RUNNING.counts"
+    app="$(cd "$repo/$lang" && pwd)"
+    expect_ok env PATH="$stubs:$PATH" APP_DIR="$app" FLOW_CHECKED_APP="$app" "$repo/bin/_$lang/ci"
+    [ "$(sort -n "$RUNNING.counts" | tail -n 1 | tr -d ' ')" -ge 2 ] || serial+=" $lang"
   done
-  export RUNNING="$WORK/steps-running"
-  mkdir -p "$RUNNING"
-  expect_ok leaf "$repo/shell" shell ci
-  [ "$(sort -n "$RUNNING.counts" | tail -n 1 | tr -d ' ')" -ge 2 ] || die "bin/ci ran its steps one at a time"
   unset RUNNING
+  [ -z "$serial" ] || die "bin/ci ran its steps one at a time:$serial"
 }
 
 test_jobs() {
@@ -549,11 +559,12 @@ test_ci_time() {
   host="$(hostname -s 2>/dev/null || hostname)"
   host="$(printf '%s\n' "$host" | sed -E 's/-[0-9]+$//')"
   limits="$WORK/limits"
-  for row in "100 125 1" "100 120 0" "1 5 0"; do
+  for row in "100 125 1" "100 120 0" "10 15 1" "1 5 0"; do
     read -r limit took want <<<"$row"
     printf 'elsewhere 1\n%s %s\n' "$host" "$limit" >"$limits"
     run_log "$HERE/../bin/_ci-timeout" app "$limits" "$took"
     assert_rc "$want" "a ${took}s run against a ${limit}s line"
+    [ "$want" = 0 ] || grep -qx "$host $limit" "$limits" || die "a ${took}s run that failed rewrote its ${limit}s line"
   done
   grep -qx "$host 5" "$limits" || die "a passing run did not record its time"
   grep -qx "elsewhere 1" "$limits" || die "a passing run changed another machine's line"
@@ -581,6 +592,10 @@ test_ci_time() {
   printf 'elsewhere 1\n' >"$limits"
   expect_ok env PATH="$WORK/numbered-host:$PATH" "$HERE/../bin/_ci-timeout" app "$limits" 5
   grep -qx "box 5" "$limits" || die "a host's numbered suffix stayed in its time line"
+  repo="$(new_repo)"
+  printf '%s 10\n' "$host" >"$repo/.ci-timeout"
+  expect_ok "$HERE/../bin/_ci-timeout" app "$repo/.ci-timeout" 3
+  grep -qx "$host 10" "$repo/.ci-timeout" || die "a pass on main rewrote its time line"
 
   repo="$(new_repo)"
   keep "$repo"
@@ -702,11 +717,16 @@ test_root_shell() {
   printf '%s\n' '#!/usr/bin/env bash' 'set -euo pipefail' 'echo ok' >"$repo/test/run"
   chmod +x "$repo/test/run"
   printf '{ "name": "web", "private": true }\n' >"$repo/web/package.json"
-  printf '%s\n' '#!/usr/bin/env bash' "echo \$1" >"$repo/web/loose.sh"
+  printf '%s\n' '#!/usr/bin/env bash' "echo \$1" 'if true;then' 'echo   x' 'fi' >"$repo/web/loose.sh"
+  cp "$repo/web/loose.sh" "$WORK/root-shell-loose.sh"
   run_log "$repo/bin/_shell/changed" --files
+  assert_rc 0 "the root shell app's changed --files"
+  grep -qx "test/run" "${LAST_LOG}" || die "the root shell app's changed left out its own file"
   grep -q "web/" "${LAST_LOG}" && die "the root shell app's changed listed a sibling app's file"
   expect_ok "$repo/bin/_shell/lint" --all
   expect_ok "$repo/bin/_shell/format" --check --all
+  expect_ok "$repo/bin/_shell/format" --all
+  cmp -s "$repo/web/loose.sh" "$WORK/root-shell-loose.sh" || die "the root shell app's format rewrote a sibling app's file"
   printf '%s\n' '#!/usr/bin/env bash' "echo \$1" >"$repo/loose.sh"
   expect_fail "$repo/bin/_shell/lint" --all
   grep -q "In loose.sh line 2" "${LAST_LOG}" || die "the root shell app's lint skipped its own file"

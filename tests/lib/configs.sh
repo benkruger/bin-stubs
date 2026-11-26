@@ -191,3 +191,64 @@ check_bad_configs() {
   grep -qF "bin/plain.sh: entry point is not executable" "${LAST_LOG}" || die "a .sh file without a shebang escaped the script checks"
   grep -qF "a scan could not read every file" "${LAST_LOG}" || die "an unreadable file escaped the scans"
 }
+
+GUARD_COMMENT_PLANTS="data.json data.jsonc Gemfile Rakefile tasks.rake config.ru app.gemspec .gitattributes .shellcheckrc"
+
+plant_guard_branches() {
+  local repo="$1" name token
+  local notes="$repo/more-comments" cfg="$repo/more-cfg" slow="$repo/more-limits" cov="$repo/more-coverage"
+  mkdir -p "$notes" "$cfg/rusta/.cargo" "$cfg/rustallow/.cargo" "$slow/ini" "$slow/tox" "$slow/cfg" \
+    "$repo/more-skips/tox" "$repo/more-skips/cfg" "$cov/spec" "$cov/Other.xcodeproj/xcshareddata/xcschemes"
+  printf '%s\n' '{ "url": "http://x" }' '// flagged' | tee "$notes/data.json" >"$notes/data.jsonc"
+  for name in Gemfile Rakefile tasks.rake config.ru app.gemspec; do
+    printf '%s\n' "x = '#'" '# flagged' >"$notes/$name"
+  done
+  printf '%s\n' '# flagged' '* text=auto' >"$notes/.gitattributes"
+  printf '%s\n' '# flagged' 'source-path=SCRIPTDIR' >"$notes/.shellcheckrc"
+  printf '[build]\nrustflags = ["-A", "warnings"]\n' >"$cfg/rusta/.cargo/config.toml"
+  printf '[build]\nrustflags = "--allow warnings"\n' >"$cfg/rustallow/.cargo/config.toml"
+  printf '[mypy]\nstrict = False\n' >"$cfg/.mypy.ini"
+  printf '%s\n' 'fn a() {}' '' '# [expect(dead_code)]' 'fn b() {}' >"$cfg/quiet.rs"
+  token='#['
+  token+='expect(dead_code)]'
+  printf '%s\n' "$token" >"$cfg/hush.txt"
+  printf '%s\n' 'export default {' '  hookTimeout: 60000,' '  teardownTimeout: 60000,' '};' >"$slow/jest.config.js"
+  printf '%s\n' 'jest.setTimeout(60000);' 'setDefaultTimeout(60000);' >"$slow/c.test.ts"
+  printf '%s\n' '{' '  "defaultOptions" : {' '    "testTimeoutsEnabled" : true,' \
+    '    "maximumTestExecutionTimeAllowance" : 600' '  }' '}' >"$slow/Limits.xctestplan"
+  printf '[pytest]\ntimeout = 60\n' | tee "$slow/ini/pytest.ini" >"$slow/tox/tox.ini"
+  printf '[tool:pytest]\ntimeout = 60\n' >"$slow/cfg/setup.cfg"
+  printf '[pytest]\npython_files = check_*.py\n' >"$repo/more-skips/tox/tox.ini"
+  printf '[tool:pytest]\npython_classes = Check\n' >"$repo/more-skips/cfg/setup.cfg"
+  printf '<TestAction codeCoverageEnabled = "NO">\n' >"$cov/Other.xcodeproj/xcshareddata/xcschemes/Other.xcscheme"
+  printf '{ "defaultOptions": { "codeCoverage": { "targets": [] } } }\n' >"$cov/Targets.xctestplan"
+  printf "require 'simplecov'\nSimpleCov.start do\n  minimum_coverage line: 100, branch: 100\n  filters.clear\nend\n" \
+    >"$cov/spec/spec_helper.rb"
+}
+
+check_guard_branches() {
+  local repo="$1" plant expected actual msg missed=""
+  for plant in $GUARD_COMMENT_PLANTS; do
+    expected="$(grep -n flagged "$repo/more-comments/$plant" | cut -d: -f1 | tr '\n' ' ')"
+    actual="$(sed -nE "s|^guards: more-comments/$plant:([0-9]+): a comment.*|\1|p" "${LAST_LOG}" | tr '\n' ' ')"
+    [ "$actual" = "$expected" ] || missed+=" [$plant comments: got $actual]"
+  done
+  for msg in "more-cfg/rusta/.cargo/config.toml: sets a lint level in rustflags" \
+    "more-cfg/rustallow/.cargo/config.toml: sets a lint level in rustflags" \
+    "more-cfg/.mypy.ini: mypy takes its settings from [tool.mypy]" \
+    "more-cfg/quiet.rs:3: a Rust attribute or cfg! that" "more-cfg/hush.txt:1: suppression comment" \
+    "more-limits/jest.config.js:2: raises the test time limit" "more-limits/jest.config.js:3: raises the test time limit" \
+    "more-limits/c.test.ts:1: raises the test time limit" "more-limits/c.test.ts:2: raises the test time limit" \
+    "more-limits/Limits.xctestplan:3: raises the test time limit" \
+    "more-limits/Limits.xctestplan:4: raises the test time limit" \
+    "more-limits/ini/pytest.ini:2: raises the test time limit" "more-limits/tox/tox.ini:2: raises the test time limit" \
+    "more-limits/cfg/setup.cfg:2: raises the test time limit" \
+    "more-skips/tox/tox.ini:2: leaves test files out of pytest's collection" \
+    "more-skips/cfg/setup.cfg:2: leaves test files out of pytest's collection" \
+    "more-coverage/Other.xcodeproj/xcshareddata/xcschemes/Other.xcscheme:1: turns code coverage off" \
+    "more-coverage/Targets.xctestplan:1: turns code coverage off" \
+    "more-coverage/spec/spec_helper.rb:4: leaves files out of coverage"; do
+    grep -qF "guards: $msg" "${LAST_LOG}" || missed+=" [$msg]"
+  done
+  [ -z "$missed" ] || die "a guard branch passed its planted violation:$missed"
+}

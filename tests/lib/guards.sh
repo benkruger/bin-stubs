@@ -99,6 +99,9 @@ test_bare_guards() {
   printf '{ bad\n' >"$repo/.claude/settings.json"
   expect_fail "$repo/tests/guards"
   grep -qx "guards: .claude/settings.json is not valid JSON" "${LAST_LOG}" || missed+=" [settings not JSON]"
+  printf '[]\n' >"$repo/.claude/settings.json"
+  expect_fail "$repo/tests/guards"
+  grep -qx "guards: .claude/settings.json: could not be checked" "${LAST_LOG}" || missed+=" [settings not an object]"
   printf '{ "permissions": { "allow": "Bash(bin/*)" } }\n' >"$repo/.claude/settings.json"
   expect_fail "$repo/tests/guards"
   grep -qx "guards: .claude/settings.json: has a permissions.allow that is not a list" "${LAST_LOG}" ||
@@ -158,8 +161,9 @@ EOF
   failing_scans "$repo" "$WORK/failing" perl "entry point is not executable" "entry point"
   failing_scans "$repo" "$WORK/failing" perl "audited:" rule
   failing_scans "$repo" "$WORK/failing" perl "split_args" "JS test call"
-  failing_scans "$repo" "$WORK/failing" grep "-nIHE -lE -nHE -Lw -l" suppression "skip candidate" "time limit" install \
-    packages_check SimpleCov
+  failing_scans "$repo" "$WORK/failing" grep "-nIHE -lE -Lw -l" suppression "skip candidate" "time limit" \
+    "dependencies install" packages_check SimpleCov
+  failing_scans "$repo" "$WORK/failing" grep "-nHE" "gate script install"
   failing_scans "$repo" "$WORK/failing" grep "-nE -noE -LE" skip "matching line" "time limit value" update \
     "Xcode test selection"
   failing_scans "$repo" "$WORK/failing" awk "autotests" "Cargo test target"
