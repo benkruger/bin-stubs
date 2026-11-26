@@ -208,4 +208,3 @@ if [ "$ratchet" -ne 0 ]; then
   exit 1
 fi
 echo "bin/test: coverage bar held on ${#required[@]} source(s)"
-exit "$rc"

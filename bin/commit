@@ -660,10 +660,7 @@ if ! FLOW_COMMIT_NONCE="$nonce" git commit -m "$message" >"$WORK/git.out" 2>"$WO
   exit 1
 fi
 rm -f "$marker"
-if ! sha="$(git rev-parse HEAD 2>/dev/null)"; then
-  error_text commit "could not resolve the new commit sha"
-  exit 1
-fi
+sha="$(git rev-parse HEAD)"
 if [ "$push" -eq 1 ] && ! git push origin "HEAD:$branch" >"$WORK/git.out" 2>"$WORK/git.err"; then
   failure_detail "push failed: " >"$WORK/detail"
   emit_error push "$WORK/detail"

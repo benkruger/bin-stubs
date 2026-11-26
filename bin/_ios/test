@@ -35,12 +35,11 @@ if "targets" in report:
             continue
         files.extend(target.get("files", []))
 else:
-    data = report["data"][0] if "data" in report else report
-    files = data.get("files", [])
+    files = report["data"][0].get("files", [])
 roots = [r.rstrip("/") + "/" for r in sys.argv[3:5]]
 bad = []
 for f in files:
-    name = f.get("path") or f.get("filename") or f.get("name") or ""
+    name = f.get("path") or f.get("filename")
     rel = next((name[len(r):] for r in roots if name.startswith(r)), None)
     if rel is None or rel.startswith(("Tests/", ".build/")):
         continue

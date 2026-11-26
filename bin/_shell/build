@@ -24,7 +24,7 @@ jobs="$(getconf _NPROCESSORS_ONLN)"
 parse_every() {
   local i
   for ((i = $1; i < ${#scripts[@]}; i += jobs)); do
-    bash -n "${scripts[$i]}" >"$parsed/$i.out" 2>"$parsed/$i.err" || : >"$parsed/$i.fail"
+    bash -n "${scripts[$i]}" 2>"$parsed/$i.err" || : >"$parsed/$i.fail"
   done
 }
 pids=()
@@ -47,7 +47,6 @@ for i in "${!scripts[@]}"; do
     echo "bin/build: $path has a shebang but is not executable" >&2
     fail=1
   fi
-  [ ! -s "$parsed/$i.out" ] || cat "$parsed/$i.out"
   [ ! -s "$parsed/$i.err" ] || cat "$parsed/$i.err" >&2
   [ ! -e "$parsed/$i.fail" ] || fail=1
 done
