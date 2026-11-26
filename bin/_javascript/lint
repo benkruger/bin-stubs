@@ -110,7 +110,7 @@ in_background() {
 }
 
 if [ "${#biome_files[@]}" -gt 0 ]; then
-  in_background "$root/node_modules/.bin/biome" check --error-on-warnings "${biome_files[@]}"
+  in_background "$root/node_modules/.bin/biome" check --formatter-enabled=false --error-on-warnings "${biome_files[@]}"
 fi
 
 status="$ungated"

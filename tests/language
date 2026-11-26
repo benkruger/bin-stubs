@@ -68,6 +68,7 @@ section_sentinels() {
       grep -q "run bin/dependencies" "${LAST_LOG}" || die "$lang ci ran without its packages"
       expect_fail leaf "$app" "$lang" test
       grep -q "run bin/dependencies" "${LAST_LOG}" || die "$lang test ran without its packages"
+      expect_ok leaf "$app" "$lang" changed --files
       ;;
   esac
   case "$lang" in
@@ -172,6 +173,10 @@ section_changed() {
   unformat "$app" "$lang"
   expect_ok leaf "$app" "$lang" changed
   formatted "$app" "$lang" || die "$lang changed did not format the edited file"
+  : >"$WORK/listings"
+  unformat "$app" "$lang"
+  PATH="$(listing_counter):$PATH" LISTING_LOG="$WORK/listings" expect_ok leaf "$app" "$lang" changed
+  assert_eq "$(wc -l <"$WORK/listings" | tr -d ' ')" 1 "the times $lang changed listed the changed files"
   twinless "$app" "$lang"
   unformat "$app" "$lang"
   git -C "$repo" commit -q -a -m "$lang unformatted"
@@ -398,6 +403,10 @@ EOF
       expect_fail leaf "$app" "$lang" format src/broken.js
       grep -q "src/broken.js" "${LAST_LOG}" || die "$lang format passed a file Biome cannot parse"
       rm "$app/src/broken.js"
+      printf 'export const loose = {a:1}\n' >"$app/src/loose.js"
+      expect_ok leaf "$app" "$lang" lint src/loose.js
+      expect_fail leaf "$app" "$lang" format --check src/loose.js
+      rm "$app/src/loose.js"
       printf 'const unused = 1;\nexport const kept = 2;\n' >"$app/src/warn.js"
       expect_fail leaf "$app" "$lang" lint src/warn.js
       grep -q "noUnusedVariables" "${LAST_LOG}" || die "$lang let a Biome warning through"
@@ -684,6 +693,7 @@ EOF
     grep -q 'dependencies: \[.package(url:' "$app/Package.swift" || die "ios dependency plant did not land"
     expect_fail leaf "$app" "$lang" build
     grep -q "Package.resolved is missing" "${LAST_LOG}" || die "ios built a package whose remote packages were never resolved"
+    expect_ok leaf "$app" "$lang" changed --files
     expect_ok leaf "$app" "$lang" dependencies
     cp "$app/Package.resolved" "$WORK/resolved.keep"
     perl -pi -e 's/("revision"\s*:\s*")[0-9a-f]+/${1}0000000000000000000000000000000000000000/' "$app/Package.resolved"

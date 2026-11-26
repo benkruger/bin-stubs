@@ -369,6 +369,20 @@ EOF
   grep -q "audited:" "$repo/.claude/rules/probe.md" && die "bin/stamp-rules with no rule file stamped a rule"
   expect_ok "$repo/bin/stamp-rules" "$repo/.claude/rules/probe.md"
   expect_ok "$repo/tests/run"
+  local counter="$WORK/simplecov-counter" real_grep
+  real_grep="$(command -v grep)"
+  mkdir -p "$counter"
+  cat >"$counter/grep" <<EOF
+#!/usr/bin/env bash
+case " \$* " in
+  *"SimpleCov\\.start"*) printf 'scan\n' >>"$counter/log" ;;
+esac
+exec "$real_grep" "\$@"
+EOF
+  chmod +x "$counter/grep"
+  printf 'VALUE = 1\n' >"$cov/ok/test/value.rb"
+  expect_ok env PATH="$counter:$PATH" "$repo/tests/guards"
+  assert_eq "$(wc -l <"$counter/log" | tr -d ' ')" 1 "the greps that looked for SimpleCov across three Ruby files"
   rm -r "$cfg/ok" "$cov/ok"
 
   {
@@ -859,6 +873,27 @@ EOF
   ) || die "the Python scripts let uv download a Python"
 }
 
+test_dependencies_once() {
+  say "bin/dependencies never re-checks what its update just installed"
+  local stubs="$WORK/deps-once" app="$WORK/deps-once-app"
+  mkdir -p "$stubs" "$app"
+  cat >"$stubs/uv" <<'EOF'
+#!/usr/bin/env bash
+printf 'uv %s\n' "$*"
+EOF
+  cat >"$stubs/bundle" <<'EOF'
+#!/usr/bin/env bash
+printf 'bundle %s\n' "$*"
+EOF
+  chmod +x "$stubs/uv" "$stubs/bundle"
+  expect_ok env CI=1 HOME="$app" PATH="$stubs:$PATH" APP_DIR="$app" "$REPO/bin/_python/dependencies"
+  grep -q "^uv lock" "${LAST_LOG}" && die "Python bin/dependencies checked the lock its update just wrote"
+  grep -q "^uv sync --upgrade" "${LAST_LOG}" || die "Python bin/dependencies did not update"
+  expect_ok env PATH="$stubs:$PATH" APP_DIR="$app" "$REPO/bin/_rails/dependencies"
+  grep -q "^bundle check" "${LAST_LOG}" && die "Rails bin/dependencies checked the gems its update just installed"
+  grep -q "^bundle update --all" "${LAST_LOG}" || die "Rails bin/dependencies did not update"
+}
+
 test_checked_once() {
   say "a step skips the toolchain and package checks its bin/ci or bin/changed ran"
   local lang app="$WORK/no-app"
@@ -1014,8 +1049,17 @@ test_merge() {
   grep -q "main has moved on since feature started" "${LAST_LOG}" || die "a stale branch was not refused"
   git -C "$wt" merge -q --no-edit main
 
+  mkdir -p "$wt/.flow-states/feature/commit-review" "$wt/app/.flow-states/feature" "$repo/.flow-states/main/commit-review"
+  printf 'suite pass\n' >"$wt/.flow-states/feature/root-suite-sentinel"
+  printf 'app pass\n' >"$wt/app/.flow-states/feature/ci-sentinel"
+  : >"$wt/.flow-states/feature/commit-review/branch-round.json"
+  : >"$repo/.flow-states/main/commit-review/main-round.json"
   base="$(git -C "$repo" rev-parse HEAD)"
   expect_ok "$repo/bin/merge" feature "$(minted 'Land the feature')"
+  assert_eq "$(cat "$repo/.flow-states/main/root-suite-sentinel")" "suite pass" "the branch's suite pass on main"
+  assert_eq "$(cat "$repo/app/.flow-states/main/ci-sentinel")" "app pass" "the branch's app pass on main"
+  [ -e "$repo/.flow-states/main/commit-review/main-round.json" ] || die "bin/merge dropped main's commit review logs"
+  [ ! -e "$repo/.flow-states/main/commit-review/branch-round.json" ] || die "bin/merge copied the branch's commit review logs"
   assert_eq "$(git -C "$repo" log -1 --format=%s)" "Land the feature" "the squash's message"
   assert_eq "$(git -C "$repo" rev-parse HEAD^)" "$base" "one commit on main"
   assert_eq "$(git -C "$repo" rev-parse 'HEAD^{tree}')" "$(git -C "$repo" rev-parse 'feature^{tree}')" "the squash's tree"
@@ -1063,7 +1107,10 @@ test_merge() {
   assert_rc 1 "a root on another branch"
   grep -q "the repo root is not on main" "${LAST_LOG}" || die "a root on another branch was not refused"
   git -C "$repo" switch -q rootwork
+  mkdir -p "$repo/.flow-states/rootwork"
+  printf 'root pass\n' >"$repo/.flow-states/rootwork/root-suite-sentinel"
   expect_ok "$repo/bin/merge" rootwork "$(minted 'Land root work')"
+  assert_eq "$(cat "$repo/.flow-states/main/root-suite-sentinel")" "root pass" "the root branch's pass on main"
   assert_eq "$(git -C "$repo" branch --show-current)" main "the root after landing its own branch"
   assert_eq "$(git -C "$repo" log -1 --format=%s)" "Land root work" "the squash from the root's branch"
   assert_eq "$(git -C "$repo" rev-parse HEAD^)" "$base" "one commit on main from the root's branch"
@@ -1162,7 +1209,7 @@ run_test() {
 }
 
 run_all "$WORK/logs" run_test test_settings test_scan test_root_format test_open test_qa test_query \
-  test_hooks test_starter test_bare_guards test_guards_scans test_commit test_commit_review test_commit_fix test_commit_rounds test_commit_stops test_commit_gate test_commit_failures test_copies_match test_changed_empty test_parts \
+  test_hooks test_starter test_bare_guards test_guards_scans test_guards_markdownlint test_commit test_commit_review test_commit_fix test_commit_rounds test_commit_stops test_commit_gate test_commit_failures test_copies_match test_changed_empty test_parts \
   test_dispatch test_dispatch_select test_dispatch_paths test_dispatch_path_args test_git_failures test_suite_seal test_unborn test_suite_missing test_root_check \
-  test_shellcheck_cache test_no_installs test_checked_once test_steps test_jobs test_interrupt test_start test_merge test_cleanup test_complete test_ci_time test_root_app test_root_js test_root_shell test_root_changed test_die_fixture \
+  test_shellcheck_cache test_no_installs test_checked_once test_dependencies_once test_steps test_jobs test_interrupt test_start test_merge test_cleanup test_complete test_ci_time test_root_app test_root_js test_root_shell test_root_changed test_die_fixture \
   test_app_language

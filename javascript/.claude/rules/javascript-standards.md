@@ -18,11 +18,11 @@ Biome and the app's own tests under c8 hold the JavaScript app at full strength.
 - Every source is at 100% functions, lines, branches and statements under
   c8. `bin/ci` checks every source; `bin/changed` checks the changed ones.
 - `bin/lint` skips `node_modules/` and `.flow-states/` at any depth, a top-level
-  `dist/` and the apps inside a root app; Biome formats and lints every other
-  `.js`, `.mjs`, `.cjs`, `.jsx`, `.json`, `.jsonc` and `.css` file with zero
-  warnings on the recommended or stricter rules `no-lint-exceptions.md` allows;
-  it leaves Markdown and bash scripts to `tests/guards` and fails any other
-  file but a symlink unless `UNGATED_NAMES` or `UNGATED_PATHS` names it.
+  `dist/` and the apps inside a root app; Biome lints every other `.js`, `.mjs`,
+  `.cjs`, `.jsx`, `.json`, `.jsonc` and `.css` file with zero warnings on the
+  rules `no-lint-exceptions.md` allows, and `bin/format` formats the same files;
+  `bin/lint` leaves Markdown and bash scripts to `tests/guards` and fails any
+  other file but a symlink unless `UNGATED_NAMES` or `UNGATED_PATHS` names it.
 - `bin/build` runs the package's `build` script, if any, then `node --check`
   on every `.js`, `.mjs` and `.cjs` file, bar those of the apps inside a
   root app, and fails when either fails.
@@ -38,4 +38,4 @@ Biome and the app's own tests under c8 hold the JavaScript app at full strength.
   matching `npm warn`, `DeprecationWarning` or a line starting `Warning:`
   and a space, any case; a failed test fails `bin/qa`.
 - Trigger: any change to a JavaScript `bin/` script.
-<!-- audited: 5f93ad7ca548 -->
+<!-- audited: c326a3e6257f -->

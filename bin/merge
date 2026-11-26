@@ -35,6 +35,18 @@ if git diff --quiet main "$branch"; then
   refuse "$branch has nothing to merge into main"
 fi
 
+src=".worktrees/$branch"
+[ -d "$src" ] || src=.
+while IFS= read -r -d '' states; do
+  dest="${states#"$src"/}"
+  dest="${dest%/"$branch"}/main"
+  mkdir -p "$dest"
+  for pass in "$states"/*; do
+    [ -e "$pass" ] && [ "${pass##*/}" != commit-review ] || continue
+    cp -R "$pass" "$dest/"
+  done
+done < <(find "$src" \( -path "$src/.worktrees" -o -name node_modules -o -name .venv -o -name target -o -name .build \) -prune -o -type d -path "*/.flow-states/$branch" -print0)
+
 before="$(git rev-parse HEAD)"
 git merge -q --squash "$branch" >/dev/null
 if "$ROOT/bin/commit" ${push[@]+"${push[@]}"} main "$msgfile"; then

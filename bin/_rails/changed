@@ -5,8 +5,6 @@ REPO_ROOT="$(cd "${APP_DIR:-$HERE/../..}" && pwd)"
 cd "$REPO_ROOT"
 # shellcheck source=lib/toolchain.sh
 . "$HERE/lib/toolchain.sh"
-packages_check "$PWD" || exit 1
-export FLOW_CHECKED_APP="$PWD"
 # shellcheck source=lib/sources.sh
 . "$HERE/lib/sources.sh"
 # shellcheck source=../lib/deletions.sh
@@ -34,6 +32,9 @@ if [ "${1:-}" = "--files" ]; then
   changed_files
   exit 0
 fi
+
+packages_check "$PWD" || exit 1
+export FLOW_CHECKED_APP="$PWD"
 
 quietly() {
   local log rc=0

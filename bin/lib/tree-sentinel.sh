@@ -68,7 +68,7 @@ root_app_fingerprint() {
       excludes+=("${d#./}")
     fi
   done
-  content_tree "${excludes[@]+"${excludes[@]}"}" CLAUDE.md .claude checks
+  content_tree "${excludes[@]+"${excludes[@]}"}" CLAUDE.md README.md .claude checks
 }
 
 tree_fingerprint() {

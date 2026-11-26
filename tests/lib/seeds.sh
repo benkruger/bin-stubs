@@ -526,6 +526,23 @@ twinless() {
   rm "$app/$src"
 }
 
+listing_counter() {
+  local dir="$WORK/listing-counter" real
+  if [ ! -x "$dir/git" ]; then
+    real="$(command -v git)"
+    mkdir -p "$dir"
+    cat >"$dir/git" <<EOF
+#!/usr/bin/env bash
+case " \$* " in
+  *" diff --name-only --relative "*) printf 'listing\n' >>"\$LISTING_LOG" ;;
+esac
+exec "$real" "\$@"
+EOF
+    chmod +x "$dir/git"
+  fi
+  printf '%s\n' "$dir"
+}
+
 deleted_change() {
   local app="$1" lang="$2" src twin
   src="$(source_of "$lang")"

@@ -27,9 +27,16 @@ if [ "${1:-}" = "--files" ]; then
   exit 0
 fi
 
-if [ -z "$(changed_files)" ] && [ -z "$(deleted_paths)" ]; then
+listing="$(changed_files)"
+if [ -z "$listing" ] && [ -z "$(deleted_paths)" ]; then
   exit 0
 fi
-"$here/format"
-"$here/lint"
+files=()
+while IFS= read -r path; do
+  [ -z "$path" ] || files+=("$path")
+done <<<"$listing"
+if [ "${#files[@]}" -gt 0 ]; then
+  "$here/format" "${files[@]}"
+  "$here/lint" "${files[@]}"
+fi
 exec "$here/test"

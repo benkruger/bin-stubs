@@ -493,6 +493,14 @@ test_root_app() {
   expect_ok "$repo/bin/_python/ci"
   grep -q "sentinel written" "${LAST_LOG}" && die "sibling ios edit rewrote the root sentinel"
   assert_eq "$(cat "$sent")" "$hash" "root hash changed"
+  mkdir -p "$repo/.claude" "$repo/checks"
+  printf '# Notes\n' >"$repo/README.md"
+  printf '# Repo\n' >"$repo/CLAUDE.md"
+  printf '# Rule\n' >"$repo/.claude/rule.md"
+  printf '%s\n' '#!/usr/bin/env bash' >"$repo/checks/pin"
+  expect_ok "$repo/bin/_python/ci"
+  grep -q "sentinel written" "${LAST_LOG}" && die "a corpus edit rewrote the root sentinel"
+  assert_eq "$(cat "$sent")" "$hash" "the root hash after a corpus edit"
   printf '\n\ndef test_add_zero() -> None:\n    assert add(0, 0) == 0\n' >>"$repo/tests/test_add.py"
   expect_ok "$repo/bin/_python/ci"
   grep -q "sentinel written" "${LAST_LOG}" || die "the root app kept its pass after its own test changed"
@@ -538,7 +546,6 @@ test_root_changed() {
     if [ "$lang" = rust ]; then
       printf '[package]\nname = "root"\nversion = "0.1.0"\nedition = "2021"\n' >"$repo/Cargo.toml"
       printf 'pub fn one() -> i32 {\n    1\n}\n' >"$repo/src/lib.rs"
-      (cd "$repo" && cargo generate-lockfile --offline -q)
     else
       printf '// swift-tools-version:5.9\nimport PackageDescription\n\nlet package = Package(name: "Root")\n' \
         >"$repo/Package.swift"

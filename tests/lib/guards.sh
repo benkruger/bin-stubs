@@ -135,9 +135,30 @@ test_guards_scans() {
   failing_scans "$repo" "$WORK/failing" perl "sh|bash" "bash script"
   failing_scans "$repo" "$WORK/failing" perl "entry point is not executable" "entry point"
   failing_scans "$repo" "$WORK/failing" perl "audited:" rule
-  failing_scans "$repo" "$WORK/failing" grep "-nIHE -lE -nHE -Lw" suppression "skip candidate" "time limit" install \
-    packages_check
+  failing_scans "$repo" "$WORK/failing" grep "-nIHE -lE -nHE -Lw -l" suppression "skip candidate" "time limit" install \
+    packages_check SimpleCov
   failing_scans "$repo" "$WORK/failing" grep "-nE -noE -LE" skip "matching line" "time limit value" update
+  failing_scans "$repo" "$WORK/failing" grep "-lI" "text file"
+}
+
+test_guards_markdownlint() {
+  say "guards run markdownlint once and print all it reports"
+  local repo stubs="$WORK/markdownlint-stub"
+  repo="$(bare_guards)"
+  keep "$repo"
+  printf '# Notes\n' >"$repo/notes.md"
+  mkdir -p "$stubs"
+  cat >"$stubs/markdownlint-cli2" <<EOF
+#!/usr/bin/env bash
+printf 'run\n' >>"$stubs/calls"
+echo "stand-in: could not parse the config"
+exit 2
+EOF
+  chmod +x "$stubs/markdownlint-cli2"
+  run_log env PATH="$stubs:$PATH" "$repo/tests/guards"
+  assert_rc 1 "guards whose markdownlint fails"
+  grep -qx "stand-in: could not parse the config" "${LAST_LOG}" || die "the guards hid what markdownlint reported"
+  assert_eq "$(wc -l <"$stubs/calls" | tr -d ' ')" 1 "the times the guards ran markdownlint"
 }
 
 scan_plants() {
@@ -151,6 +172,7 @@ scan_plants() {
   chmod +x "$repo/bin/_x/build" "$repo/bin/_x/dependencies" "$repo/bin/_x/ci"
   printf '{ "jest": { "testTimeout": 5 } }\n' >"$repo/package.json"
   printf 'test.skip("a", () => {});\ntest("b", () => {}, { timeout: limit });\n' >"$repo/a.test.ts"
+  printf 'VALUE = 1\n' >"$repo/value.rb"
 }
 
 failing_tool_stubs() {

@@ -931,16 +931,10 @@ fi
 
 COVERAGE_NARROWED='"codeCoverage"[[:space:]]*:[[:space:]]*(false|\{)|codeCoverageEnabled[[:space:]]*=[[:space:]]*"NO"|onlyGenerateCoverageForSpecifiedTargets[[:space:]]*=[[:space:]]*"YES"'
 
+ruby_files=()
 for path in "${files[@]}"; do
   case "$path" in
-    *.rb)
-      grep -q 'SimpleCov\.start' "$path" || continue
-      grep -qE '^[[:space:]]*minimum_coverage line: 100, branch: 100[[:space:]]*$' "$path" ||
-        fail "$path: starts SimpleCov without minimum_coverage line: 100, branch: 100"
-      while IFS= read -r line; do
-        fail "$path:$line: leaves files out of coverage (add_filter, skip or filters)"
-      done < <(matching_lines '\b(add_filter|skip|filters)\b' "$path")
-      ;;
+    *.rb) ruby_files+=("$path") ;;
     .simplecov | */.simplecov)
       fail "$path: SimpleCov starts in test/test_helper.rb, so it has no .simplecov file"
       ;;
@@ -956,6 +950,15 @@ for path in "${files[@]}"; do
       ;;
   esac
 done
+if [ "${#ruby_files[@]}" -gt 0 ]; then
+  while IFS= read -r path; do
+    grep -qE '^[[:space:]]*minimum_coverage line: 100, branch: 100[[:space:]]*$' "$path" ||
+      fail "$path: starts SimpleCov without minimum_coverage line: 100, branch: 100"
+    while IFS= read -r line; do
+      fail "$path:$line: leaves files out of coverage (add_filter, skip or filters)"
+    done < <(matching_lines '\b(add_filter|skip|filters)\b' "$path")
+  done < <(printf '%s\0' "${ruby_files[@]}" | xargs -0 bash -c "$SCAN_EACH" SimpleCov -l 'SimpleCov\.start' --)
+fi
 
 is_sourced() {
   case "/$1" in
@@ -1039,8 +1042,8 @@ done
 if [ "${#markdown[@]}" -gt 0 ]; then
   if ! command -v markdownlint-cli2 >/dev/null 2>&1; then
     fail "markdownlint-cli2 is not installed (brew install markdownlint-cli2)"
-  elif ! markdownlint-cli2 "${markdown[@]}" >/dev/null 2>&1; then
-    markdownlint-cli2 "${markdown[@]}" 2>&1 | grep -E ' (error|warning) ' >&2 || true
+  elif ! markdown_report="$(markdownlint-cli2 "${markdown[@]}" 2>&1)"; then
+    printf '%s\n' "$markdown_report" >&2
     fail "markdownlint reported findings (above; bin/format fixes what it can)"
   fi
 fi

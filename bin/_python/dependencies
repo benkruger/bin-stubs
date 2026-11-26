@@ -12,6 +12,4 @@ fi
 if [ -L .venv ]; then
   rm .venv
 fi
-uv sync --upgrade --compile-bytecode
-
-exec uv lock --check
+exec uv sync --upgrade --compile-bytecode
