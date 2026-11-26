@@ -24,8 +24,8 @@ Biome and the app's own tests under c8 hold the JavaScript app at full strength.
   `bin/lint` leaves Markdown and bash scripts to `tests/guards` and fails any
   other file but a symlink unless `UNGATED_NAMES` or `UNGATED_PATHS` names it.
 - `bin/build` runs the package's `build` script, if any, then `node --check`
-  on every `.js`, `.mjs` and `.cjs` file, bar those of the apps inside a
-  root app, and fails when either fails.
+  on every `.js`, `.mjs` and `.cjs` file `bin/lint` does not skip, and fails
+  when either fails.
 - `.nvmrc` pins Node and `packageManager` pins npm, which installs from
   `package-lock.json`. Every `bin/` script disables Node's compile cache and,
   outside CI, activates Node through nvm and fails unless both pins are active.
@@ -38,4 +38,4 @@ Biome and the app's own tests under c8 hold the JavaScript app at full strength.
   matching `npm warn`, `DeprecationWarning` or a line starting `Warning:`
   and a space, any case; a failed test fails `bin/qa`.
 - Trigger: any change to a JavaScript `bin/` script.
-<!-- audited: e3a58b6dd020 -->
+<!-- audited: f531f22c5a2a -->

@@ -859,9 +859,6 @@ changed_checks() {
 
 whole_app() {
   local app="$1" lang="$2" lint_plant lint_body lint_find lint_twin lint_twin_body source_plant source_body
-  case "$lang" in
-    rust | ios) return 0 ;;
-  esac
   lint_plant_of "$lang"
   printf '%s\n' "$lint_body" >"$app/$lint_plant"
   [ "$lang" != shell ] || chmod +x "$app/$lint_plant"

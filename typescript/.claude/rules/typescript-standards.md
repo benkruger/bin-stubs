@@ -13,12 +13,12 @@ Prettier, ESLint, `tsc` and Vitest hold the TypeScript app at full strength.
   Vitest's v8 coverage. `bin/ci` checks every source; `bin/changed` checks the
   changed ones, a changed test holding its source to the same bar. `bin/test`
   fails a source a Vitest `setupFiles` entry names: Vitest never measures it.
-- `bin/format` runs Prettier on every file it has a parser for but Markdown, a
-  symlink, `node_modules/`, `.venv/`, `.flow-states/` and the apps inside a root
-  app. `bin/lint` leaves Markdown and bash scripts to `tests/guards` and fails
-  any other file but a symlink that Prettier ignores or has no parser for, whose
-  Prettier config sets `requirePragma` or `checkIgnorePragma`, or that no ESLint
-  rule covers, unless `UNGATED_NAMES` or an exact `UNGATED_PATHS` path names it.
+- `bin/format` and `bin/lint` skip `node_modules/`, `.venv/`, `.flow-states/` at
+  any depth and the apps inside a root app; `bin/format` formats the rest
+  Prettier parses bar Markdown and symlinks. `bin/lint` leaves Markdown and bash
+  to `tests/guards` and fails other non-symlink files Prettier ignores or cannot
+  parse, whose Prettier config has `requirePragma` or `checkIgnorePragma`, or no
+  ESLint rule covers, unless in `UNGATED_NAMES` or exactly in `UNGATED_PATHS`.
 - ESLint passes with zero warnings (`no-lint-exceptions.md`); `bin/lint` fails
   a file whose config sets a processor or another language, or leaves off a
   rule or the package of its recommended set: `@eslint/js` for a script,
@@ -38,4 +38,4 @@ Prettier, ESLint, `tsc` and Vitest hold the TypeScript app at full strength.
   matching `npm warn`, `DeprecationWarning` or a line starting `Warning:`
   and a space, any case; a failed test fails `bin/qa`.
 - Trigger: any change to a TypeScript `bin/` script or `eslint.config.js`.
-<!-- audited: 83ec9d7a995a -->
+<!-- audited: a78beffbfdc4 -->
