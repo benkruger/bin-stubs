@@ -49,10 +49,10 @@ section_installed() {
       ;;
   esac
   case "$lang" in
-    typescript | javascript) run_all "$WORK/logs" run_section changed whole plants audit ;;
-    python) run_all "$WORK/logs" run_section changed whole plants ;;
+    typescript | javascript) run_all "$WORK/logs" run_section changed whole plants audit root ;;
+    python) run_all "$WORK/logs" run_section changed whole plants root ;;
     rails) run_all "$WORK/logs" run_section changed whole plants audit root spaced ;;
-    ios) run_all "$WORK/logs" run_section changed plants xcode ;;
+    ios) run_all "$WORK/logs" run_section changed plants xcode root ;;
     shell) run_all "$WORK/logs" run_section changed whole plants ;;
     *) run_all "$WORK/logs" run_section changed plants ;;
   esac
@@ -181,6 +181,7 @@ section_changed() {
   unformat "$app" "$lang"
   PATH="$(listing_counter):$PATH" LISTING_LOG="$WORK/listings" expect_ok leaf "$app" "$lang" changed
   assert_eq "$(wc -l <"$WORK/listings" | tr -d ' ')" 1 "the times $lang changed listed the changed files"
+  changed_checks "$app" "$lang"
   twinless "$app" "$lang"
   unformat "$app" "$lang"
   git -C "$repo" commit -q -a -m "$lang unformatted"
@@ -333,6 +334,11 @@ EOF
       expect_fail leaf "$app" "$lang" lint src/add.ts
       grep -q "src/add.ts: no formatter (Prettier)" "${LAST_LOG}" || die "$lang let Prettier skip files with an ignore pragma"
       rm "$app/.prettierrc"
+      printf 'a {\n  color: red;\n}\n' >"$app/src/style.css"
+      expect_fail leaf "$app" "$lang" lint src/style.css
+      grep -qxF "src/style.css: ESLint needs @eslint/css for its recommended rules" "${LAST_LOG}" ||
+        die "$lang linted a CSS file without the ESLint plugin its rules need"
+      rm "$app/src/style.css"
       cp "$app/tsconfig.json" "$app/tsconfig.app.json"
       cp "$app/tsconfig.json" "$WORK/tsconfig.keep"
       printf '{ "files": [], "references": [{ "path": "./tsconfig.app.json" }] }\n' >"$app/tsconfig.json"
@@ -407,6 +413,11 @@ EOF
       grep -q "SyntaxError" "${LAST_LOG}" || die "$lang build let a build script stand in for node --check"
       mv "$WORK/package.keep" "$app/package.json"
       expect_ok leaf "$app" "$lang" build src/index.js
+      cp "$app/package.json" "$WORK/package.keep"
+      (cd "$app" && npm pkg set "scripts.build=echo the-build-script-ran && false")
+      expect_fail leaf "$app" "$lang" build src/index.js
+      grep -qx "the-build-script-ran" "${LAST_LOG}" || die "$lang build skipped the package's failing build script"
+      mv "$WORK/package.keep" "$app/package.json"
       expect_fail leaf "$app" "$lang" format src/broken.js
       grep -q "src/broken.js" "${LAST_LOG}" || die "$lang format passed a file Biome cannot parse"
       rm "$app/src/broken.js"
@@ -574,6 +585,13 @@ EOF
       rm -r "$app/extra"
       mv "$WORK/cargo.keep" "$app/Cargo.toml"
       mv "$WORK/lock.keep" "$app/Cargo.lock"
+      mkdir -p "$app/tests"
+      printf '%s\n' 'fn needless() -> i32 {' '    return 1;' '}' '' '#[test]' 'fn needless_is_one() {' \
+        '    assert_eq!(needless(), 1);' '}' >"$app/tests/needless.rs"
+      expect_fail leaf "$app" "$lang" lint
+      grep -q "tests/needless.rs" "${LAST_LOG}" || die "$lang lint skipped an integration test target"
+      grep -q "needless_return" "${LAST_LOG}" || die "$lang lint ran without Clippy's default lints on a test target"
+      rm "$app/tests/needless.rs"
       ;;
     rails)
       cp "$app/.rubocop.yml" "$WORK/rubocop.keep"
@@ -644,6 +662,21 @@ EOF
       expect_fail leaf "$app" "$lang" test
       grep -q "rails (db:test:prepare)" "${LAST_LOG}" || die "$lang tested an app with a database without preparing it"
       rm "$app/config/database.yml"
+      mkdir -p "$app/lib" "$app/test/lib"
+      printf '%s\n' '# frozen_string_literal: true' '' 'module Greeter' '  def self.call' "    'hi'" '  end' 'end' \
+        >"$app/lib/greeter.rb"
+      printf '%s\n' '# frozen_string_literal: true' '' "require 'test_helper'" "require_relative '../../lib/greeter'" '' \
+        'class GreeterTest < ActiveSupport::TestCase' "  test 'greets' do" "    assert_equal 'hi', Greeter.call" '  end' 'end' \
+        >"$app/test/lib/greeter_test.rb"
+      expect_ok leaf "$app" "$lang" test lib/greeter.rb
+      grep -qxF "bin/test: coverage bar held on 1 source(s)" "${LAST_LOG}" || die "$lang test on a lib/ source did not run its twin"
+      expect_ok leaf "$app" "$lang" test test/lib/greeter_test.rb
+      grep -qxF "bin/test: coverage bar held on 1 source(s)" "${LAST_LOG}" || die "$lang test on a lib/ twin did not hold its source"
+      printf '%s\n' '# frozen_string_literal: true' '' 'module Lonely' 'end' >"$app/lib/lonely.rb"
+      expect_fail leaf "$app" "$lang" changed
+      grep -qF "no mirrored test for lib/lonely.rb → test/lib/lonely_test.rb" "${LAST_LOG}" ||
+        die "$lang changed passed a lib/ source with no twin"
+      rm -r "${app:?}/lib" "$app/test/lib"
       mkdir -p "$WORK/cut-quiet/stubs" "$WORK/cut-quiet/tmp"
       cat >"$WORK/cut-quiet/stubs/bundle" <<EOF
 #!/usr/bin/env bash
@@ -697,6 +730,7 @@ EOF
   esac
 
   sourceless "$app" "$lang"
+  measured_nothing "$app" "$lang"
   changed_scope "$app" "$lang"
   coverage_gap "$app" "$lang"
 
@@ -823,34 +857,67 @@ section_spaced() {
 }
 
 section_root() {
-  local repo app
+  local repo app own ext loose lint_body build_body
   repo="$(new_repo)"
   KEEP="$repo"
   app="$repo"
   copy_dir "$REPO/bin" "$repo/bin"
-  cp "$repo/.gitignore" "$WORK/root.gitignore"
-  seed_of "$lang" "$app"
-  cat "$WORK/root.gitignore" >>"$app/.gitignore"
-  cp "$TEMPLATE/$lang/Gemfile.lock" "$app/Gemfile.lock"
+  case "$lang" in
+    typescript | javascript) cp -cR "$TEMPLATE/$lang/." "$app" 2>/dev/null || cp -R "$TEMPLATE/$lang/." "$app" ;;
+    rails)
+      cp "$repo/.gitignore" "$WORK/root.gitignore"
+      seed_of "$lang" "$app"
+      cat "$WORK/root.gitignore" >>"$app/.gitignore"
+      cp "$TEMPLATE/$lang/Gemfile.lock" "$app/Gemfile.lock"
+      ;;
+    python)
+      seed_of "$lang" "$app"
+      expect_ok leaf "$app" "$lang" dependencies
+      ;;
+    *) seed_of "$lang" "$app" ;;
+  esac
+  build_body=""
+  case "$lang" in
+    typescript | javascript)
+      own=src ext=ts loose='export const loose = {a:1}' lint_body=$'const unused = 1;\nexport const kept = 2;'
+      build_body='export const wrong: number = "text";'
+      if [ "$lang" = javascript ]; then
+        ext=js build_body='export const broken = (;'
+      fi
+      ;;
+    python) own=src ext=py loose='x=1' lint_body='import os' build_body=$'def untyped(a):\n    return a' ;;
+    rails) own=app/models ext=rb loose='loose = 1' lint_body='loose = 1' ;;
+    ios) own=Sources/App ext=swift loose='let  spaced=1' lint_body='let Bad_Name = 1' ;;
+  esac
   mkdir -p "$app/web"
   printf '{ "name": "web", "private": true }\n' >"$app/web/package.json"
-  printf '%s\n' 'loose = 1' >"$app/web/loose.rb"
+  printf '%s\n' "$loose" >"$app/web/loose.$ext"
+  printf '%s\n' "$lint_body" >"$app/web/lint.$ext"
+  [ -z "$build_body" ] || printf '%s\n' "$build_body" >"$app/web/build.$ext"
   printf '%s\n' '#Loose' >"$app/web/loose.md"
   run_log leaf "$app" "$lang" changed --files
   grep -q "^web/" "${LAST_LOG}" && die "a root $lang app's changed listed a sibling app's file"
   expect_ok leaf "$app" "$lang" format --all
-  [ "$(cat "$app/web/loose.rb")" = "loose = 1" ] || die "a root $lang app's format rewrote a sibling app's file"
-  expect_ok leaf "$app" "$lang" lint --all
+  [ "$(cat "$app/web/loose.$ext")" = "$loose" ] || die "a root $lang app's format rewrote a sibling app's file"
   expect_ok leaf "$app" "$lang" format --check --all
-  cp "$app/web/loose.rb" "$app/app/models/loose.rb"
+  expect_ok leaf "$app" "$lang" lint --all
+  if [ -n "$build_body" ]; then
+    expect_ok leaf "$app" "$lang" build --all
+    printf '%s\n' "$build_body" >"$app/$own/build.$ext"
+    expect_fail leaf "$app" "$lang" build --all
+    grep -qE "(^|[ /])$own/build.$ext" "${LAST_LOG}" || die "a root $lang app's build skipped its own file"
+    grep -q "web/build" "${LAST_LOG}" && die "a root $lang app's build checked a sibling app's file"
+    rm "$app/$own/build.$ext"
+  fi
+  printf '%s\n' "$lint_body" >"$app/$own/lint.$ext"
   expect_fail leaf "$app" "$lang" lint --all
-  grep -q "== app/models/loose.rb ==" "${LAST_LOG}" || die "a root $lang app's lint skipped its own file"
-  grep -q "web/loose" "${LAST_LOG}" && die "a root $lang app's lint checked a sibling app's file"
+  grep -q "$own/lint.$ext" "${LAST_LOG}" || die "a root $lang app's lint skipped its own file"
+  grep -q "web/lint" "${LAST_LOG}" && die "a root $lang app's lint checked a sibling app's file"
   return 0
 }
 
 section_xcode() {
-  local repo app leaked bare stubs="$WORK/xcodebuild-stub" calls="$WORK/xcodebuild-calls" real
+  local repo app leaked bare setting stubs="$WORK/xcodebuild-stub" calls="$WORK/xcodebuild-calls" real
   real="$(command -v xcodebuild)"
   mkdir -p "$stubs"
   cat >"$stubs/xcodebuild" <<EOF
@@ -908,10 +975,14 @@ EOF
     die "ios dependencies did not resolve an Xcode workspace's packages"
   stale_xcode_pins "$app" "$app/App.xcworkspace/xcshareddata/swiftpm/Package.resolved"
   rm -r "$app/App.xcworkspace"
-  perl -pi -e 's/ (SWIFT|GCC)_TREAT_WARNINGS_AS_ERRORS = YES;//g' "$app/App.xcodeproj/project.pbxproj"
-  expect_fail leaf "$app" "$lang" build
-  grep -q "bin/build: AppTests does not set SWIFT_TREAT_WARNINGS_AS_ERRORS" "${LAST_LOG}" ||
-    die "ios let an Xcode project build without treating warnings as errors"
+  cp "$app/App.xcodeproj/project.pbxproj" "$WORK/pbxproj.keep"
+  for setting in SWIFT GCC; do
+    cp "$WORK/pbxproj.keep" "$app/App.xcodeproj/project.pbxproj"
+    perl -pi -e "s/ ${setting}_TREAT_WARNINGS_AS_ERRORS = YES;//g" "$app/App.xcodeproj/project.pbxproj"
+    expect_fail leaf "$app" "$lang" build
+    grep -q "bin/build: AppTests does not set SWIFT_TREAT_WARNINGS_AS_ERRORS" "${LAST_LOG}" ||
+      die "ios let an Xcode project build without ${setting}_TREAT_WARNINGS_AS_ERRORS"
+  done
   bare="$(grep -v -e '-derivedDataPath' -e '^-version$' "$calls" || true)"
   [ -z "$bare" ] || die "ios ran xcodebuild with no build folder: $bare"
 }

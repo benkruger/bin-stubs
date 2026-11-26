@@ -150,7 +150,17 @@ EOF
   expect_ok "$repo/bin/build"
   grep -qx "bin/build: nothing it checks changed" "${LAST_LOG}" || die "bin/build on a README edit did not say it had nothing to run"
   [ ! -s "$log" ] || die "bin/build ran an app for a README edit"
+  rm "$repo/README.md"
+  : >"$log"
+  printf 'loose\n' >"$repo/loose.txt"
+  expect_ok "$repo/bin/build"
+  assert_eq "$(tr '\n' ' ' <"$log")" "root " "a root-level path with a root app"
+  rm "$repo/loose.txt"
   unset BUILT
+  printf '%s\n' '#!/usr/bin/env bash' 'kill -KILL 0' >"$repo/bin/_shell/build"
+  printf 'x\n' >"$repo/a/x.txt"
+  expect_fail "$repo/bin/build"
+  assert_eq "$(row_of a "$(summary)")" "FAIL" "an app whose run left no result"
 }
 
 test_dispatch_path_args() {
@@ -448,6 +458,18 @@ test_ci_time() {
     assert_rc 2 "a line with no whole number of seconds: $row"
     grep -q "is not a whole number of seconds" "${LAST_LOG}" || die "a line with no seconds was not named: $row"
   done
+  for took in 1.5 5s; do
+    run_log "$HERE/../bin/_ci-timeout" app "$limits" "$took"
+    assert_rc 2 "a run time that is not a whole number: $took"
+    grep -qxF "bin/_ci-timeout: seconds must be a whole number, got '$took'" "${LAST_LOG}" ||
+      die "a run time that is not a whole number was not named: $took"
+  done
+  mkdir -p "$WORK/no-host"
+  printf '%s\n' '#!/usr/bin/env bash' 'exit 0' >"$WORK/no-host/hostname"
+  chmod +x "$WORK/no-host/hostname"
+  run_log env PATH="$WORK/no-host:$PATH" "$HERE/../bin/_ci-timeout" app "$limits" 5
+  assert_rc 2 "a machine with no hostname"
+  grep -qxF "bin/_ci-timeout: no hostname" "${LAST_LOG}" || die "a machine with no hostname was not named"
 
   repo="$(new_repo)"
   keep "$repo"
@@ -578,6 +600,13 @@ test_root_shell() {
   expect_fail "$repo/bin/_shell/lint" --all
   grep -q "In loose.sh line 2" "${LAST_LOG}" || die "the root shell app's lint skipped its own file"
   grep -q "web/loose.sh" "${LAST_LOG}" && die "the root shell app's lint checked a sibling app's file"
+  rm "$repo/loose.sh"
+  printf '%s\n' 'if then' >"$repo/web/broken.sh"
+  expect_ok "$repo/bin/_shell/build"
+  printf '%s\n' 'if then' >"$repo/broken.sh"
+  expect_fail "$repo/bin/_shell/build"
+  grep -q "^broken.sh: line 1" "${LAST_LOG}" || die "the root shell app's build skipped its own file"
+  grep -q "web/broken.sh" "${LAST_LOG}" && die "the root shell app's build checked a sibling app's file"
   return 0
 }
 

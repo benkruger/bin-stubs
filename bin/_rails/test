@@ -12,7 +12,32 @@ packages_check "$PWD" || exit 1
 . "$here/_run_quiet"
 
 export RAILS_ENV=test
-export RUBYLIB="${here}${RUBYLIB:+:$RUBYLIB}"
+quiet_dir
+cat >"$QUIET_DIR/warning_filter.rb" <<'RUBY'
+# frozen_string_literal: true
+
+return if defined?(WarningFilter)
+
+module WarningFilter
+  APP = ENV.fetch('APP_DIR', Dir.pwd)
+  ROOTS = [File.expand_path(APP), File.realpath(APP)].uniq.freeze
+
+  def self.from_repo?(message)
+    ROOTS.any? do |root|
+      message.start_with?("#{root}/") && !message.start_with?("#{root}/vendor/")
+    end
+  end
+
+  def warn(message, **)
+    raise "Ruby warning (no-warnings gate):\n#{message}" if WarningFilter.from_repo?(message)
+
+    nil
+  end
+end
+
+Warning.extend(WarningFilter)
+RUBY
+export RUBYLIB="${QUIET_DIR}${RUBYLIB:+:$RUBYLIB}"
 export RUBYOPT="-w -rwarning_filter${RUBYOPT:+ $RUBYOPT}"
 
 # shellcheck source=lib/sources.sh

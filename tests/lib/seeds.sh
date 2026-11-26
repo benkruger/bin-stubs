@@ -618,7 +618,7 @@ changed_scope() {
       half=app/models/half.rb twin=test/models/half_test.rb
       half_body=$'# frozen_string_literal: true\n\nmodule Half\n  module_function\n\n  def call(number)\n    return 0 unless number.positive?\n\n    number / 2\n  end\nend'
       twin_body=$'# frozen_string_literal: true\n\nrequire \x27test_helper\x27\n\nclass HalfTest < ActiveSupport::TestCase\n  test \x27halves\x27 do\n    assert_equal 2, Half.call(4)\n  end\nend'
-      gap="coverage"
+      gap="bin/test: app/models/half.rb at "
       ;;
     *) return 0 ;;
   esac
@@ -673,9 +673,60 @@ sourceless() {
   mv "$WORK/sourceless.spec" "$app/$spec"
 }
 
-whole_app() {
-  local app="$1" lang="$2" lint_plant lint_body lint_find source_plant source_body
+measured_nothing() {
+  local app="$1" lang="$2" stubs="$WORK/measured-nothing"
   case "$lang" in
+    rust)
+      cp "$app/src/lib.rs" "$WORK/lib.keep"
+      printf 'pub const ONE: i32 = 1;\n' >"$app/src/lib.rs"
+      mkdir -p "$app/tests"
+      printf '%s\n' '#[test]' 'fn one() {' '    assert_eq!(app::ONE, 1);' '}' >"$app/tests/one.rs"
+      expect_fail leaf "$app" "$lang" test --all
+      grep -qxF "bin/test: cargo llvm-cov measured no source" "${LAST_LOG}" || die "$lang passed a run that measured no source"
+      mv "$WORK/lib.keep" "$app/src/lib.rs"
+      rm "$app/tests/one.rs"
+      ;;
+    ios)
+      mkdir -p "$stubs"
+      cat >"$stubs/swift" <<EOF
+#!/usr/bin/env bash
+if [ "\$1" = test ]; then
+  "$(command -v swift)" "\$@" || exit
+  find .build -name default.profdata -delete
+  exit 0
+fi
+exec "$(command -v swift)" "\$@"
+EOF
+      chmod +x "$stubs/swift"
+      PATH="$stubs:$PATH" expect_fail leaf "$app" "$lang" test --all
+      grep -qxF "bin/test: swift test left no coverage data to check" "${LAST_LOG}" ||
+        die "$lang passed a swift test that wrote no coverage"
+      ;;
+    rails)
+      cp "$app/test/test_helper.rb" "$WORK/helper.keep"
+      printf '%s\n' '# frozen_string_literal: true' '' "require_relative '../config/environment'" "require 'rails/test_help'" \
+        >"$app/test/test_helper.rb"
+      expect_fail leaf "$app" "$lang" test --all
+      grep -qxF "bin/test: SimpleCov wrote no coverage/.resultset.json; test/test_helper.rb starts it" "${LAST_LOG}" ||
+        die "$lang passed a run SimpleCov wrote no results for"
+      mv "$WORK/helper.keep" "$app/test/test_helper.rb"
+      mv "$app/app/models/add.rb" "$WORK/add.keep"
+      mv "$app/test/models/add_test.rb" "$WORK/add-test.keep"
+      printf '%s\n' '# frozen_string_literal: true' '' "require 'test_helper'" '' 'class CheckTest < ActiveSupport::TestCase' \
+        "  test 'checks' do" '    assert_equal 1, 1' '  end' 'end' >"$app/test/check_test.rb"
+      expect_fail leaf "$app" "$lang" test --all
+      grep -qxF "bin/test: SimpleCov measured no source" "${LAST_LOG}" || die "$lang passed a run that measured no source"
+      rm "$app/test/check_test.rb"
+      mv "$WORK/add.keep" "$app/app/models/add.rb"
+      mv "$WORK/add-test.keep" "$app/test/models/add_test.rb"
+      ;;
+  esac
+  return 0
+}
+
+lint_plant_of() {
+  source_plant="" source_body="" lint_twin="" lint_twin_body=""
+  case "$1" in
     typescript)
       lint_plant=src/unused.ts
       lint_body='const unused = 1;'
@@ -694,23 +745,68 @@ whole_app() {
       lint_plant=src/unused.py
       lint_body=$'def unused() -> None:\n    value = 1'
       lint_find="F841"
+      lint_twin=tests/test_unused.py
+      lint_twin_body=$'from unused import unused\n\n\ndef test_unused() -> None:\n    unused()'
       source_plant=src/extra.py
       source_body=$'def extra() -> int:\n    return 1'
       ;;
     rails)
       lint_plant=app/models/unused.rb
-      lint_body=$'# frozen_string_literal: true\n\nmodule Unused\n  def self.call\n    unused = 1\n    2\n  end\nend'
-      lint_find="Lint/UselessAssignment"
+      lint_body=$'# frozen_string_literal: true\n\nmodule Unused\n  def self.call(inValue)\n    inValue\n  end\nend'
+      lint_find="Naming/VariableName"
+      lint_twin=test/models/unused_test.rb
+      lint_twin_body=$'# frozen_string_literal: true\n\nrequire \'test_helper\'\n\nclass UnusedTest < ActiveSupport::TestCase\n  test \'returns its argument\' do\n    assert_equal 2, Unused.call(2)\n  end\nend'
       source_plant=app/models/extra.rb
       source_body=$'# frozen_string_literal: true\n\nmodule Extra\n  def self.call\n    1\n  end\nend'
+      ;;
+    rust)
+      lint_plant=tests/needless.rs
+      lint_body=$'fn needless() -> i32 {\n    return 1;\n}\n\n#[test]\nfn needless_is_one() {\n    assert_eq!(needless(), 1);\n}'
+      lint_find="needless_return"
+      ;;
+    ios)
+      lint_plant=Sources/App/Bad.swift
+      lint_body='let Bad_Name = 1'
+      lint_find="AlwaysUseLowerCamelCase"
       ;;
     shell)
       lint_plant=loose
       lint_body="#!/usr/bin/env bash"$'\n'"set -euo pipefail"$'\n'"echo \$1"
       lint_find="SC2086"
       ;;
+  esac
+}
+
+changed_checks() {
+  local app="$1" lang="$2" lint_plant lint_body lint_find lint_twin lint_twin_body source_plant source_body
+  lint_plant_of "$lang"
+  mkdir -p "$app/$(dirname "$lint_plant")"
+  printf '%s\n' "$lint_body" >"$app/$lint_plant"
+  [ "$lang" != shell ] || chmod +x "$app/$lint_plant"
+  [ -z "$lint_twin" ] || printf '%s\n' "$lint_twin_body" >"$app/$lint_twin"
+  expect_fail leaf "$app" "$lang" changed
+  grep -qF "$lint_find" "${LAST_LOG}" || die "$lang changed did not lint a changed file"
+  rm -f "$app/$lint_plant" "$app/${lint_twin:-$lint_plant}"
+  case "$lang" in
+    rust | ios | shell) ;;
     *) return 0 ;;
   esac
+  red_file "$app" "$lang"
+  expect_fail leaf "$app" "$lang" changed
+  case "$lang" in
+    rust) grep -qF "test red ... FAILED" "${LAST_LOG}" ;;
+    ios) grep -qF "red()" "${LAST_LOG}" ;;
+    shell) true ;;
+  esac || die "$lang changed did not run its tests"
+  rm -f "$app/tests/red.rs" "$app/Tests/AppTests/RedTests.swift" "$app/test/red"
+}
+
+whole_app() {
+  local app="$1" lang="$2" lint_plant lint_body lint_find lint_twin lint_twin_body source_plant source_body
+  case "$lang" in
+    rust | ios) return 0 ;;
+  esac
+  lint_plant_of "$lang"
   printf '%s\n' "$lint_body" >"$app/$lint_plant"
   [ "$lang" != shell ] || chmod +x "$app/$lint_plant"
   git -C "$app" add -- "$lint_plant"

@@ -3,13 +3,17 @@ QUIET_PIDS=()
 QUIET_LABELS=()
 QUIET_LOGS=()
 
-start_quiet() {
-  local label="$1" log
-  shift
+quiet_dir() {
   if [ -z "${QUIET_DIR:-}" ]; then
     QUIET_DIR="$(mktemp -d "${TMPDIR:-/tmp}/run-quiet.XXXXXX")"
     trap 'rm -rf "$QUIET_DIR"' EXIT
   fi
+}
+
+start_quiet() {
+  local label="$1" log
+  shift
+  quiet_dir
   log="$(mktemp "$QUIET_DIR/log.XXXXXX")"
   "$@" >"$log" 2>&1 </dev/null &
   QUIET_PIDS+=("$!")

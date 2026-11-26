@@ -13,19 +13,43 @@ packages_check "$PWD" || exit 1
 
 STRICT_FLAGS='["alwaysStrict", "noImplicitAny", "noImplicitThis", "strictBindCallApply", "strictBuiltinIteratorReturn", "strictFunctionTypes", "strictNullChecks", "strictPropertyInitialization", "useUnknownInCatchVariables"]'
 tsc="$root/node_modules/.bin/tsc"
-config="$(mktemp "${TMPDIR:-/tmp}/bin-typescript-build.XXXXXX")"
-listed="$(mktemp "${TMPDIR:-/tmp}/bin-typescript-build.XXXXXX")"
-trap 'rm -f "$config" "$listed"' EXIT
+scratch="$(mktemp -d "${TMPDIR:-/tmp}/bin-typescript-build.XXXXXX")"
+trap 'rm -rf "$scratch"' EXIT
+config="$scratch/shown.json"
+listed="$scratch/listed"
+
+# shellcheck source=../lib/apps.sh
+. "$here/../lib/apps.sh"
+root_app=0
+if [ "$(pwd -P)" = "$(git rev-parse --show-toplevel)" ]; then
+  root_app=1
+fi
+siblings=()
+if [ "$root_app" -eq 1 ]; then
+  for dir in ./*/; do
+    if [ -d "$dir" ] && is_app_dir "$dir"; then
+      dir="${dir%/}"
+      siblings+=("${dir#./}")
+    fi
+  done
+fi
+
 "$tsc" --showConfig >"$config" 2>&1 &
 shown=$!
 status=0
 if jq -e '(.scripts.build // "") != ""' package.json >/dev/null; then
   npm run build || status=1
 fi
-"$tsc" --noEmit || status=1
+[ "${#siblings[@]}" -gt 0 ] || "$tsc" --noEmit || status=1
 if ! wait "$shown"; then
   cat "$config" >&2
   exit 1
+fi
+if [ "${#siblings[@]}" -gt 0 ]; then
+  jq --arg base "$(pwd -P)/tsconfig.json" --arg root "$(pwd -P)" '{extends: $base, include: [],
+    files: [.files[]? | sub("^\\./"; "") | select(. as $f | all($ARGS.positional[]; . as $s | $f | startswith($s + "/") | not))
+      | $root + "/" + .]}' "$config" --args "${siblings[@]}" >"$scratch/tsconfig.json"
+  "$tsc" --noEmit -p "$scratch/tsconfig.json" || status=1
 fi
 
 while IFS= read -r loose; do
@@ -35,13 +59,6 @@ done < <(jq -r --argjson flags "$STRICT_FLAGS" '.compilerOptions as $o
   | (if $o.strict == true then empty else "strict is not true" end),
     ($flags[] | select($o[.] == false) | "\(.) is false"),
     (if $o.noCheck == true then "noCheck is true" else empty end)' "$config")
-
-# shellcheck source=../lib/apps.sh
-. "$here/../lib/apps.sh"
-root_app=0
-if [ "$(pwd -P)" = "$(git rev-parse --show-toplevel)" ]; then
-  root_app=1
-fi
 
 app_sources() {
   local path top

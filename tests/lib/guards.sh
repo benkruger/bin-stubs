@@ -80,7 +80,9 @@ test_bare_guards() {
   local repo missed=""
   repo="$(bare_guards)"
   keep "$repo"
+  rm "$repo/.gitignore"
   expect_fail "$repo/tests/guards"
+  grep -qx "guards: .gitignore is missing" "${LAST_LOG}" || missed+=" [no .gitignore]"
   grep -qx "guards: .claude/rules holds no rules" "${LAST_LOG}" || missed+=" [no rules]"
   grep -qx "guards: CLAUDE.md is missing" "${LAST_LOG}" || missed+=" [no CLAUDE.md]"
   grep -qx "guards: .claude/settings.json is missing" "${LAST_LOG}" || missed+=" [no settings]"
@@ -128,6 +130,17 @@ test_guards_scans() {
   run_log env PATH="$stubs:$PATH" "$repo/tests/guards"
   assert_rc 1 "guards whose rule listing fails"
   grep -qx "guards: the rule list scan did not finish" "${LAST_LOG}" || missed+=" [rule list]"
+  stubs="$WORK/broken-git"
+  mkdir -p "$stubs"
+  cat >"$stubs/git" <<EOF
+#!/usr/bin/env bash
+[ "\${1:-}" != ls-files ] || exit 1
+exec "$(command -v git)" "\$@"
+EOF
+  chmod +x "$stubs/git"
+  run_log env PATH="$stubs:$PATH" "$repo/tests/guards"
+  assert_rc 1 "guards whose file list fails"
+  grep -qx "guards: the file list scan did not finish" "${LAST_LOG}" || missed+=" [file list]"
   [ -z "$missed" ] || die "the guards passed a scan that did not finish:$missed"
   scan_plants "$repo"
   failing_tool_stubs "$WORK/failing"
@@ -139,6 +152,27 @@ test_guards_scans() {
     packages_check SimpleCov
   failing_scans "$repo" "$WORK/failing" grep "-nE -noE -LE" skip "matching line" "time limit value" update
   failing_scans "$repo" "$WORK/failing" grep "-lI" "text file"
+}
+
+test_guards_tools() {
+  say "guards fail when a tool they run is not installed"
+  local repo bin="$WORK/system-bin" msg missed=""
+  repo="$(bare_guards)"
+  keep "$repo"
+  scan_plants "$repo"
+  printf 'AllCops:\n  NewCops: enable\n' >"$repo/.rubocop.yml"
+  printf '{}\n' >"$repo/.claude/settings.json"
+  mkdir -p "$bin"
+  ln -s /usr/bin/* "$bin/"
+  rm -f "$bin/jq" "$bin/ruby"
+  run_log env PATH="$bin:/bin:/usr/sbin:/sbin" "$repo/tests/guards"
+  assert_rc 1 "guards with none of their tools installed"
+  for msg in "shellcheck is not installed (brew install shellcheck)" "shfmt is not installed (brew install shfmt)" \
+    "markdownlint-cli2 is not installed (brew install markdownlint-cli2)" "jq is not installed (brew install jq)" \
+    ".rubocop.yml: ruby is not installed to read it"; do
+    grep -qxF "guards: $msg" "${LAST_LOG}" || missed+=" [$msg]"
+  done
+  [ -z "$missed" ] || die "the guards passed without a tool they run:$missed"
 }
 
 test_guards_markdownlint() {

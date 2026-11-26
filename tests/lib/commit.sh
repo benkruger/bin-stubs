@@ -442,7 +442,12 @@ EOF
     [ "$tries" -le 50 ] || die "an interrupted bin/commit left its timeout watcher running"
     sleep 0.1
   done
-  ! ps -p "$(cat "$pidfile")" >/dev/null || die "an interrupted bin/commit left its gate running"
+  tries=0
+  while ps -p "$(cat "$pidfile")" -o stat= | grep -qv '^Z'; do
+    tries=$((tries + 1))
+    [ "$tries" -le 50 ] || die "an interrupted bin/commit left its gate running"
+    sleep 0.1
+  done
 
   hurry="$WORK/hurry"
   mkdir -p "$hurry"
@@ -517,4 +522,29 @@ test_commit_failures() {
   assert_eq "$(commit_json .step)" "commit" "a refused git commit"
   commit_json .detail | grep -q "commit failed:" || die "a refused git commit was not reported"
   commit_json .detail | grep -q "hook-refused" || die "a refused git commit lost git's reason"
+
+  commit_case
+  echo "more" >>"$repo/notes.md"
+  cat >"$repo/bin/ci" <<'EOF'
+#!/usr/bin/env bash
+touch "$(git rev-parse --git-path index.lock)"
+EOF
+  commit -- main "$msg"
+  assert_eq "$(commit_json .step)" "commit" "a stage that failed"
+  commit_json .detail | grep -q "^stage failed:" || die "a failed stage was not reported"
+  commit_json .detail | grep -q "index.lock" || die "a failed stage lost git's reason"
+
+  commit_case
+  echo "more" >>"$repo/notes.md"
+  mkdir -p "$WORK/diff-fails"
+  cat >"$WORK/diff-fails/git" <<EOF
+#!/usr/bin/env bash
+[ "\$*" != "diff --cached --quiet" ] || exit 128
+exec "$(command -v git)" "\$@"
+EOF
+  chmod +x "$WORK/diff-fails/git"
+  commit PATH="$WORK/diff-fails:$FAKE_CLAUDE:$PATH" -- main "$msg"
+  assert_eq "$(commit_json .step)" "commit" "a staged diff git could not read"
+  assert_eq "$(commit_json .detail)" "could not read the staged diff — git failed; nothing was committed" \
+    "a staged diff git could not read"
 }

@@ -327,6 +327,10 @@ test_hooks() {
     assert_rc 0 "session-start on $source"
     [ ! -s "${LAST_LOG}" ] || die "session-start ran bin/ci again on $source"
   done
+  run_log env CLAUDE_CODE_REMOTE=true CLAUDE_PROJECT_DIR="$cloud" \
+    "$REPO/starter/.claude/hooks/session-start" < <(printf '{"source":"startup"}\n')
+  assert_rc 0 "session-start on startup"
+  grep -qx "bin/ci ran" "${LAST_LOG}" || die "session-start did not run bin/ci when a cloud session started"
 }
 
 test_starter() {
@@ -561,6 +565,10 @@ EOF
     'const M: &str = "first' 'second // not a comment";' '// flagged' >"$notes/lib.rs"
   printf '%s\n' 'a { background: url(http://x); }' '/* flagged */' >"$notes/s.css"
   printf '%s\n' '# flagged' 'dist/' >"$notes/.gitignore"
+  printf '%s\n' '#!/usr/bin/env python3' 'value = "#"  # flagged' >"$notes/pytool"
+  printf '%s\n' '#!/usr/bin/env ruby' '# flagged' "puts '#'" >"$notes/rbtool"
+  printf '%s\n' '#!/bin/sh' 'echo "#" # flagged' >"$notes/shtool"
+  printf '%s\n' 'no shebang' '# not a comment here' >"$notes/plain"
 
   {
     printf '# Long\n\n'
@@ -637,11 +645,12 @@ EOF
     die "a bin/dependencies that only installs was not caught"
   grep -qF "bin/_python/lint: never runs packages_check" "${LAST_LOG}" ||
     die "a gate script that skips packages_check was not caught"
-  for plant in a.ts c.tsx b.ts s.sh r.rb p.py t.toml y.yml Package.swift lib.rs s.css .gitignore; do
+  for plant in a.ts c.tsx b.ts s.sh r.rb p.py t.toml y.yml Package.swift lib.rs s.css .gitignore pytool rbtool shtool; do
     expected="$(grep -n flagged "$notes/$plant" | cut -d: -f1 | tr '\n' ' ')"
     actual="$(sed -nE "s|^guards: comment-plants/$plant:([0-9]+): a comment.*|\1|p" "${LAST_LOG}" | tr '\n' ' ')"
     assert_eq "$actual" "$expected" "comments found in $plant"
   done
+  grep -qF "comment-plants/plain:" "${LAST_LOG}" && die "a file with no shebang was scanned for comments"
   grep -q "long.md: 47 lines (cap 40)" "${LAST_LOG}" || die "rule cap not enforced"
   grep -q "unstamped.md: no audit stamp" "${LAST_LOG}" || die "missing stamp not caught"
   grep -q "probe.md: audit stamp does not match its body" "${LAST_LOG}" || die "stale stamp not caught"
@@ -1244,7 +1253,7 @@ run_test() {
 }
 
 run_all "$WORK/logs" run_test test_settings test_scan test_root_format test_open test_qa test_query \
-  test_hooks test_starter test_bare_guards test_guards_scans test_guards_markdownlint test_commit test_commit_review test_commit_fix test_commit_rounds test_commit_stops test_commit_gate test_commit_failures test_copies_match test_failed_writes test_changed_empty test_parts \
+  test_hooks test_starter test_bare_guards test_guards_scans test_guards_tools test_guards_markdownlint test_commit test_commit_review test_commit_fix test_commit_rounds test_commit_stops test_commit_gate test_commit_failures test_copies_match test_failed_writes test_changed_empty test_parts \
   test_dispatch test_dispatch_select test_dispatch_paths test_dispatch_path_args test_git_failures test_suite_seal test_unborn test_suite_missing test_root_check \
   test_shellcheck_cache test_no_installs test_checked_once test_dependencies_once test_steps test_jobs test_interrupt test_start test_merge test_cleanup test_complete test_ci_time test_root_app test_root_js test_root_shell test_root_changed test_die_fixture \
   test_app_language

@@ -21,7 +21,8 @@ plant_ok_configs() {
 plant_bad_configs() {
   local cfg="$1" repo="$2" dir mdtoken pytoken rbtoken
   for dir in files formatter assist variable shorthand member computed local package dynamic require config .cargo mypy \
-    linked inline quoted levels plugin simplecov options; do
+    linked inline quoted levels plugin simplecov options overrides formatteroff linteroff linteropts allcops newcops \
+    ruffkey; do
     mkdir -p "$cfg/$dir"
   done
   ln -s ../assist/biome.json "$cfg/linked/biome.json"
@@ -70,6 +71,14 @@ plant_bad_configs() {
   printf '{ "files": { "includes": ["**", "!src/legacy.js"] } }\n' >"$cfg/files/biome.json"
   printf '{ "formatter": { "includes": ["**", "!src/legacy.js"] } }\n' >"$cfg/formatter/biome.json"
   printf '{ "assist": { "enabled": false } }\n' >"$cfg/assist/biome.json"
+  printf '{ "overrides": [{ "includes": ["src/**"], "linter": { "enabled": false } }] }\n' >"$cfg/overrides/biome.json"
+  printf '{ "formatter": { "enabled": false } }\n' >"$cfg/formatteroff/biome.json"
+  printf '{ "linter": { "enabled": false } }\n' >"$cfg/linteroff/biome.json"
+  printf 'export default [{ linterOptions: { noInlineConfig: false } }];\n' >"$cfg/linteropts/eslint.config.js"
+  printf 'AllCops:\n  Exclude:\n    - legacy/**/*\n' >"$cfg/allcops/.rubocop.yml"
+  printf 'AllCops:\n  NewCops: disable\n' >"$cfg/newcops/.rubocop.yml"
+  printf '[tool.ruff]\nexclude = ["legacy"]\n' >"$cfg/ruffkey/pyproject.toml"
+  printf 'exclude = ["legacy"]\n' >"$cfg/ruff.toml"
   printf 'const strict = { "no-console": "error" };\n\nexport default [{ rules: strict }];\n' >"$cfg/variable/eslint.config.js"
   printf 'const rules = { "no-console": "error" };\n\nexport default [{ rules }];\n' >"$cfg/shorthand/eslint.config.js"
   printf 'const base = { rules: { "no-console": "error" } };\nbase.rules.eqeqeq = "error";\n\nexport default [base];\n' >"$cfg/member/eslint.config.js"
@@ -113,6 +122,14 @@ check_bad_configs() {
     "files/biome.json: Biome settings outside its list" \
     "formatter/biome.json: Biome settings outside its list" \
     "assist/biome.json: Biome settings outside its list" \
+    "overrides/biome.json: Biome settings outside its list" \
+    "formatteroff/biome.json: Biome settings outside its list" \
+    "linteroff/biome.json: Biome settings outside its list" \
+    "linteropts/eslint.config.js: sets an ESLint rule to anything but a bare error" \
+    "allcops/.rubocop.yml: RuboCop settings outside its list" \
+    "newcops/.rubocop.yml: RuboCop settings outside its list" \
+    "ruffkey/pyproject.toml: Ruff settings outside its list" \
+    "ruff.toml: Ruff settings outside its list" \
     "variable/eslint.config.js: sets an ESLint rule to anything but a bare error" \
     "shorthand/eslint.config.js: sets an ESLint rule to anything but a bare error" \
     "member/eslint.config.js: sets an ESLint rule to anything but a bare error" \
