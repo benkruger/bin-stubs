@@ -13,7 +13,8 @@ packages_check "$PWD" || exit 1
 
 STRICT_FLAGS='["alwaysStrict", "noImplicitAny", "noImplicitThis", "strictBindCallApply", "strictBuiltinIteratorReturn", "strictFunctionTypes", "strictNullChecks", "strictPropertyInitialization", "useUnknownInCatchVariables"]'
 tsc="$root/node_modules/.bin/tsc"
-scratch="$(mktemp -d "${TMPDIR:-/tmp}/bin-typescript-build.XXXXXX")"
+mkdir -p "$root/.flow-states"
+scratch="$(mktemp -d "$root/.flow-states/bin-typescript-build.XXXXXX")"
 trap 'rm -rf "$scratch"' EXIT
 config="$scratch/shown.json"
 listed="$scratch/listed"

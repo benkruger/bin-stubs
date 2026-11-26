@@ -6,8 +6,27 @@ cd "$root"
 # shellcheck source=lib/xcode.sh
 . "$here/lib/xcode.sh"
 if xcode_container; then
-  find "${XCODE_ARGS[1]}" -path '*/xcshareddata/swiftpm/Package.resolved' -delete
-  rm -f "$root/.build/xcode-packages/workspace-state.json"
-  exec xcodebuild -resolvePackageDependencies "${XCODE_ARGS[@]}" -derivedDataPath "$root/.build/xcode-build"
+  aside="$(mktemp -d "${TMPDIR:-/tmp}/bin-ios-dependencies.XXXXXX")"
+  trap 'rm -rf "$aside"' EXIT
+  moved=()
+  while IFS= read -r -d '' file; do
+    moved+=("$file")
+  done < <(find "${XCODE_ARGS[1]}" -path '*/xcshareddata/swiftpm/Package.resolved' -print0)
+  state="$root/.build/xcode-packages/workspace-state.json"
+  [ ! -f "$state" ] || moved+=("$state")
+  i=0
+  for file in ${moved[@]+"${moved[@]}"}; do
+    mv "$file" "$aside/$i"
+    i=$((i + 1))
+  done
+  if ! xcodebuild -resolvePackageDependencies "${XCODE_ARGS[@]}" -derivedDataPath "$root/.build/xcode-build"; then
+    i=0
+    for file in ${moved[@]+"${moved[@]}"}; do
+      mv "$aside/$i" "$file"
+      i=$((i + 1))
+    done
+    exit 1
+  fi
+  exit 0
 fi
 swift package update

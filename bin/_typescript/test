@@ -47,11 +47,35 @@ for arg in "$@"; do
   esac
 done
 
-run=("$root/node_modules/.bin/vitest" run --coverage --coverage.provider=v8
+run=("$root/node_modules/.bin/vitest" run --exclude 'e2e/**' --coverage --coverage.provider=v8
   --coverage.reporter=json-summary "--coverage.reportsDirectory=$covdir")
+# shellcheck source=../lib/apps.sh
+. "$here/../lib/apps.sh"
+root_app=0
+if [ "$(pwd -P)" = "$(git rev-parse --show-toplevel)" ]; then
+  root_app=1
+  for dir in ./*/; do
+    if [ -d "$dir" ] && is_app_dir "$dir"; then
+      dir="${dir%/}"
+      run+=(--exclude "${dir#./}/**")
+    fi
+  done
+fi
 if [ "$filtered" -eq 1 ]; then
   run+=(--coverage.thresholds.lines=0 --coverage.thresholds.branches=0
-    --coverage.thresholds.functions=0 --coverage.thresholds.statements=0)
+    --coverage.thresholds.functions=0 --coverage.thresholds.statements=0 --coverage.thresholds.100=false)
+  for arg in "$@"; do
+    arg="${arg#./}"
+    case "$arg" in
+      -*) continue ;;
+    esac
+    if is_test "$arg"; then
+      arg="$(source_for_test "$arg")"
+    fi
+    if is_source "$arg" && [ -f "$arg" ]; then
+      run+=("--coverage.include=$arg")
+    fi
+  done
 fi
 rc=0
 "${run[@]}" ${targets[@]+"${targets[@]}"} || rc=$?
@@ -59,13 +83,6 @@ if [ "$rc" -ne 0 ]; then
   exit "$rc"
 fi
 covjson="$covdir/coverage-summary.json"
-
-# shellcheck source=../lib/apps.sh
-. "$here/../lib/apps.sh"
-root_app=0
-if [ "$(pwd -P)" = "$(git rev-parse --show-toplevel)" ]; then
-  root_app=1
-fi
 
 has_own_test() {
   local top="$1"
@@ -126,7 +143,7 @@ if [ "$filtered" -eq 1 ]; then
   done
 else
   if [ "$all" -eq 1 ]; then
-    listing="$(git -C "$root" ls-files --cached --others --exclude-standard -- .)"
+    listing="$(git -C "$root" ls-files -z --cached --others --exclude-standard -- . | tr '\0' '\n')"
   else
     listing="$("$here/changed" --files)"
   fi

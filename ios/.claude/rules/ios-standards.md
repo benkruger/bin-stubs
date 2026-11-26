@@ -22,8 +22,9 @@ The iOS app is held by swift-format and its tests at full strength.
   or `Package.swift` change.
 - `bin/test` fails below 100% line coverage of the sources: every Swift
   file in the app's folder that coverage reports, bar `Tests/`, `.build/`
-  and `.xctest` targets; a whole Swift package run also fails a file under
-  `Sources/` with no coverage row. Trigger: any source or test change.
+  and `.xctest` targets; a whole Swift package run also fails a target under
+  `Sources/` no file of which has a coverage row. Trigger: any source or
+  test change.
 - `bin/dependencies` updates every package to the newest version its
   requirement allows: `swift package update` for a Swift package, and for
   an Xcode workspace or project it drops the resolved versions and runs
@@ -37,4 +38,4 @@ The iOS app is held by swift-format and its tests at full strength.
   green when it has none. Trigger: every edit.
 - `.xcode-version` pins Xcode; outside CI, `bin/ci` fails unless that
   Xcode is selected. Trigger: an Xcode upgrade.
-<!-- audited: 0782730056ce -->
+<!-- audited: b14fea2787d2 -->

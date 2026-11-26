@@ -15,7 +15,7 @@ needs_twin() {
 
 is_test() {
   case "$1" in
-    tests/test_*.py | tests/*/test_*.py) return 0 ;;
+    tests/test_*.py | tests/*/test_*.py | tests/*_test.py) return 0 ;;
     *) return 1 ;;
   esac
 }
@@ -37,7 +37,10 @@ test_for_source() {
 source_for_test() {
   local rel="${1#tests/}" dir base
   base="$(basename "$rel")"
-  base="${base#test_}"
+  case "$base" in
+    test_*) base="${base#test_}" ;;
+    *_test.py) base="${base%_test.py}.py" ;;
+  esac
   dir="$(dirname "$rel")"
   if [ "$dir" = "." ]; then
     if [ -f "src/${base}" ]; then

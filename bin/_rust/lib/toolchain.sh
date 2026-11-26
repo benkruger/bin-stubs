@@ -9,7 +9,7 @@ toolchain_check() {
     echo "toolchain: rust-toolchain.toml is missing; pin Rust with a [toolchain] channel" >&2
     return 1
   fi
-  channel="$(sed -nE 's/^[[:space:]]*channel[[:space:]]*=[[:space:]]*"([^"]+)".*/\1/p' "$root/rust-toolchain.toml")"
+  channel="$(sed -nE "s/^[[:space:]]*channel[[:space:]]*=[[:space:]]*[\"']([^\"']+)[\"'].*/\\1/p" "$root/rust-toolchain.toml")"
   if [ -z "$channel" ]; then
     echo "toolchain: rust-toolchain.toml has no channel" >&2
     return 1

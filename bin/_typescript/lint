@@ -24,7 +24,7 @@ for arg in "$@"; do
 done
 
 if [ "$all" -eq 1 ]; then
-  listing="$(git -C "$root" ls-files --cached --others --exclude-standard -- .)"
+  listing="$(git -C "$root" ls-files -z --cached --others --exclude-standard -- . | tr '\0' '\n')"
 elif [ "${#paths[@]}" -gt 0 ]; then
   listing="$(printf '%s\n' "${paths[@]}")"
 else
@@ -136,7 +136,7 @@ if [ "${#gated[@]}" -gt 0 ]; then
     };
     try {
       for (const file of files) {
-        const info = await prettier.getFileInfo(file, { resolveConfig: true });
+        const info = await prettier.getFileInfo(file, { resolveConfig: true, ignorePath: [".gitignore", ".prettierignore"] });
         const options = await prettier.resolveConfig(file);
         if (info.ignored || info.inferredParser === null || options?.requirePragma || options?.checkIgnorePragma) {
           report(file + ": no formatter (Prettier)");

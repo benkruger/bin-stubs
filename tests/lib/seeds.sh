@@ -477,9 +477,11 @@ orphan_file() {
     javascript)
       printf '%s\n' 'import assert from "node:assert/strict";' 'import test from "node:test";' '' \
         'test("orphan", () => {' '  assert.equal(1, 1);' '});' >"$app/tests/orphan.test.js"
+      cp "$app/tests/orphan.test.js" "$app/tests/orphan_test.js"
       ;;
     python)
       printf '%s\n' 'def test_orphan() -> None:' '    assert str(1) == "1"' >"$app/tests/test_orphan.py"
+      cp "$app/tests/test_orphan.py" "$app/tests/orphan_test.py"
       ;;
     rails)
       printf '%s\n' '# frozen_string_literal: true' '' "require 'test_helper'" '' \
@@ -534,7 +536,7 @@ listing_counter() {
     cat >"$dir/git" <<EOF
 #!/usr/bin/env bash
 case " \$* " in
-  *" diff --name-only --relative "*) printf 'listing\n' >>"\$LISTING_LOG" ;;
+  *" diff -z --name-only --relative "*) printf 'listing\n' >>"\$LISTING_LOG" ;;
 esac
 exec "$real" "\$@"
 EOF
@@ -578,6 +580,18 @@ deleted_change() {
   [ -z "$twin" ] || grep -qF "bin/changed: no source for test $twin" "${LAST_LOG}" ||
     die "$lang changed passed a deleted source whose test stays"
   mv "$WORK/source.keep" "$app/$src"
+  if [ "$lang" = rails ]; then
+    printf '%s\n' '# frozen_string_literal: true' '' 'module Gone' '  module_function' '' '  def call' '    1' '  end' 'end' \
+      >"$app/app/models/gone.rb"
+    printf '%s\n' '# frozen_string_literal: true' '' "require 'test_helper'" '' 'class GoneTest < ActiveSupport::TestCase' \
+      "  test 'returns one' do" '    assert_equal 1, Gone.call' '  end' 'end' >"$app/test/models/gone_test.rb"
+    git -C "$app" add -- app/models/gone.rb test/models/gone_test.rb
+    git -C "$app" commit -q -m "a pair to delete"
+    rm "$app/app/models/gone.rb" "$app/test/models/gone_test.rb"
+    expect_ok leaf "$app" "$lang" test --all
+    git -C "$app" add -A -- app/models test/models
+    git -C "$app" commit -q -m "the pair deleted"
+  fi
 }
 
 changed_scope() {
@@ -654,21 +668,20 @@ sourceless() {
       body=$'import { expect, test } from "vitest";\n\ntest("check", () => {\n  expect(1).toBe(1);\n});'
       ;;
     javascript)
-      spec=tests/index.test.js check=check_test.js
-      body=$'import assert from "node:assert/strict";\nimport test from "node:test";\n\ntest("check", () => {\n  assert.equal(1, 1);\n});'
+      spec=tests/index.test.js check="" body=""
       ;;
     python)
-      spec=tests/test_add.py check=tests/check_test.py
-      body=$'def test_check() -> None:\n    assert str(1) == "1"'
+      spec=tests/test_add.py check="" body=""
       ;;
     *) return 0 ;;
   esac
   mv "$app/$src" "$WORK/sourceless.src"
   mv "$app/$spec" "$WORK/sourceless.spec"
-  printf '%s\n' "$body" >"$app/$check"
+  [ -z "$check" ] || printf '%s\n' "$body" >"$app/$check"
   expect_fail leaf "$app" "$lang" test --all
-  grep -qxF "bin/test: --all found no source to hold at 100%" "${LAST_LOG}" || die "$lang bin/test --all passed measuring no source"
-  rm "$app/$check"
+  grep -qxF "bin/test: --all found no source to hold at 100%" "${LAST_LOG}" ||
+    die "$lang bin/test --all passed measuring no source"
+  [ -z "$check" ] || rm "$app/$check"
   mv "$WORK/sourceless.src" "$app/$src"
   mv "$WORK/sourceless.spec" "$app/$spec"
 }
@@ -731,6 +744,24 @@ EOF
       PATH="$stubs:$PATH" expect_fail leaf "$app" "$lang" test --all
       grep -qxF "bin/test: could not read coverage/.resultset.json" "${LAST_LOG}" ||
         die "$lang passed a coverage report jq could not read"
+      mkdir -p "$WORK/split-workers"
+      cat >"$WORK/split-workers/bundle" <<EOF
+#!/usr/bin/env bash
+"$(command -v bundle)" "\$@" || exit
+case " \$* " in
+  *" rails test "*)
+    jq 'def half(\$keep): .coverage |= map_values(.lines |= (to_entries
+      | map(if .value == null or .key % 2 == \$keep then .value else 0 end)));
+      (to_entries[0].value) as \$run | {"worker-0": (\$run | half(0)), "worker-1": (\$run | half(1))}' \
+      coverage/.resultset.json >coverage/.split.json
+    mv coverage/.split.json coverage/.resultset.json
+    ;;
+esac
+EOF
+      chmod +x "$WORK/split-workers/bundle"
+      PATH="$WORK/split-workers:$PATH" expect_ok leaf "$app" "$lang" test --all
+      grep -qxF "bin/test: coverage bar held on 1 source(s)" "${LAST_LOG}" ||
+        die "$lang read one worker's coverage instead of every worker's"
       ;;
   esac
   return 0
@@ -856,6 +887,7 @@ source_rules() {
         'test("twice", () => {' '  expect(twice(2)).toBe(4);' '});' >"$app/tests/lib/twice.test.ts"
       mkdir -p "$app/e2e"
       printf 'export const baseUrl = "http://127.0.0.1:3000";\n' >"$app/e2e/fixtures.ts"
+      printf 'throw new Error("a Playwright spec ran under Vitest");\n' >"$app/e2e/home.spec.ts"
       printf 'export default {\n  test: { coverage: { provider: "istanbul" } },\n};\n' >"$app/vitest.config.ts"
       expect_ok leaf "$app" "$lang" changed
       expect_ok leaf "$app" "$lang" ci --force
@@ -868,9 +900,26 @@ source_rules() {
         grep -qF "bin/test: $stray is not a twin test" "${LAST_LOG}" || die "$lang passed $stray, which is no source's twin"
       done
       rm "$app/tests/stray.spec.ts" "$app/src/stray.test.ts"
+      printf 'export default {\n  test: { coverage: { thresholds: { 100: true, "src/**": { lines: 100 } } } },\n};\n' \
+        >"$app/vitest.config.ts"
+      printf '%s\n' 'export function one(): number {' '  return 1;' '}' '' 'export function two(): number {' '  return 2;' '}' \
+        >"$app/src/util.ts"
+      printf '%s\n' 'import { one } from "./util";' '' 'export function first(): number {' '  return one();' '}' \
+        >"$app/src/first.ts"
+      printf '%s\n' 'import { expect, test } from "vitest";' 'import { first } from "../src/first";' '' \
+        'test("first", () => {' '  expect(first()).toBe(1);' '});' >"$app/tests/first.test.ts"
+      printf '%s\n' 'import { expect, test } from "vitest";' 'import { one, two } from "../src/util";' '' \
+        'test("util", () => {' '  expect(one() + two()).toBe(3);' '});' >"$app/tests/util.test.ts"
+      expect_ok leaf "$app" "$lang" test tests/first.test.ts
+      grep -qxF "bin/test: coverage bar held on 1 source(s)" "${LAST_LOG}" ||
+        die "$lang bin/test on one test failed on the app's own thresholds for a file it did not name"
+      rm "$app/vitest.config.ts" "$app/src/util.ts" "$app/src/first.ts" "$app/tests/first.test.ts" "$app/tests/util.test.ts"
       rm "$app/tests/lib/twice.test.ts"
+      printf 'export const said = "hi";\n' >"$app/src/say \"hi\".ts"
       expect_fail leaf "$app" "$lang" ci --force
       grep -q "no mirrored test for lib/twice.ts" "${LAST_LOG}" || die "$lang let a source outside src/ go untested"
+      grep -qF 'no mirrored test for src/say "hi".ts' "${LAST_LOG}" || die "$lang skipped a source whose name git quotes"
+      rm "$app/src/say \"hi\".ts"
       rm -r "${app:?}/lib" "$app/tests/lib" "$app/src/version.d.ts" "$app/src/Button.tsx" "$app/tests/Button.test.tsx" \
         "$app/e2e"
       mv "$WORK/tsconfig.keep" "$app/tsconfig.json"
@@ -882,11 +931,21 @@ source_rules() {
         >"$app/src/mul.spec.js"
       mkdir -p "$app/e2e"
       printf 'export const target = "http://127.0.0.1:3000";\n' >"$app/e2e/home.spec.js"
+      printf 'throw new Error("a Playwright spec ran under node --test");\n' >"$app/e2e/home.test.js"
       printf 'export const two = 2;\n' >"$app/tests/helpers.js"
+      mkdir -p "$app/test" "$app/tests/test"
+      printf '%s\n' 'export function help() {' '  return 1;' '}' >"$app/test/helpers.js"
+      printf '%s\n' 'import assert from "node:assert/strict";' 'import test from "node:test";' \
+        'import { help } from "../../test/helpers.js";' '' 'test("help", () => {' '  assert.equal(help(), 1);' '});' \
+        >"$app/tests/test/helpers.test.js"
       expect_ok leaf "$app" "$lang" changed
-      rm "$app/src/mul.js" "$app/src/mul.spec.js"
       expect_ok leaf "$app" "$lang" ci --force
-      rm -r "${app:?}/e2e" "$app/tests/helpers.js"
+      rm "$app/src/mul.js" "$app/src/mul.spec.js"
+      rm -r "${app:?}/e2e" "$app/tests/helpers.js" "$app/test" "$app/tests/test"
+      printf 'export const said = "hi";\n' >"$app/src/say \"hi\".js"
+      expect_fail leaf "$app" "$lang" ci --force
+      grep -qF 'no mirrored test for src/say "hi".js' "${LAST_LOG}" || die "$lang skipped a source whose name git quotes"
+      rm "$app/src/say \"hi\".js"
       printf '%s\n' 'module.exports = {' '  one() {' '    return 1;' '  },' '  two() {' '    return 2;' '  },' '};' \
         >"$app/src/legacy.cjs"
       printf '%s\n' 'import assert from "node:assert/strict";' 'import test from "node:test";' \
@@ -912,7 +971,25 @@ source_rules() {
       printf '%s\n' 'def unused() -> int:' '    return 1' >"$app/src/pkg/__init__.py"
       expect_fail leaf "$app" "$lang" changed
       grep -qF "bin/test: src/pkg/__init__.py at" "${LAST_LOG}" || die "$lang changed passed an edited __init__.py below the bar"
-      rm -r "$app/src/pkg" "$app/tests/pkg" "$app/scripts"
+      printf '%s\n' 'def version() -> str:' '    return "1"' >"$app/src/pkg/__init__.py"
+      printf '%s\n' 'from pkg import version' '' '' 'def test_version() -> None:' '    assert version() == "1"' \
+        >"$app/tests/pkg/test___init__.py"
+      expect_ok leaf "$app" "$lang" test tests/pkg/test_mul.py src/pkg/__init__.py
+      grep -qxF "bin/test: coverage bar held on 2 source(s)" "${LAST_LOG}" ||
+        die "$lang bin/test on an __init__.py ran only the other named tests"
+      git -C "$app" add -- src/pkg tests/pkg
+      git -C "$app" commit -q -m "a package with an __init__.py test"
+      rm "$app/tests/pkg/test___init__.py"
+      expect_ok leaf "$app" "$lang" changed
+      git -C "$app" rm -q -r -- src/pkg tests/pkg
+      git -C "$app" commit -q -m "the package gone"
+      rm -r "$app/scripts"
+      mkdir -p "$app/integration"
+      printf '%s\n' 'def test_api() -> None:' '    assert str(1) == "1"' >"$app/integration/test_api.py"
+      expect_fail leaf "$app" "$lang" test --all
+      grep -qxF "bin/test: integration/test_api.py is a pytest file outside tests/, which bin/test never runs" \
+        "${LAST_LOG}" || die "$lang passed a test file that never runs"
+      rm -r "$app/integration"
       ;;
   esac
 }

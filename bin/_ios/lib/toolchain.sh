@@ -31,9 +31,41 @@ pins_fetched() {
       else $by_location[.repositoryURL // ""] == .state.revision end)' >/dev/null 2>&1
 }
 
+package_identities() {
+  perl -0777 -ne '
+    my $pattern = $ARGV =~ /\.pbxproj\z/
+      ? qr/repositoryURL\s*=\s*"([^"]+)"/
+      : qr/\.package\s*\(\s*(?:name\s*:\s*"[^"]*"\s*,\s*)?url\s*:\s*"([^"]+)"/;
+    while (/$pattern/g) {
+      my $id = $1;
+      $id =~ s{/+\z}{};
+      $id =~ s{\.git\z}{};
+      $id =~ s{.*/}{};
+      print lc($id), "\n";
+    }' "$@"
+}
+
+unpinned() {
+  local resolved="$1" pinned id
+  shift
+  pinned="$(jq -r '(.pins // .object.pins // [])[]
+    | (.identity // ((.location // .repositoryURL // "") | sub("/+$"; "") | sub("\\.git$"; "") | split("/") | last))
+    | ascii_downcase' "$resolved")" || return 1
+  while IFS= read -r id; do
+    [ -n "$id" ] || continue
+    if ! grep -qxF -- "$id" <<<"$pinned"; then
+      echo "packages: $id is not in Package.resolved; run bin/dependencies" >&2
+      return 1
+    fi
+  done < <(package_identities "$@")
+}
+
 packages_check() {
-  local root="$1" found resolved
+  local root="$1" found resolved projects=()
   [ "${FLOW_CHECKED_APP:-}" != "$root" ] || return 0
+  for found in "$root"/*.xcodeproj/project.pbxproj "$root"/*/*.xcodeproj/project.pbxproj; do
+    [ ! -f "$found" ] || projects+=("$found")
+  done
   for found in "$root"/*.xcworkspace "$root"/*.xcodeproj; do
     [ -e "$found" ] || continue
     case "$found" in
@@ -41,23 +73,25 @@ packages_check() {
       *) resolved="$found/project.xcworkspace/xcshareddata/swiftpm/Package.resolved" ;;
     esac
     if [ -f "$resolved" ]; then
+      [ "${#projects[@]}" -eq 0 ] || unpinned "$resolved" "${projects[@]}" || return 1
       pins_fetched "$resolved" "$root/.build/xcode-packages/workspace-state.json" && return 0
       echo "packages: Swift packages are not fetched at the versions Package.resolved pins; run bin/dependencies" >&2
       return 1
     fi
-    if grep -qs XCRemoteSwiftPackageReference "$root"/*.xcodeproj/project.pbxproj "$root"/*/*.xcodeproj/project.pbxproj; then
+    if [ "${#projects[@]}" -gt 0 ] && grep -qs XCRemoteSwiftPackageReference "${projects[@]}"; then
       echo "packages: Swift packages are not fetched; run bin/dependencies" >&2
       return 1
     fi
     return 0
   done
   if [ ! -f "$root/Package.resolved" ]; then
-    if grep -qs '\.package(url:' "$root/Package.swift"; then
+    if [ -n "$(package_identities "$root/Package.swift" 2>/dev/null)" ]; then
       echo "packages: Package.swift names remote packages but Package.resolved is missing; run bin/dependencies" >&2
       return 1
     fi
     return 0
   fi
+  unpinned "$root/Package.resolved" "$root/Package.swift" || return 1
   if ! pins_fetched "$root/Package.resolved" "$root/.build/workspace-state.json"; then
     echo "packages: Swift packages are not fetched at the versions Package.resolved pins; run bin/dependencies" >&2
     return 1

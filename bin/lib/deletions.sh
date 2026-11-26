@@ -13,15 +13,16 @@ change_base() {
 
 changed_listing() {
   local listing
-  listing="$(git diff --name-only --relative "$(change_base)" -- . && git ls-files --others --exclude-standard -- .)" ||
-    return 1
+  listing="$({
+    git diff -z --name-only --relative "$(change_base)" -- . && git ls-files -z --others --exclude-standard -- .
+  } | tr '\0' '\n')" || return 1
   printf '%s\n' "$listing" | sort -u
 }
 
 deleted_paths() {
   local root_app=0 path top listing
   [ "$(pwd -P)" != "$(git rev-parse --show-toplevel 2>/dev/null)" ] || root_app=1
-  listing="$(git diff --name-only --no-renames --relative "$(change_base)" -- .)" || return 1
+  listing="$(git diff -z --name-only --no-renames --relative "$(change_base)" -- . | tr '\0' '\n')" || return 1
   while IFS= read -r path; do
     [ -n "$path" ] && [ ! -e "$path" ] && [ ! -L "$path" ] || continue
     case "$path" in
@@ -42,6 +43,7 @@ deleted_twin_findings() {
     if is_test "$path"; then
       src="$(source_for_test "$path")"
       [ -n "$src" ] && [ -f "$src" ] || continue
+      ! declare -F needs_twin >/dev/null || needs_twin "$src" || continue
       twin="$(test_for_source "$src")"
       [ -f "$twin" ] || printf 'bin/changed: no mirrored test for %s → %s\n' "$src" "$twin"
     elif is_source "$path"; then

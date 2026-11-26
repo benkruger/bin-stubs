@@ -24,7 +24,7 @@ for arg in "$@"; do
 done
 
 if [ "$all" -eq 1 ]; then
-  listing="$(git -C "$root" ls-files --cached --others --exclude-standard -- .)"
+  listing="$(git -C "$root" ls-files -z --cached --others --exclude-standard -- . | tr '\0' '\n')"
 elif [ "${#paths[@]}" -gt 0 ]; then
   listing="$(printf '%s\n' "${paths[@]}")"
 else

@@ -59,25 +59,14 @@ already() {
   return 1
 }
 
-run=(npm run test)
 targets=()
-for arg in "${paths[@]+"${paths[@]}"}"; do
-  arg="${arg#./}"
-  if is_source "$arg"; then
-    twin="$(test_for_source "$arg")"
-    if [ ! -f "$twin" ]; then
-      echo "bin/test: no mirrored test for $arg → $twin" >&2
-      exit 1
-    fi
-    arg="$twin"
-  fi
-  targets+=("$arg")
-done
-if [ "${#options[@]}" -gt 0 ] || [ "${#targets[@]}" -gt 0 ]; then
-  run+=(-- ${options[@]+"${options[@]}"} ${targets[@]+"${targets[@]}"})
-fi
-"$root/node_modules/.bin/c8" --reporter=json-summary --reports-dir="$covdir" "${run[@]}" || rc=$?
-covjson="$covdir/coverage-summary.json"
+add_target() {
+  local t
+  for t in "${targets[@]+"${targets[@]}"}"; do
+    [ "$t" = "$1" ] && return 0
+  done
+  targets+=("$1")
+}
 
 required=()
 missing_mirror=()
@@ -87,19 +76,28 @@ if [ "${#paths[@]}" -gt 0 ]; then
   for arg in "${paths[@]}"; do
     arg="${arg#./}"
     if is_source "$arg"; then
+      twin="$(test_for_source "$arg")"
+      if [ ! -f "$twin" ]; then
+        echo "bin/test: no mirrored test for $arg → $twin" >&2
+        exit 1
+      fi
+      add_target "$twin"
       already "$arg" || required+=("$arg")
     elif is_test "$arg"; then
+      add_target "$arg"
       src="$(source_for_test "$arg")"
       if [ -n "$src" ]; then
         already "$src" || required+=("$src")
       else
         orphans+=("$arg")
       fi
+    else
+      add_target "$arg"
     fi
   done
 else
   if [ "$all" -eq 1 ]; then
-    listing="$(git -C "$root" ls-files --cached --others --exclude-standard -- .)"
+    listing="$(git -C "$root" ls-files -z --cached --others --exclude-standard -- . | tr '\0' '\n')"
   else
     listing="$("$here/changed" --files)"
   fi
@@ -114,10 +112,13 @@ else
     if is_source "$path"; then
       already "$path" || required+=("$path")
       mirror="$(test_for_source "$path")"
-      if [ ! -f "$mirror" ]; then
+      if [ -f "$mirror" ]; then
+        add_target "$mirror"
+      else
         missing_mirror+=("$path → $mirror")
       fi
     elif is_test "$path"; then
+      add_target "$path"
       src="$(source_for_test "$path")"
       if [ -n "$src" ]; then
         already "$src" || required+=("$src")
@@ -127,6 +128,15 @@ else
     fi
   done <<<"$listing"
 fi
+
+if [ "${#targets[@]}" -gt 0 ]; then
+  "$root/node_modules/.bin/c8" --reporter=json-summary --reports-dir="$covdir" \
+    --exclude='tests/**' --exclude='e2e/**' --exclude='**/node_modules/**' --exclude='dist/**' \
+    --exclude='public/**' --exclude='coverage/**' --exclude='**/*.test.*' --exclude='**/*.spec.*' \
+    --exclude='**/test-*.*' --exclude='**/*_test.*' --exclude='**/*-test.*' \
+    npm run test -- ${options[@]+"${options[@]}"} "${targets[@]}" || rc=$?
+fi
+covjson="$covdir/coverage-summary.json"
 
 ratchet=0
 for msg in "${missing_mirror[@]+"${missing_mirror[@]}"}"; do

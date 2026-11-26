@@ -31,9 +31,7 @@ if [ "$all" -eq 0 ]; then
   while IFS= read -r path; do
     [ -f "$path" ] || continue
     ! in_nested_app "$path" || continue
-    case "$path" in
-      *.rb | *.rake | *.ru | *.gemspec | Gemfile | */Gemfile | Rakefile | */Rakefile) rb_files+=("$path") ;;
-    esac
+    rb_files+=("$path")
   done <<<"$listing"
 elif [ "${#NESTED_APPS[@]}" -gt 0 ]; then
   rubocop_targets || exit 1

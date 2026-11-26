@@ -48,13 +48,16 @@ fi
 . "$here/lib/sources.sh"
 
 targets=()
+options=()
 named=0
+whole=0
 for arg in "$@"; do
   case "$arg" in
-    -*) ;;
+    -*) options+=("$arg") ;;
     *)
       named=1
       if is_source "${arg#./}" && ! needs_twin "${arg#./}"; then
+        whole=1
         continue
       fi
       if is_source "${arg#./}"; then
@@ -71,10 +74,10 @@ for arg in "$@"; do
 done
 
 rc=0
-if [ "$named" -eq 1 ]; then
+if [ "$named" -eq 1 ] && [ "$whole" -eq 0 ]; then
   uv run python -m pytest "${pytest_args[@]}" ${targets[@]+"${targets[@]}"} || rc=$?
 elif [ -d tests ]; then
-  uv run python -m pytest tests "${pytest_args[@]}" ${targets[@]+"${targets[@]}"} || rc=$?
+  uv run python -m pytest tests "${pytest_args[@]}" ${options[@]+"${options[@]}"} || rc=$?
 else
   echo "bin/test: no tests/ directory" >&2
   rc=1
@@ -113,6 +116,7 @@ already() {
 required=()
 missing_mirror=()
 orphans=()
+strays=()
 
 if [ "$named" -eq 1 ]; then
   for arg in "$@"; do
@@ -133,7 +137,7 @@ if [ "$named" -eq 1 ]; then
   done
 else
   if [ "$all" -eq 1 ]; then
-    listing="$(git -C "$root" ls-files --cached --others --exclude-standard -- .)"
+    listing="$(git -C "$root" ls-files -z --cached --others --exclude-standard -- . | tr '\0' '\n')"
   else
     listing="$("$here/changed" --files)"
   fi
@@ -158,6 +162,10 @@ else
       else
         orphans+=("$path → $src")
       fi
+    else
+      case "${path##*/}" in
+        test_*.py | *_test.py) strays+=("$path") ;;
+      esac
     fi
   done <<<"$listing"
 fi
@@ -177,6 +185,10 @@ for msg in "${missing_mirror[@]+"${missing_mirror[@]}"}"; do
 done
 for msg in "${orphans[@]+"${orphans[@]}"}"; do
   echo "bin/test: no source for test $msg" >&2
+  ratchet=1
+done
+for msg in "${strays[@]+"${strays[@]}"}"; do
+  echo "bin/test: $msg is a pytest file outside tests/, which bin/test never runs" >&2
   ratchet=1
 done
 
@@ -221,7 +233,9 @@ done
 if [ "$ratchet" -ne 0 ]; then
   exit 1
 fi
-[ "$rc" -eq 0 ] || exit "$rc"
+if [ "$rc" -ne 0 ] && ! { [ "$rc" -eq 5 ] && [ "$all" -eq 1 ] && [ "${#required[@]}" -eq 0 ]; }; then
+  exit "$rc"
+fi
 if [ "$all" -eq 1 ] && [ "${#required[@]}" -eq 0 ]; then
   echo "bin/test: --all found no source to hold at 100%" >&2
   exit 1

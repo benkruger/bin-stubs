@@ -10,10 +10,11 @@ packages_check "$PWD" || exit 1
 for arg in "$@"; do
   case "$arg" in
     --all) ;;
-    *)
+    -*)
       echo "bin/lint: unknown argument: $arg" >&2
       exit 2
       ;;
+    *) ;;
   esac
 done
 cargo clippy --workspace --all-targets -- -D warnings

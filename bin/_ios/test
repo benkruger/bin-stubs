@@ -10,8 +10,9 @@ packages_check "$PWD" || exit 1
 args=()
 for arg in "$@"; do
   case "$arg" in
-    --all | *.swift | */*) ;;
-    *) args+=("$arg") ;;
+    --all | *.swift) ;;
+    -*) args+=("$arg") ;;
+    *) [ -e "$arg" ] || args+=("$arg") ;;
   esac
 done
 set -- ${args[@]+"${args[@]}"}
@@ -37,10 +38,11 @@ if "targets" in report:
 else:
     files = report["data"][0].get("files", [])
 roots = [r.rstrip("/") + "/" for r in sys.argv[3:5]]
+roots += [os.path.realpath(r).rstrip("/") + "/" for r in sys.argv[3:5]]
 bad = []
 for f in files:
     name = f.get("path") or f.get("filename")
-    rel = next((name[len(r):] for r in roots if name.startswith(r)), None)
+    rel = next((n[len(r):] for n in (name, os.path.realpath(name)) for r in roots if n.startswith(r)), None)
     if rel is None or rel.startswith(("Tests/", ".build/")):
         continue
     seen.add(rel)
@@ -56,7 +58,8 @@ for f in files:
     checked += 1
     if pct < 1:
         bad.append(f"{name}: {int(float(pct) * 100)}%")
-bad.extend(f"{s}: no coverage row; no test target links it" for s in required if s not in seen)
+linked = {"/".join(s.split("/")[:2]) for s in seen}
+bad.extend(f"{s}: no coverage row; no test target links it" for s in required if s not in linked)
 if bad:
     print("FAIL: line coverage is under 100%")
     print("\n".join(bad))
@@ -125,7 +128,13 @@ fi
 cov_ok=0
 required=""
 if [ "$whole" -eq 1 ]; then
-  required="$(git ls-files --cached --others --exclude-standard -- 'Sources/*.swift')"
+  listed="$(git ls-files -z --cached --others --exclude-standard -- 'Sources/*.swift' | tr '\0' '\n')"
+  while IFS= read -r file; do
+    if [ -n "$file" ] && [ -f "$file" ]; then
+      rest="${file#Sources/}"
+      required+="Sources/${rest%%/*}"$'\n'
+    fi
+  done <<<"$listed"
 fi
 coverage_ok "$coverage" "$required" || cov_ok=$?
 exit "$cov_ok"

@@ -10,15 +10,15 @@ Prettier, ESLint, `tsc` and Vitest hold the TypeScript app at full strength.
   and `bin/test` a named one; it runs its twin and fails a TypeScript `.test` or
   `.spec` file outside `e2e/` and `node_modules/` that is no source's twin.
 - Every source is at 100% functions, lines, branches and statements under
-  Vitest's v8 coverage. `bin/ci` checks every source; `bin/changed` checks
-  the changed ones, and a changed test holds its source to the same bar.
-- `bin/format` runs Prettier, skipping files it has no parser for, on every file
-  but Markdown, a symlink, `node_modules/`, `.venv/`, `.flow-states/` and the
-  apps inside a root app. `bin/lint` leaves Markdown and bash scripts to
-  `tests/guards` and fails any other file but a symlink that Prettier
-  ignores, has no parser for or whose Prettier config sets `requirePragma` or
-  `checkIgnorePragma`, or that no ESLint rule applies to, unless
-  `UNGATED_NAMES` or an exact `UNGATED_PATHS` path names it.
+  Vitest's v8 coverage. `bin/ci` checks every source; `bin/changed` checks the
+  changed ones, a changed test holding its source to the same bar. `bin/test`
+  fails a source a Vitest `setupFiles` entry names: Vitest never measures it.
+- `bin/format` runs Prettier on every file it has a parser for but Markdown, a
+  symlink, `node_modules/`, `.venv/`, `.flow-states/` and the apps inside a root
+  app. `bin/lint` leaves Markdown and bash scripts to `tests/guards` and fails
+  any other file but a symlink that Prettier ignores or has no parser for, whose
+  Prettier config sets `requirePragma` or `checkIgnorePragma`, or that no ESLint
+  rule covers, unless `UNGATED_NAMES` or an exact `UNGATED_PATHS` path names it.
 - ESLint passes with zero warnings (`no-lint-exceptions.md`); `bin/lint` fails
   a file whose config sets a processor or another language, or leaves off a
   rule or the package of its recommended set: `@eslint/js` for a script,
@@ -38,4 +38,4 @@ Prettier, ESLint, `tsc` and Vitest hold the TypeScript app at full strength.
   matching `npm warn`, `DeprecationWarning` or a line starting `Warning:`
   and a space, any case; a failed test fails `bin/qa`.
 - Trigger: any change to a TypeScript `bin/` script or `eslint.config.js`.
-<!-- audited: 4de8f3dfd114 -->
+<!-- audited: 83ec9d7a995a -->

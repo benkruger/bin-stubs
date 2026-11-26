@@ -24,7 +24,7 @@ shell_listing() {
     esac
   done
   if [ "$all" -eq 1 ]; then
-    git ls-files --cached --others --exclude-standard -- .
+    git ls-files -z --cached --others --exclude-standard -- . | tr '\0' '\n'
   elif [ "${#paths[@]}" -gt 0 ]; then
     printf '%s\n' "${paths[@]}"
   else

@@ -7,8 +7,9 @@ export CARGO_NET_OFFLINE=true
 args=()
 for arg in "$@"; do
   case "$arg" in
-    --all | *.rs | */*) ;;
-    *) args+=("$arg") ;;
+    --all | *.rs) ;;
+    -*) args+=("$arg") ;;
+    *) [ -e "$arg" ] || args+=("$arg") ;;
   esac
 done
 set -- ${args[@]+"${args[@]}"}

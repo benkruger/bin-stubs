@@ -7,6 +7,7 @@ is_test() {
     *.spec.js | *.spec.mjs | *.spec.cjs | *.spec.jsx) return 0 ;;
     test-*.js | test-*.mjs | test-*.cjs | test-*.jsx) return 0 ;;
     */test-*.js | */test-*.mjs | */test-*.cjs | */test-*.jsx) return 0 ;;
+    *_test.js | *_test.mjs | *_test.cjs | *_test.jsx | *-test.js | *-test.mjs | *-test.cjs | *-test.jsx) return 0 ;;
     *) return 1 ;;
   esac
 }

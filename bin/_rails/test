@@ -47,7 +47,7 @@ tests_to_check() {
   if [ "$named" -eq 1 ]; then
     printf '%s\n' "$@"
   elif [ "$all" -eq 1 ]; then
-    git ls-files --cached --others --exclude-standard -- test
+    git ls-files -z --cached --others --exclude-standard -- test | tr '\0' '\n'
   else
     printf '%s\n' ${changed_tests[@]+"${changed_tests[@]}"}
   fi
@@ -142,12 +142,16 @@ if [ "$named" -eq 0 ]; then
   done
 fi
 if [ "${#sources[@]}" -gt 0 ]; then
-  if ! rows="$(jq -r --arg real "$(pwd -P)" --arg logical "$PWD" '[.[].coverage] | add as $cov
+  if ! rows="$(jq -r --arg real "$(pwd -P)" --arg logical "$PWD" '[.[].coverage] as $covs
     | $ARGS.positional[] as $src
-    | ($cov[$real + "/" + $src] // $cov[$logical + "/" + $src]) as $row
-    | if $row == null then "\($src)\tmissing\t" else
-        ([$row.lines[]? | select(type == "number")]) as $l
-        | ([($row.branches // {})[] | .[]]) as $b
+    | [$covs[] | (.[$real + "/" + $src] // .[$logical + "/" + $src]) | select(. != null)] as $runs
+    | if ($runs | length) == 0 then "\($src)\tmissing\t" else
+        ([$runs[] | [.lines[]?]] | transpose
+          | map(map(select(type == "number")) | if length == 0 then null else add end)) as $merged
+        | ([$merged[] | select(type == "number")]) as $l
+        | (reduce ($runs[] | (.branches // {}) | to_entries[] | .key as $c | .value | to_entries[]
+            | {c: $c, b: .key, n: .value}) as $e ({}; .[$e.c][$e.b] = ((.[$e.c][$e.b] // 0) + $e.n))) as $hits
+        | ([$hits[] | .[]]) as $b
         | "\($src)\t\([$l[] | select(. > 0)] | length)/\($l | length)\t\([$b[] | select(. > 0)] | length)/\($b | length)"
       end' "$resultset" --args "${sources[@]}")"; then
     echo "bin/test: could not read $resultset" >&2
@@ -169,6 +173,7 @@ measured="${#sources[@]}"
 orphan=0
 while IFS= read -r t; do
   t="${t#./}"
+  [ -f "$t" ] || continue
   case "$t" in
     test/integration/* | test/system/* | test/support/* | test/fixtures/*) continue ;;
     test/*_test.rb) ;;

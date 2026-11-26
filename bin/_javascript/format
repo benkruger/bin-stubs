@@ -35,7 +35,7 @@ for arg in "$@"; do
 done
 
 if [ "$all" -eq 1 ]; then
-  listing="$(git -C "$root" ls-files --cached --others --exclude-standard -- .)"
+  listing="$(git -C "$root" ls-files -z --cached --others --exclude-standard -- . | tr '\0' '\n')"
 elif [ "${#paths[@]}" -gt 0 ]; then
   listing="$(printf '%s\n' "${paths[@]}")"
 else
@@ -65,6 +65,6 @@ if [ "${#files[@]}" -eq 0 ]; then
 fi
 
 if [ "$check" -eq 1 ]; then
-  exec "$root/node_modules/.bin/biome" format "${files[@]}"
+  exec "$root/node_modules/.bin/biome" check --linter-enabled=false "${files[@]}"
 fi
 exec "$root/node_modules/.bin/biome" check --write --linter-enabled=false "${files[@]}"

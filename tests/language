@@ -140,8 +140,14 @@ EOF
   if orphan_file "$app" "$lang"; then
     expect_fail leaf "$app" "$lang" ci
     grep -q "bin/test: no source for test" "${LAST_LOG}" || die "$lang passed a test with no source"
+    case "$lang" in
+      javascript | python)
+        grep -q "bin/test: no source for test tests/orphan_test" "${LAST_LOG}" ||
+          die "$lang passed a test its runner names *_test with no source"
+        ;;
+    esac
     rm -f "$app/tests/orphan.test.ts" "$app/tests/orphan.test.js" "$app/tests/test_orphan.py" \
-      "$app/test/orphan_test.rb"
+      "$app/test/orphan_test.rb" "$app/tests/orphan_test.js" "$app/tests/orphan_test.py"
   fi
   mode="$(mode_file_of "$lang")"
   [ -f "$app/$mode" ] || printf 'notes\n' >"$app/$mode"
@@ -334,6 +340,17 @@ EOF
       expect_fail leaf "$app" "$lang" lint src/add.ts
       grep -q "src/add.ts: no formatter (Prettier)" "${LAST_LOG}" || die "$lang let Prettier skip files with an ignore pragma"
       rm "$app/.prettierrc"
+      [ ! -f "$app/.gitignore" ] || cp "$app/.gitignore" "$WORK/gitignore.keep"
+      printf 'src/ignored.ts\n' >>"$app/.gitignore"
+      printf 'export const ignored = 1;\n' >"$app/src/ignored.ts"
+      expect_fail leaf "$app" "$lang" lint src/ignored.ts
+      grep -q "src/ignored.ts: no formatter (Prettier)" "${LAST_LOG}" || die "$lang let a file Prettier ignores through"
+      rm "$app/src/ignored.ts"
+      if [ -f "$WORK/gitignore.keep" ]; then
+        mv "$WORK/gitignore.keep" "$app/.gitignore"
+      else
+        rm "$app/.gitignore"
+      fi
       printf 'a {\n  color: red;\n}\n' >"$app/src/style.css"
       expect_fail leaf "$app" "$lang" lint src/style.css
       grep -qxF "src/style.css: ESLint needs @eslint/css for its recommended rules" "${LAST_LOG}" ||
@@ -425,6 +442,13 @@ EOF
       expect_ok leaf "$app" "$lang" lint src/loose.js
       expect_fail leaf "$app" "$lang" format --check src/loose.js
       rm "$app/src/loose.js"
+      printf '%s\n' 'import { b } from "./b.js";' 'import { a } from "./a.js";' '' 'export const both = a + b;' \
+        >"$app/src/order.js"
+      expect_fail leaf "$app" "$lang" format --check src/order.js
+      grep -qF 'import { b } from "./b.js";' "$app/src/order.js" || die "$lang format --check rewrote a file"
+      expect_ok leaf "$app" "$lang" format src/order.js
+      expect_ok leaf "$app" "$lang" format --check src/order.js
+      rm "$app/src/order.js"
       printf 'const unused = 1;\nexport const kept = 2;\n' >"$app/src/warn.js"
       expect_fail leaf "$app" "$lang" lint src/warn.js
       grep -q "noUnusedVariables" "${LAST_LOG}" || die "$lang let a Biome warning through"
@@ -605,6 +629,11 @@ EOF
       grep -q "tests/needless.rs" "${LAST_LOG}" || die "$lang lint skipped an integration test target"
       grep -q "needless_return" "${LAST_LOG}" || die "$lang lint ran without Clippy's default lints on a test target"
       rm "$app/tests/needless.rs"
+      expect_ok leaf "$app" "$lang" lint src/lib.rs Cargo.toml
+      expect_ok leaf "$app" "$lang" format src/lib.rs Cargo.toml
+      expect_ok leaf "$app" "$lang" format --check src/lib.rs
+      expect_ok leaf "$app" "$lang" test src/lib.rs Cargo.toml
+      grep -q "coverage bar held" "${LAST_LOG}" || die "$lang test took a path it was handed as a test filter"
       mv "$app/rust-toolchain.toml" "$WORK/toolchain.keep"
       CI="" expect_fail leaf "$app" "$lang" ci --force
       grep -qF "toolchain: rust-toolchain.toml is missing" "${LAST_LOG}" || die "$lang ci ran with no pinned toolchain"
@@ -612,6 +641,8 @@ EOF
       CI="" expect_fail leaf "$app" "$lang" ci --force
       grep -qF "toolchain: rust-toolchain.toml has no channel" "${LAST_LOG}" ||
         die "$lang ci ran on a toolchain file that pins no channel"
+      tr '"' "'" <"$WORK/toolchain.keep" >"$app/rust-toolchain.toml"
+      CI="" expect_ok leaf "$app" "$lang" ci --force
       mv "$WORK/toolchain.keep" "$app/rust-toolchain.toml"
       ;;
     rails)
@@ -634,6 +665,15 @@ EOF
       expect_fail leaf "$app" "$lang" lint lib/tasks/hello.rake
       grep -q "lib/tasks/hello.rake" "${LAST_LOG}" || die "$lang lint skipped a Ruby file that is not .rb"
       rm -r "$app/lib/tasks"
+      cp "$app/bin/rails" "$WORK/rails.keep"
+      printf 'unused = 1\n' >>"$app/bin/rails"
+      mkdir -p "$app/app/views"
+      printf 'json.unused do\n  other = 1\nend\n' >"$app/app/views/show.json.jbuilder"
+      expect_fail leaf "$app" "$lang" lint bin/rails app/views/show.json.jbuilder README.md
+      grep -q "bin/rails" "${LAST_LOG}" || die "$lang lint skipped a Ruby script known by its shebang"
+      grep -q "show.json.jbuilder" "${LAST_LOG}" || die "$lang lint skipped a Ruby file RuboCop includes by name"
+      mv "$WORK/rails.keep" "$app/bin/rails"
+      rm -r "$app/app/views"
       printf 'inherit_from: missing.yml\n' >"$app/.rubocop.yml"
       expect_fail leaf "$app" "$lang" format app/models/add.rb
       grep -q "missing.yml" "${LAST_LOG}" || die "$lang format passed a RuboCop that could not run"
@@ -782,9 +822,20 @@ EOF
     mkdir -p "$app/Sources/Tool"
     printf 'public func tool() -> Int { 1 }\n' >"$app/Sources/Tool/Tool.swift"
     expect_fail leaf "$app" "$lang" test
-    grep -qF "Sources/Tool/Tool.swift: no coverage row" "${LAST_LOG}" || die "ios passed a target no test links"
+    grep -qF "Sources/Tool: no coverage row" "${LAST_LOG}" || die "ios passed a target no test links"
     rm -r "$app/Sources/Tool"
     mv "$WORK/package.keep" "$app/Package.swift"
+    printf 'public protocol Greeter {\n  func greet() -> String\n}\n' >"$app/Sources/App/Greeter.swift"
+    printf 'public func old() -> Int { 1 }\n' >"$app/Sources/App/Old.swift"
+    git -C "$app" add -- Sources/App/Old.swift
+    rm "$app/Sources/App/Old.swift"
+    expect_ok leaf "$app" "$lang" test
+    grep -q "bin/test: coverage bar held on" "${LAST_LOG}" ||
+      die "ios failed a declaration-only source or a source deleted from disk"
+    git -C "$app" rm -q --cached -- Sources/App/Old.swift
+    rm "$app/Sources/App/Greeter.swift"
+    expect_ok leaf "$app" "$lang" test --filter 'AppTests|no/such/test'
+    grep -q "adds() passed" "${LAST_LOG}" || die "ios dropped a test filter holding a slash"
     cp "$app/Package.swift" "$WORK/package.keep"
     perl -0pi -e 's/^([ \t]*)(\.target\(name: "App"\),\n)/$1$2$1.target(name: "CLib"),\n/m' "$app/Package.swift"
     mkdir -p "$app/Sources/CLib/include"
@@ -800,6 +851,14 @@ EOF
     grep -q 'dependencies: \[.package(url:' "$app/Package.swift" || die "ios dependency plant did not land"
     expect_fail leaf "$app" "$lang" build
     grep -q "Package.resolved is missing" "${LAST_LOG}" || die "ios built a package whose remote packages were never resolved"
+    cp "$app/Package.swift" "$WORK/package.oneline"
+    perl -0pi -e 's|\.package\(url: |.package(\n        url: |' "$app/Package.swift"
+    expect_fail leaf "$app" "$lang" build
+    grep -q "Package.resolved is missing" "${LAST_LOG}" || die "ios missed a remote package written across lines"
+    perl -0pi -e 's|\.package\(\n *url: |.package(name: "SwiftDep", url: |' "$app/Package.swift"
+    expect_fail leaf "$app" "$lang" build
+    grep -q "Package.resolved is missing" "${LAST_LOG}" || die "ios missed a remote package given a name"
+    mv "$WORK/package.oneline" "$app/Package.swift"
     expect_ok leaf "$app" "$lang" changed --files
     expect_ok leaf "$app" "$lang" dependencies
     cp "$app/Package.resolved" "$WORK/resolved.keep"
@@ -815,6 +874,12 @@ EOF
     grep -q "not fetched at the versions Package.resolved pins" "${LAST_LOG}" ||
       die "ios passed checkouts a version 1 Package.resolved does not pin"
     mv "$WORK/resolved.keep" "$app/Package.resolved"
+    cp "$app/Package.swift" "$WORK/package.pinned"
+    perl -0pi -e 's|(\.package\(url: "file://[^"]*SwiftDep", from: "1\.0\.0"\))|$1, .package(url: "https://example.com/acme/Other.git", from: "1.0.0")|' \
+      "$app/Package.swift"
+    expect_fail leaf "$app" "$lang" build
+    grep -q "packages: other is not in Package.resolved" "${LAST_LOG}" || die "ios passed a package Package.resolved does not pin"
+    mv "$WORK/package.pinned" "$app/Package.swift"
     printf 'public func dep() -> Int { 1 }\n' >"$WORK/SwiftDep/Sources/Dep/Dep.swift"
     git -C "$WORK/SwiftDep" -c user.email=dep@example.com -c user.name=dep commit -q -am "dep 1.1.0"
     git -C "$WORK/SwiftDep" tag 1.1.0
@@ -884,7 +949,10 @@ section_root() {
   app="$repo"
   copy_dir "$REPO/bin" "$repo/bin"
   case "$lang" in
-    typescript | javascript) cp -cR "$TEMPLATE/$lang/." "$app" 2>/dev/null || cp -R "$TEMPLATE/$lang/." "$app" ;;
+    typescript | javascript)
+      cp -cR "$TEMPLATE/$lang/." "$app" 2>/dev/null || cp -R "$TEMPLATE/$lang/." "$app"
+      [ ! -L "$app/node_modules/picomatch" ] || ln -sfn "$PICOMATCH_DIR" "$app/node_modules/picomatch"
+      ;;
     rails)
       cp "$repo/.gitignore" "$WORK/root.gitignore"
       seed_of "$lang" "$app"
@@ -916,6 +984,12 @@ section_root() {
   printf '%s\n' "$lint_body" >"$app/web/lint.$ext"
   [ -z "$build_body" ] || printf '%s\n' "$build_body" >"$app/web/build.$ext"
   printf '%s\n' '#Loose' >"$app/web/loose.md"
+  if [ "$lang" = typescript ]; then
+    mkdir -p "$app/node_modules/@types/plant"
+    printf 'declare const plantGlobal: number;\n' >"$app/node_modules/@types/plant/index.d.ts"
+    jq '.compilerOptions.types = ["plant"]' "$app/tsconfig.json" >"$WORK/tsconfig.plant"
+    mv "$WORK/tsconfig.plant" "$app/tsconfig.json"
+  fi
   run_log leaf "$app" "$lang" changed --files
   grep -q "^web/" "${LAST_LOG}" && die "a root $lang app's changed listed a sibling app's file"
   expect_ok leaf "$app" "$lang" format --all
@@ -930,6 +1004,15 @@ section_root() {
     grep -q "web/build" "${LAST_LOG}" && die "a root $lang app's build checked a sibling app's file"
     rm "$app/$own/build.$ext"
   fi
+  case "$lang" in
+    typescript | javascript)
+      mkdir -p "$app/web/tests"
+      printf 'throw new Error("a nested app test ran in the root app");\n' >"$app/web/tests/fail.test.$ext"
+      expect_ok leaf "$app" "$lang" test --all
+      grep -qxF "bin/test: coverage bar held on 1 source(s)" "${LAST_LOG}" || die "a root $lang app's test did not hold its own source"
+      rm -r "$app/web/tests"
+      ;;
+  esac
   printf '%s\n' "$lint_body" >"$app/$own/lint.$ext"
   expect_fail leaf "$app" "$lang" lint --all
   grep -q "$own/lint.$ext" "${LAST_LOG}" || die "a root $lang app's lint skipped its own file"
@@ -975,6 +1058,8 @@ EOF
   expect_fail leaf "$app" "$lang" test
   grep -q "FAIL: line coverage is under 100%" "${LAST_LOG}" || die "ios passed an Xcode project source below its coverage bar"
   grep -q "Untested.swift: 0%" "${LAST_LOG}" || die "ios did not name the Xcode project source below its coverage bar"
+  expect_fail leaf "$(cd "$app" && pwd -P)" "$lang" test
+  grep -q "Untested.swift: 0%" "${LAST_LOG}" || die "ios matched no coverage row for an app reached by its real path"
   rm "$app/Sources/App/Untested.swift"
   printf '%s\n' 'import Testing' '' '@Test func warned() {' '  var unused = 1' '  #expect(true)' '}' \
     >"$app/Tests/AppTests/WarnedTests.swift"
@@ -988,6 +1073,18 @@ EOF
   grep -q '"version" : "1.1.0"' "$app/App.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved" ||
     die "ios dependencies left an Xcode project's package on an older version"
   stale_xcode_pins "$app" "$app/App.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved"
+  cp "$app/App.xcodeproj/project.pbxproj" "$WORK/pbxproj.pinned"
+  perl -pi -e 's|(repositoryURL = ")[^"]*(";)|${1}https://example.com/acme/Other.git$2|' "$app/App.xcodeproj/project.pbxproj"
+  expect_fail leaf "$app" "$lang" lint --all
+  grep -q "packages: other is not in Package.resolved" "${LAST_LOG}" ||
+    die "ios passed an Xcode package reference Package.resolved does not pin"
+  perl -pi -e 's|(repositoryURL = ")[^"]*(";)|${1}file:///nonexistent/Gone$2|' "$app/App.xcodeproj/project.pbxproj"
+  expect_fail leaf "$app" "$lang" dependencies
+  [ -f "$app/App.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved" ] ||
+    die "ios dependencies lost Package.resolved when resolving failed"
+  [ -f "$app/.build/xcode-packages/workspace-state.json" ] || die "ios dependencies lost its packages' state when resolving failed"
+  mv "$WORK/pbxproj.pinned" "$app/App.xcodeproj/project.pbxproj"
+  expect_ok leaf "$app" "$lang" lint --all
   mkdir -p "$app/App.xcworkspace"
   printf '%s\n' '<?xml version="1.0" encoding="UTF-8"?>' '<Workspace version = "1.0">' \
     '   <FileRef location = "group:App.xcodeproj"></FileRef>' '</Workspace>' >"$app/App.xcworkspace/contents.xcworkspacedata"
