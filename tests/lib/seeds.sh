@@ -1030,3 +1030,48 @@ decoy_coverage() {
   grep -q "src/orphan.$ext has no coverage row" "${LAST_LOG}" || die "$lang matched a source to another file's coverage row"
   rm -r "${app:?}/lib" "$app/tests/lib" "$app/src/orphan.$ext" "$app/tests/orphan.test.$ext"
 }
+
+pin_names() {
+  local app="$1"
+  if [ -f "$app/package.json" ]; then
+    jq -r '((.dependencies // {}) + (.devDependencies // {}) | to_entries[] | select(.value != "latest") | .key),
+      ((.overrides // {}) | keys[])' "$app/package.json"
+  fi
+  if [ -f "$app/pyproject.toml" ]; then
+    grep -oE '"[A-Za-z0-9_.-]+ *(==|===|<|<=|~=|!=|@)[^"]*"' "$app/pyproject.toml" | sed -E 's/^"([A-Za-z0-9_.-]+).*/\1/' || true
+  fi
+  if [ -f "$app/Gemfile" ]; then
+    sed -nE "s/^gem '([^']+)', *['\"].*/\1/p" "$app/Gemfile"
+  fi
+}
+
+pin_findings() {
+  local checks="$1" app name
+  shift
+  for app in "$@"; do
+    while IFS= read -r name; do
+      [ -n "$name" ] || continue
+      grep -qwF -- "$name" "$checks"/* 2>/dev/null || echo "${app##*/} pins $name with no check in checks/ naming it"
+    done < <(pin_names "$app" | sort -u)
+  done
+}
+
+test_pins() {
+  say "every pin a test app makes has a dated check"
+  local lang found
+  export PICOMATCH_DIR="$WORK/picomatch"
+  mkdir -p "$PICOMATCH_DIR"
+  for lang in typescript javascript python rails; do
+    "seed_$lang" "$WORK/pins/$lang"
+  done
+  found="$(pin_findings "$REPO/checks" "$WORK/pins"/*)"
+  [ -z "$found" ] || die "$found"
+  jq '.overrides["left-pad"] = "1.0.0" | .devDependencies["@biomejs/biome"] = "^2.0.0"' "$WORK/pins/javascript/package.json" >"$WORK/pins.json"
+  mv "$WORK/pins.json" "$WORK/pins/javascript/package.json"
+  perl -pi -e 's/"pytest>=8"/"pytest<9"/' "$WORK/pins/python/pyproject.toml"
+  printf "gem 'rack', '< 3'\n" >>"$WORK/pins/rails/Gemfile"
+  found="$(pin_findings "$REPO/checks" "$WORK/pins"/*)"
+  assert_eq "$found" "$(printf '%s\n' "javascript pins @biomejs/biome with no check in checks/ naming it" \
+    "javascript pins left-pad with no check in checks/ naming it" "python pins pytest with no check in checks/ naming it" \
+    "rails pins rack with no check in checks/ naming it")" "pins with no check"
+}

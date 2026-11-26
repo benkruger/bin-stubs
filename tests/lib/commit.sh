@@ -197,6 +197,17 @@ test_commit() {
   assert_eq "$(git -C "$origin" rev-parse main)" "$before" "--no-push pushed"
 
   commit_case
+  git -C "$repo" config --unset core.hooksPath
+  printf '\nArmed.\n' >>"$repo/notes.md"
+  commit -- --no-push main "$msg"
+  assert_rc 0 "a commit in a repo whose hooks were never switched on"
+  assert_eq "$(git -C "$repo" config --get core.hooksPath)" ".githooks" "the hooks path bin/commit set"
+  printf '\nRaw.\n' >>"$repo/notes.md"
+  git -C "$repo" add -A
+  run_log git -C "$repo" commit -q -m raw
+  assert_rc 1 "a raw commit after bin/commit switched the hooks on"
+
+  commit_case
   before="$(git -C "$repo" rev-parse HEAD)"
   printf '\nRaw.\n' >>"$repo/notes.md"
   git -C "$repo" add -A
@@ -355,7 +366,7 @@ test_commit_rounds() {
 
 test_commit_stops() {
   say "commit names why its rule review stopped"
-  local repo origin rule msg finding missed=""
+  local repo origin rule msg finding missed="" noclaude dirs dir
   commit_setup
 
   commit_case
@@ -386,6 +397,17 @@ test_commit_stops() {
   commit -- main "$msg"
   [ "$(tail -n 1 "${LAST_LOG}" | jq -r .detail)" = "rule audit: could not read the working tree's rule edits" ] ||
     missed+=" [unreadable tree]"
+
+  commit_case
+  printf '# Probe\n\nA probe rule.\n' >"$rule"
+  noclaude=""
+  IFS=: read -r -a dirs <<<"$PATH"
+  for dir in "${dirs[@]}"; do
+    [ -x "$dir/claude" ] || noclaude+="${noclaude:+:}$dir"
+  done
+  commit PATH="$noclaude" -- main "$msg"
+  [ "$(commit_json .detail)" = "rule audit: claude is not installed, and an edited rule needs its review" ] ||
+    missed+=" [no claude]"
   [ -z "$missed" ] || die "a stopped review did not say why:$missed"
 }
 

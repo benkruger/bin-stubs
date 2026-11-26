@@ -312,15 +312,16 @@ test_suite_missing() {
 
 test_root_check() {
   say "bin/_root-tests checks/<name> runs that one check"
-  local repo
+  local repo soon
   repo="$(new_repo)"
   keep "$repo"
   copy_dir "$HERE/../bin" "$repo/bin"
   stub_suite "$repo"
   printf '%s\n' '#!/usr/bin/env bash' "echo suite >\"$repo/suite.ran\"" >"$repo/tests/run"
   mkdir -p "$repo/checks"
-  printf '%s\n' '#!/usr/bin/env bash' 'echo passing-check-ran' >"$repo/checks/pass"
-  printf '%s\n' '#!/usr/bin/env bash' 'echo failing-check-ran' 'exit 1' >"$repo/checks/fail"
+  soon="revisit=$(date -v+30d +%F 2>/dev/null || date -d '+30 days' +%F)"
+  printf '%s\n' '#!/usr/bin/env bash' "$soon" 'echo passing-check-ran' >"$repo/checks/pass"
+  printf '%s\n' '#!/usr/bin/env bash' "$soon" 'echo failing-check-ran' 'exit 1' >"$repo/checks/fail"
   chmod +x "$repo/checks/pass" "$repo/checks/fail"
   expect_ok "$repo/bin/_root-tests" checks/pass
   grep -qx "passing-check-ran" "${LAST_LOG}" || die "bin/_root-tests did not run the named check"
@@ -328,6 +329,19 @@ test_root_check() {
   [ ! -e "$repo/suite.ran" ] || die "bin/_root-tests ran tests/run for one check"
   expect_fail "$repo/bin/_root-tests" checks/fail
   grep -qx "failing-check-ran" "${LAST_LOG}" || die "bin/_root-tests passed a failing named check"
+  rm "$repo/checks/fail"
+  printf '%s\n' '#!/usr/bin/env bash' 'revisit=2099-01-01' >"$repo/checks/far"
+  printf '%s\n' '#!/usr/bin/env bash' 'echo undated' >"$repo/checks/undated"
+  chmod +x "$repo/checks/far" "$repo/checks/undated"
+  expect_fail "$repo/bin/_root-tests" checks/far
+  grep -qx "root-suite: checks/far revisits on 2099-01-01, more than 30 days out" "${LAST_LOG}" ||
+    die "bin/_root-tests passed a check dated more than 30 days out"
+  expect_fail "$repo/bin/_root-tests"
+  grep -qx "root-suite: checks/far revisits on 2099-01-01, more than 30 days out" "${LAST_LOG}" ||
+    die "bin/ci passed a check dated more than 30 days out"
+  grep -qx "root-suite: checks/undated names no revisit=YYYY-MM-DD date" "${LAST_LOG}" ||
+    die "bin/ci passed a check with no revisit date"
+  [ ! -e "$repo/suite.ran" ] || die "bin/_root-tests ran tests/run past a misdated check"
   return 0
 }
 

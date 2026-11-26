@@ -18,7 +18,23 @@ for arg in "$@"; do
   esac
 done
 
+LIMIT="$(date -v+30d +%F 2>/dev/null || date -d '+30 days' +%F)"
+
+dated() {
+  local revisit
+  revisit="$(awk -F= '/^revisit=[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]$/ { print $2; exit }' "$1")"
+  if [ -z "$revisit" ]; then
+    echo "root-suite: checks/${1##*/} names no revisit=YYYY-MM-DD date" >&2
+    return 1
+  fi
+  if [[ "$revisit" > "$LIMIT" ]]; then
+    echo "root-suite: checks/${1##*/} revisits on $revisit, more than 30 days out" >&2
+    return 1
+  fi
+}
+
 if [ -n "$single" ]; then
+  dated "$ROOT/$single" || exit 1
   exec "$ROOT/$single"
 fi
 
@@ -42,6 +58,7 @@ for check in "$ROOT"/checks/*; do
   if [ ! -f "$check" ] || [ ! -x "$check" ]; then
     continue
   fi
+  dated "$check" || failed=1
   if ! "$check"; then
     echo "root-suite: checks/$(basename "$check") failed" >&2
     failed=1

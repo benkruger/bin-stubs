@@ -20,7 +20,9 @@ export XDG_CACHE_HOME="$WORK/cache"
 
 settings_findings() {
   local root="$1"
-  local gate='["Edit(/bin/**)","Edit(/tests/guards)","Edit(/tests/run)","Edit(/.claude/settings.json)","Edit(/.claude/settings.local.json)","Edit(/.claude/hooks/**)","Edit(/.githooks/**)"]'
+  local paths='["bin/**","tests/guards","tests/run",".claude/settings.json",".claude/settings.local.json",".claude/hooks/**",".githooks/**"]'
+  local gate
+  gate="$(jq -c '[.[] | "Edit(/\(.))", "Edit(/.worktrees/*/\(.))"]' <<<"$paths")"
   jq -e --argjson gate "$gate" '$gate - .permissions.deny == []' "$root/starter/.claude/settings.json" >/dev/null ||
     echo "the starter's settings do not deny editing the gate"
   jq -e --argjson gate "$gate" --slurpfile mine "$root/.claude/settings.json" \
@@ -39,6 +41,10 @@ test_settings() {
   want=$(printf '%s\n' "the starter's settings do not deny editing the gate" \
     "this repo's settings are not the starter's less the gate-edit denies")
   assert_eq "$(settings_findings "$plant")" "$want" "planted settings"
+  jq '.permissions.deny -= ["Edit(/.worktrees/*/bin/**)"]' "$REPO/starter/.claude/settings.json" >"$plant/starter/.claude/settings.json"
+  cp "$REPO/.claude/settings.json" "$plant/.claude/settings.json"
+  assert_eq "$(settings_findings "$plant")" "the starter's settings do not deny editing the gate" \
+    "starter settings that leave a worktree's gate editable"
 }
 
 test_scan() {
@@ -215,7 +221,7 @@ EOF
 
 test_query() {
   say "query"
-  local stubs log role
+  local stubs log want
   stubs="$WORK/query-stubs"
   log="$WORK/query.log"
   mkdir -p "$stubs"
@@ -247,8 +253,13 @@ EOF
   assert_rc 0 "bin/query"
   grep -qx "psql --no-psqlrc --set=ON_ERROR_STOP=1 --command select 1" "$log" || die "bin/query ran psql wrongly"
   grep -qx "PGOPTIONS=-c default_transaction_read_only=on" "$log" || die "bin/query was not read-only"
-  for role in pg_execute_server_program pg_write_server_files; do
-    grep -q "pg_has_role('$role', 'MEMBER')" "$log.writes" || die "bin/query let a role in $role through"
+  grep -q "FROM pg_roles m WHERE pg_has_role(m.oid, 'MEMBER')" "$log.writes" ||
+    die "bin/query judged only the role it connects as, not every role it can SET ROLE to"
+  for want in "m.rolname IN ('pg_execute_server_program', 'pg_write_server_files')" \
+    "has_database_privilege(m.oid, current_database(), 'CREATE')" "has_schema_privilege(m.oid, n.oid, 'CREATE')" \
+    "c.relowner = m.oid" "'INSERT, UPDATE, DELETE, TRUNCATE, TRIGGER'" "has_any_column_privilege(m.oid, c.oid, 'INSERT, UPDATE')" \
+    "has_sequence_privilege(m.oid, c.oid, 'USAGE, UPDATE')"; do
+    grep -qF "$want" "$log.writes" || die "bin/query does not check: $want"
   done
   : >"$log"
   run_log env PGOPTIONS="-c default_transaction_read_only=off" QUERY_WRITES=f PATH="$stubs:$PATH" STUB_LOG="$log" "$REPO/bin/query" "select 1"
@@ -278,20 +289,27 @@ test_hooks() {
     "for f in a; do cargo test; done" "while cargo test; do :; done" "sh -c \"cd app && cargo test\"" \
     "bash -c 'cargo test' arg0" "sh -ec \"cargo test\"" "npx --yes vitest run" "npx @biomejs/biome check ." "npx prettier@3 --check ." \
     "npm exec -- biome check" "uv run --frozen pytest" "xcrun --sdk macosx swift build" "pnpm dlx biome check" \
-    "uvx ruff check ." "timeout -s KILL 60 cargo test" "ls | xargs -n 1 cargo test" "stdbuf -oL cargo test"; do
+    "uvx ruff check ." "timeout -s KILL 60 cargo test" "ls | xargs -n 1 cargo test" "stdbuf -oL cargo test" \
+    "eval cargo test" "eval \"true; cargo test\"" ">/dev/null cargo test" "> /dev/null cargo test" \
+    "2>&1 cargo test" "&>/dev/null cargo test" "</dev/null cargo test" "env -S \"cargo test\"" \
+    "env -S'cargo test'" "env --split-string='cargo test'" "bash -c -- 'cargo test'" \
+    "node node_modules/.bin/tsc" "node --require ./x.js node_modules/vitest/vitest.mjs run" \
+    "find . -name x -exec cargo test \\;" "find . -execdir cargo test {} +"; do
     hook_on "$cmd"
     assert_rc 2 "require-bin should block: $cmd"
     grep -q "Blocked: call the bin/ script" "${LAST_LOG}" || die "no block message for: $cmd"
   done
   for cmd in "git commit -m x" "cd app && git commit -am x" \
     "git -C app commit -m x" "git -c user.name=x commit" "'git' commit -m x" \
-    "sh -c \"git commit -m x\"" "GIT_DIR=. /usr/bin/git commit" "env git commit -m x"; do
+    "sh -c \"git commit -m x\"" "GIT_DIR=. /usr/bin/git commit" "env git commit -m x" \
+    "eval \"git commit -m x\"" "find . -name x -exec git commit -m x \\;" "2>/dev/null git commit -m x"; do
     hook_on "$cmd"
     assert_rc 2 "require-bin should block: $cmd"
     grep -q "Blocked: commit with bin/commit" "${LAST_LOG}" || die "no commit block message for: $cmd"
   done
   for cmd in "bin/stamp-rules .claude/rules/a.md" "./bin/stamp-rules" "cd app && bin/stamp-rules" \
-    "bash bin/stamp-rules a.md" "sh -x bin/stamp-rules a.md" ". bin/stamp-rules a.md" "source bin/stamp-rules a.md"; do
+    "bash bin/stamp-rules a.md" "sh -x bin/stamp-rules a.md" ". bin/stamp-rules a.md" "source bin/stamp-rules a.md" \
+    "find .claude/rules -name a.md -exec bin/stamp-rules {} +" "eval bin/stamp-rules a.md"; do
     hook_on "$cmd"
     assert_rc 2 "require-bin should block: $cmd"
     grep -q "Blocked: only bin/commit stamps rules" "${LAST_LOG}" || die "no stamp block message for: $cmd"
@@ -310,7 +328,8 @@ test_hooks() {
   for cmd in "bin/test src/add.ts" "bin/ci --typescript" "git status" \
     "bundle exec rails runner 1" "npm test" "ls -la" "git log --grep commit" \
     "bin/commit main /tmp/flow-commit-msg.abc123" "grep -n \"a\|bun test\" README.md" "echo 'cargo test'" \
-    "command -v cargo"; do
+    "command -v cargo" "ls >/dev/null 2>&1" "bin/ci 2>&1 | tail -n 5" "node --version" "eval echo hi" \
+    "find . -name '*.md' -exec grep -l x {} +" "env -S \"ls -la\""; do
     hook_on "$cmd"
     assert_rc 0 "require-bin should allow: $cmd"
   done
@@ -346,10 +365,12 @@ test_starter() {
 
   local check_probe="$WORK/check-probe"
   mkdir -p "$repo/checks"
-  cat >"$repo/checks/probe" <<'EOF'
+  cat >"$repo/checks/probe" <<EOF
 #!/usr/bin/env bash
 set -euo pipefail
-[ ! -e "${PROBE_FILE:?}" ]
+revisit=$(date -v+30d +%F 2>/dev/null || date -d '+30 days' +%F)
+[[ "\$(date +%F)" < "\$revisit" ]]
+[ ! -e "\${PROBE_FILE:?}" ]
 EOF
   chmod +x "$repo/checks/probe"
   export PROBE_FILE="$check_probe"
@@ -1085,7 +1106,6 @@ test_merge() {
   git init -q --bare "$origin"
   git -C "$repo" remote add origin "$origin"
   git -C "$repo" push -q -u origin main
-  git -C "$repo" config core.hooksPath .githooks
 
   run_log "$repo/bin/merge"
   assert_rc 2 "bin/merge with no arguments"
@@ -1096,6 +1116,7 @@ test_merge() {
   assert_rc 1 "a missing branch"
   grep -q "no branch nosuch" "${LAST_LOG}" || die "a missing branch was not refused"
   expect_ok "$repo/bin/start" feature
+  assert_eq "$(git -C "$repo" config --get core.hooksPath)" ".githooks" "the hooks path bin/start set"
   wt="$repo/.worktrees/feature"
   run_log "$repo/bin/merge" feature "$(minted 'Land nothing')"
   assert_rc 1 "a branch with nothing new"
@@ -1271,6 +1292,6 @@ run_test() {
 
 run_all "$WORK/logs" run_test test_settings test_scan test_root_format test_open test_qa test_query \
   test_hooks test_starter test_bare_guards test_guards_scans test_guards_tools test_guards_markdownlint test_commit test_commit_review test_commit_fix test_commit_rounds test_commit_stops test_commit_gate test_commit_failures test_copies_match test_failed_writes test_changed_empty test_parts \
-  test_dispatch test_dispatch_select test_dispatch_paths test_dispatch_path_args test_git_failures test_suite_seal test_unborn test_suite_missing test_root_check \
+  test_dispatch test_dispatch_select test_dispatch_paths test_dispatch_path_args test_git_failures test_suite_seal test_unborn test_suite_missing test_root_check test_pins \
   test_shellcheck_cache test_rust_offline test_no_installs test_checked_once test_dependencies_once test_steps test_jobs test_interrupt test_start test_merge test_cleanup test_complete test_ci_time test_root_app test_root_js test_root_shell test_root_changed test_die_fixture \
   test_app_language

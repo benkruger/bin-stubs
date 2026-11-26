@@ -9,7 +9,10 @@ WRAPPERS=" env time command exec nohup nice builtin timeout stdbuf xargs "
 WRAPPER_VALUE_OPTS=" -n -u -S -a -s -k --signal --kill-after -I -P -L -d -E "
 KEYWORDS=" if then elif else do while until { ! "
 PYTHONS=" python python3 "
+NODE_VALUE_OPTS=" -r --require --import --loader --experimental-loader -C --conditions --input-type --env-file --title "
 GIT_OPTS_WITH_ARG=" -C -c --git-dir --work-tree --namespace "
+FIND_EXECS=" -exec -execdir -ok -okdir "
+REDIRECT='^[0-9]*(<<<|<<-|<<|&>>|&>|>>|>\||>&|<&|<>|>|<)(.*)$'
 
 if ! command -v jq >/dev/null 2>&1; then
   echo "require-bin hook: jq is not installed (brew install jq)" >&2
@@ -40,6 +43,8 @@ segments() {
       } elsif ($c eq "\x27" || $c eq "\"") {
         $quote = $c;
         $part .= $c;
+      } elsif ($c eq "&" && (($i > 0 && substr($text, $i - 1, 1) =~ /[<>]/) || substr($text, $i + 1, 1) eq ">")) {
+        $part .= $c;
       } elsif ($c =~ /[;&|()\n]/) {
         print "$part\n";
         $part = "";
@@ -53,11 +58,44 @@ segments() {
 }
 
 skip_assignments() {
-  while [ "$i" -lt "${#words[@]}" ] && [[ "${words[$i]}" == [A-Za-z_]*=* ]]; do
-    case "${words[$i]}" in
-      CI=* | FLOW_CHECKED_APP=*) blocked="check-skip" ;;
+  while [ "$i" -lt "${#words[@]}" ]; do
+    if [[ "${words[$i]}" == [A-Za-z_]*=* ]]; then
+      case "${words[$i]}" in
+        CI=* | FLOW_CHECKED_APP=*) blocked="check-skip" ;;
+      esac
+      i=$((i + 1))
+    elif [[ "${words[$i]}" =~ $REDIRECT ]]; then
+      if [ -n "${BASH_REMATCH[2]}" ]; then
+        i=$((i + 1))
+      else
+        i=$((i + 2))
+      fi
+    else
+      return 0
+    fi
+  done
+}
+
+skip_env_options() {
+  local w
+  while [ "$i" -lt "${#words[@]}" ] && [[ "${words[$i]}" == -* ]]; do
+    w="${words[$i]}"
+    case "$w" in
+      -S | --split-string)
+        i=$((i + 1))
+        return 0
+        ;;
+      -S*)
+        words[i]="${w#-S}"
+        return 0
+        ;;
+      --split-string=*)
+        words[i]="${w#--split-string=}"
+        return 0
+        ;;
+      -u | -C | -P | --unset | --chdir) i=$((i + 2)) ;;
+      *) i=$((i + 1)) ;;
     esac
-    i=$((i + 1))
   done
 }
 
@@ -95,7 +133,11 @@ skip_wrappers() {
     fi
     [[ "$WRAPPERS" == *" $wrapper "* ]] || return 0
     i=$((i + 1))
-    skip_options "$WRAPPER_VALUE_OPTS"
+    if [ "$wrapper" = env ]; then
+      skip_env_options
+    else
+      skip_options "$WRAPPER_VALUE_OPTS"
+    fi
     if [ "$wrapper" = timeout ]; then
       i=$((i + 1))
     fi
@@ -138,8 +180,28 @@ shell_body() {
   printf '%s\n' "$rest"
 }
 
+find_execs() {
+  local j=$((i + 1)) run=()
+  while [ "$j" -lt "${#words[@]}" ]; do
+    if [[ "$FIND_EXECS" == *" ${words[$j]} "* ]]; then
+      run=()
+      j=$((j + 1))
+      while [ "$j" -lt "${#words[@]}" ]; do
+        case "${words[$j]}" in
+          ";" | "\\;" | "\\" | +) break ;;
+        esac
+        run+=("${words[$j]}")
+        j=$((j + 1))
+      done
+      check_text "${run[*]-}"
+      [ -z "$blocked" ] || return 0
+    fi
+    j=$((j + 1))
+  done
+}
+
 check_segment() {
-  local segment="$1" words=() i=0 k word
+  local segment="$1" words=() i=0 k word n
   read -r -a words <<<"$segment" || true
   [ "${#words[@]}" -gt 0 ] || return 0
   for k in "${!words[@]}"; do
@@ -161,7 +223,9 @@ check_segment() {
     i=$((i + 1))
     while [ "$i" -lt "${#words[@]}" ] && [[ "${words[$i]}" == -* ]]; do
       if [[ "${words[$i]}" == -c || "${words[$i]}" == -[!-]*c ]]; then
-        check_text "$(shell_body "$segment" $((i + 1)))"
+        n=$((i + 1))
+        [ "${words[$n]:-}" != "--" ] || n=$((n + 1))
+        check_text "$(shell_body "$segment" "$n")"
         return 0
       fi
       i=$((i + 1))
@@ -171,6 +235,21 @@ check_segment() {
   fi
   word="${words[$i]:-}"
   word="${word##*/}"
+  if [ "$word" = eval ]; then
+    check_text "${words[*]:$((i + 1))}"
+    return 0
+  fi
+  if [ "$word" = find ]; then
+    find_execs
+    return 0
+  fi
+  if [ "$word" = node ]; then
+    i=$((i + 1))
+    skip_options "$NODE_VALUE_OPTS"
+    word="${words[$i]:-}"
+    word="${word##*/}"
+    word="${word%.*js}"
+  fi
   if [ "$word" = "git" ] && git_commits $((i + 1)); then
     blocked="commit"
     return 0

@@ -504,6 +504,10 @@ review_rules() {
   fi
   read_files "$list"
   [ "${#files[@]}" -gt 0 ] || return 0
+  if ! command -v claude >/dev/null 2>&1; then
+    printf '%s' "rule audit: claude is not installed, and an edited rule needs its review" >"$WORK/review"
+    return 1
+  fi
   if ! MAX_RULE_LINES="$(guard_cap MAX_RULE_LINES)" || ! MAX_RULE_CHARS="$(guard_cap MAX_RULE_CHARS)"; then
     printf '%s' "rule audit: tests/guards sets no MAX_RULE_LINES or MAX_RULE_CHARS" >"$WORK/review"
     return 1
@@ -608,7 +612,7 @@ if [ "$current" != "$branch" ]; then
   exit 1
 fi
 
-if command -v claude >/dev/null 2>&1 && ! review_rules; then
+if ! review_rules; then
   emit_error ci "$WORK/review"
   exit 1
 fi
@@ -649,6 +653,9 @@ fi
 if [ "$staged_rc" -ne 1 ]; then
   error_text commit "could not read the staged diff — git failed; nothing was committed"
   exit 1
+fi
+if [ -f .githooks/pre-commit ] && [ -z "$(git config --get core.hooksPath || true)" ]; then
+  git config core.hooksPath .githooks
 fi
 marker="$(git rev-parse --path-format=absolute --git-path flow-commit-marker)"
 nonce="$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')"

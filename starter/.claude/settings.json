@@ -35,7 +35,14 @@
       "Edit(/.claude/settings.json)",
       "Edit(/.claude/settings.local.json)",
       "Edit(/.claude/hooks/**)",
-      "Edit(/.githooks/**)"
+      "Edit(/.githooks/**)",
+      "Edit(/.worktrees/*/bin/**)",
+      "Edit(/.worktrees/*/tests/guards)",
+      "Edit(/.worktrees/*/tests/run)",
+      "Edit(/.worktrees/*/.claude/settings.json)",
+      "Edit(/.worktrees/*/.claude/settings.local.json)",
+      "Edit(/.worktrees/*/.claude/hooks/**)",
+      "Edit(/.worktrees/*/.githooks/**)"
     ]
   },
   "hooks": {

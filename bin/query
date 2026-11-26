@@ -10,17 +10,18 @@ if [ "${1:0:1}" = "\\" ]; then
 fi
 PGOPTIONS="${PGOPTIONS:+$PGOPTIONS }-c default_transaction_read_only=on"
 export PGOPTIONS
-writes="SELECT r.rolsuper OR r.rolcreaterole OR r.rolcreatedb OR r.rolbypassrls OR r.rolreplication
-  OR pg_has_role('pg_execute_server_program', 'MEMBER') OR pg_has_role('pg_write_server_files', 'MEMBER')
-  OR has_database_privilege(current_database(), 'CREATE')
+writes="SELECT EXISTS (SELECT FROM pg_roles m WHERE pg_has_role(m.oid, 'MEMBER') AND (
+  m.rolsuper OR m.rolcreaterole OR m.rolcreatedb OR m.rolbypassrls OR m.rolreplication
+  OR m.rolname IN ('pg_execute_server_program', 'pg_write_server_files')
+  OR has_database_privilege(m.oid, current_database(), 'CREATE')
   OR EXISTS (SELECT FROM pg_namespace n WHERE n.nspname NOT LIKE 'pg\\_temp\\_%'
-    AND n.nspname NOT LIKE 'pg\\_toast\\_temp\\_%' AND has_schema_privilege(n.oid, 'CREATE'))
+    AND n.nspname NOT LIKE 'pg\\_toast\\_temp\\_%' AND has_schema_privilege(m.oid, n.oid, 'CREATE'))
   OR EXISTS (SELECT FROM pg_class c WHERE c.relkind IN ('r', 'p', 'v', 'm', 'f')
     AND c.relnamespace NOT IN ('pg_catalog'::regnamespace, 'information_schema'::regnamespace)
-    AND (pg_has_role(c.relowner, 'USAGE') OR has_table_privilege(c.oid, 'INSERT, UPDATE, DELETE, TRUNCATE')))
+    AND (c.relowner = m.oid OR has_table_privilege(m.oid, c.oid, 'INSERT, UPDATE, DELETE, TRUNCATE, TRIGGER')
+      OR has_any_column_privilege(m.oid, c.oid, 'INSERT, UPDATE')))
   OR EXISTS (SELECT FROM pg_class c WHERE c.relkind = 'S'
-    AND (pg_has_role(c.relowner, 'USAGE') OR has_sequence_privilege(c.oid, 'USAGE, UPDATE')))
-  FROM pg_roles r WHERE r.rolname = current_user"
+    AND (c.relowner = m.oid OR has_sequence_privilege(m.oid, c.oid, 'USAGE, UPDATE')))))"
 can_write="$(psql --no-psqlrc --set=ON_ERROR_STOP=1 --tuples-only --no-align --command "$writes")"
 if [ "$can_write" != f ]; then
   echo "bin/query: the role it connects as can change data or schema; set PGUSER to a role that can only read" >&2
