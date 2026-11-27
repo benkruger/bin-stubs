@@ -59,11 +59,24 @@ while IFS= read -r -d '' venv; do
   linked=$((linked + 1))
 done < <(find . \( -path ./.worktrees -o -name node_modules \) -prune -o -type d -name .venv -print0 -prune)
 
+clone_into() {
+  local from="$1" to="$2"
+  if [ -d "$from" ]; then
+    mkdir -p "$to"
+    cp -cR "$from/." "$to/" 2>/dev/null && return 0
+    rm -rf "$to"
+    mkdir -p "$to"
+    cp -R "$from/." "$to/" && return 0
+  else
+    cp -c "$from" "$to" 2>/dev/null || cp "$from" "$to" && return 0
+  fi
+  refuse "could not copy $from into $worktree; branch $branch and its worktree exist without it"
+}
+
 cloned=0
 while IFS= read -r -d '' modules; do
   rel="${modules#./}"
-  mkdir -p "$(dirname "$worktree/$rel")"
-  cp -cR "$modules" "$worktree/$rel" 2>/dev/null || cp -R "$modules" "$worktree/$rel"
+  clone_into "$modules" "$worktree/$rel"
   cloned=$((cloned + 1))
 done < <(find . \( -path ./.worktrees -o -name .venv \) -prune -o -type d -name node_modules -print0 -prune)
 
@@ -75,7 +88,7 @@ while IFS= read -r -d '' build; do
     [ -e "$build/$part" ] || continue
     found=1
     mkdir -p "$worktree/$rel"
-    cp -cR "$build/$part" "$worktree/$rel/$part" 2>/dev/null || cp -R "$build/$part" "$worktree/$rel/$part"
+    clone_into "$build/$part" "$worktree/$rel/$part"
   done
   fetched=$((fetched + found))
 done < <(find . \( -path ./.worktrees -o -name node_modules -o -name .venv \) -prune -o -type d -name .build -print0 -prune)

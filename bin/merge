@@ -42,6 +42,8 @@ main_states() {
 
 aside="$(mktemp -d "${TMPDIR:-/tmp}/bin-merge.XXXXXX")"
 trap 'rm -rf "$aside"' EXIT
+interrupted=0
+trap 'interrupted=1' INT TERM HUP
 while IFS= read -r -d '' states; do
   mkdir -p "$aside/$states"
   for pass in "$states"/*; do
@@ -74,11 +76,15 @@ while IFS= read -r -d '' states; do
 done < <(find "$src" \( -path "$src/.worktrees" -o -name node_modules -o -name .venv -o -name target -o -name .build \) -prune -o -type d -path "*/.flow-states/$branch" -print0)
 
 before="$(git rev-parse HEAD)"
-git merge -q --squash "$branch" >/dev/null
-if "$ROOT/bin/commit" ${push[@]+"${push[@]}"} main "$msgfile"; then
+if [ "$interrupted" -eq 0 ] && git merge -q --squash "$branch" >/dev/null && [ "$interrupted" -eq 0 ] &&
+  "$ROOT/bin/commit" ${push[@]+"${push[@]}"} main "$msgfile"; then
   exit 0
 fi
 git reset -q --hard "$before"
 restore_passes
+if [ "$interrupted" -eq 1 ]; then
+  echo "bin/merge: interrupted; $branch did not land and main is back where it was" >&2
+  exit 130
+fi
 echo "bin/merge: $branch did not land; main is back where it was" >&2
 exit 1

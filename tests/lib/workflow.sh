@@ -84,6 +84,23 @@ test_start() {
   expect_ok "$wt/bin/dependencies" --python
   [ -d "$wt/python/.venv" ] && [ ! -L "$wt/python/.venv" ] || die "bin/dependencies kept the link to main's .venv"
   [ -d "$repo/python/.venv" ] && [ ! -L "$repo/python/.venv" ] || die "the worktree's bin/dependencies changed main's .venv"
+
+  mkdir -p "$WORK/no-clone"
+  printf '%s\n' '#!/usr/bin/env bash' "if [ \"\$1\" = -cR ]; then /bin/cp -R \"\$2\" \"\$3\"; exit 1; fi" \
+    "exec /bin/cp \"\$@\"" >"$WORK/no-clone/cp"
+  chmod +x "$WORK/no-clone/cp"
+  expect_ok env PATH="$WORK/no-clone:$PATH" "$repo/bin/start" copied
+  [ ! -e "$repo/.worktrees/copied/web/node_modules/node_modules" ] || die "bin/start nested node_modules in its fallback copy"
+  assert_eq "$(cat "$repo/.worktrees/copied/web/node_modules/pkg/index.js")" "module.exports = 1;" "the fallback copy of node_modules"
+  [ -f "$repo/.worktrees/copied/ios/.build/checkouts/dep/Package.swift" ] || die "bin/start's fallback copy lost the Swift checkouts"
+  [ ! -e "$repo/.worktrees/copied/ios/.build/checkouts/checkouts" ] || die "bin/start nested the Swift checkouts in its fallback copy"
+  printf 'secret\n' >"$repo/web/node_modules/pkg/locked.js"
+  chmod 000 "$repo/web/node_modules/pkg/locked.js"
+  run_log "$repo/bin/start" unreadable
+  chmod 644 "$repo/web/node_modules/pkg/locked.js"
+  assert_rc 1 "bin/start with a node_modules file it cannot read"
+  grep -qF "could not copy ./web/node_modules into .worktrees/unreadable; branch unreadable and its worktree exist without it" \
+    "${LAST_LOG}" || die "bin/start did not name the worktree its failed copy left half-made"
 }
 
 minted() {
@@ -184,6 +201,27 @@ test_merge() {
   [ -z "$(git -C "$repo" status --porcelain)" ] || die "a refused push left the root dirty"
   assert_eq "$(cat "$repo/.flow-states/main/root-suite-sentinel")" "suite pass" "main's suite pass after a refused push"
   rm "$origin/hooks/pre-receive"
+
+  mkdir -p "$repo/checks"
+  printf '%s\n' '#!/usr/bin/env bash' "touch \"$WORK/merge-hung\"" 'sleep 30' >"$repo/checks/hang"
+  chmod +x "$repo/checks/hang"
+  printf 'checks/hang\n' >>"$repo/.git/info/exclude"
+  perl -e 'setpgrp(0, 0); exec @ARGV' "$repo/bin/merge" feature "$(minted 'Land a feature cut short')" \
+    >"$WORK/merge-cut.log" 2>&1 &
+  local cut="$!" tries=0
+  until [ -e "$WORK/merge-hung" ]; do
+    tries=$((tries + 1))
+    [ "$tries" -le 300 ] || die "bin/merge never reached bin/ci"
+    sleep 0.1
+  done
+  kill -TERM -- "-$cut"
+  wait "$cut" || true
+  grep -q "interrupted; feature did not land and main is back where it was" "$WORK/merge-cut.log" ||
+    die "an interrupted bin/merge did not say it was undone"
+  assert_eq "$(git -C "$repo" rev-parse HEAD)" "$base" "an interrupted merge's main"
+  [ -z "$(git -C "$repo" status --porcelain)" ] || die "an interrupted merge left the squash staged"
+  assert_eq "$(cat "$repo/.flow-states/main/root-suite-sentinel")" "suite pass" "main's suite pass after an interrupted merge"
+  rm "$repo/checks/hang"
 
   git -C "$repo" switch -q -c rootwork
   printf '\nRoot work.\n' >>"$repo/notes.md"
