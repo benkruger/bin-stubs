@@ -30,6 +30,10 @@ plant_bad_rules() {
   printf '# Auth\n\nAuth.\n' >"$rules/web/auth.md"
   printf '# Linked\n\nA rule kept outside the rules folder.\n' >"$1/shared-rule.md"
   ln -s ../../shared-rule.md "$rules/linked.md"
+  mkdir -p "$1/app/.claude/rules" "$1/lib/.claude/rules"
+  printf '# Nested\n\nThis rule %s apply; see \x60peer.md\x60 and \x60absent.md\x60.\n' "used to" \
+    >"$1/app/.claude/rules/nested.md"
+  printf '# Peer\n\nA peer rule.\n' >"$1/lib/.claude/rules/peer.md"
 }
 
 check_bad_rules() {
@@ -41,7 +45,12 @@ check_bad_rules() {
     "linked.md: links to a file outside every .claude/rules folder, which bin/commit never reviews or stamps"; do
     grep -qxF "guards: .claude/rules/$msg" "${LAST_LOG}" || missed+=" [$msg]"
   done
+  for msg in "app/.claude/rules/nested.md: backward-facing wording" "app/.claude/rules/nested.md: no audit stamp" \
+    "app/.claude/rules/nested.md: cites missing absent.md" "lib/.claude/rules/peer.md: no audit stamp"; do
+    grep -qF "guards: $msg" "${LAST_LOG}" || missed+=" [$msg]"
+  done
   [ -z "$missed" ] || die "a rule's shape was not checked:$missed"
+  ! grep -qF "nested.md: cites missing peer.md" "${LAST_LOG}" || die "a rule citing a rule in another rules folder was failed"
   ! grep -qE "narrow\.md(:[0-9]+)?: [0-9]+ (characters|lines)" "${LAST_LOG}" || die "a rule's cap counted bytes, not characters"
   ! grep -qF "cites missing .claude/rules/cite.md" "${LAST_LOG}" || die "a rule citing a path that exists was failed"
   ! grep -qF "linked.md: no audit stamp" "${LAST_LOG}" || die "a rule linked outside the rules folders was asked for a stamp"

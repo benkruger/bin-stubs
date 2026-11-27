@@ -31,11 +31,11 @@ it governs; every new or edited rule is reviewed and stamped.
   `tests/guards` fails `BACKWARD_FACING` wording, either cap and a line
   over 80 characters, and the review refuses the rest.
   Trigger: any new or edited rule.
-- Every rule edit lands through `bin/commit`: a separate Claude session
-  reviews the edited rules against this file, and a file that passed
-  before only on its changed lines; Claude fixes only flagged files for at
-  most `MAX_FIX_ROUNDS` rounds, and the commit is refused while a finding
-  stands; a passing review stamps each file with `bin/stamp-rules`, and
-  `tests/guards` fails a rule whose stamp does not match its body.
-  Trigger: any change to a file under `.claude/rules/`.
-<!-- audited: 74179344ae60 -->
+- Every rule edit lands through `bin/commit`, which refuses a rule over a cap
+  above; a separate Claude session reviews edited rules against this file, and
+  a file that passed before only on its changed lines; Claude fixes only
+  flagged files for at most `MAX_FIX_ROUNDS` rounds, a fix over a cap is
+  dropped, and the commit is refused while a finding stands; a passing review
+  stamps each file with `bin/stamp-rules`; `tests/guards` fails a rule whose
+  stamp does not match its body. Trigger: any change under `.claude/rules/`.
+<!-- audited: 094df7d28f1d -->

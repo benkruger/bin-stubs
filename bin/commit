@@ -140,15 +140,26 @@ guard_cap() {
 }
 
 over_bounds() {
-  RULE_LINES="$MAX_RULE_LINES" RULE_CHARS="$MAX_RULE_CHARS" perl -MEncode=decode -e '
+  RULE_LINES="$MAX_RULE_LINES" RULE_CHARS="$MAX_RULE_CHARS" RULE_LINE_CHARS="$MAX_RULE_LINE_CHARS" \
+    perl -MEncode=decode -e '
     local $/;
     my $body = <>;
     $body = "" unless defined $body;
     $body =~ s/\n<!-- audited: [0-9a-f]{12} -->\s*\z/\n/;
     $body =~ s/\s*\z/\n/;
     my $lines = ($body =~ tr/\n//);
-    my $chars = length decode("UTF-8", $body);
-    exit(($lines > $ENV{RULE_LINES} || $chars > $ENV{RULE_CHARS}) ? 0 : 1);
+    my $text = decode("UTF-8", $body);
+    my @over;
+    push @over, "$lines lines (cap $ENV{RULE_LINES})" if $lines > $ENV{RULE_LINES};
+    push @over, length($text) . " characters (cap $ENV{RULE_CHARS})" if length($text) > $ENV{RULE_CHARS};
+    my $n = 0;
+    for my $line (split /\n/, $text) {
+      $n++;
+      next if length($line) <= $ENV{RULE_LINE_CHARS};
+      push @over, "line $n: " . length($line) . " characters (cap $ENV{RULE_LINE_CHARS})";
+    }
+    print join("; ", @over);
+    exit(@over ? 0 : 1);
   ' "$1"
 }
 
@@ -417,8 +428,7 @@ fix_files() {
     snap="$WORK/snapshot.$i"
     i=$((i + 1))
     [ -f "$snap" ] && [ -f "$f" ] || continue
-    over_bounds "$snap" && continue
-    if over_bounds "$f"; then
+    if over_bounds "$f" >/dev/null; then
       cp "$snap" "$f"
     fi
   done
@@ -492,7 +502,7 @@ read_files() {
 }
 
 review_rules() {
-  local files=() list findings rechecked f round=0 log stopped
+  local files=() list findings rechecked f round=0 log stopped over
   [ -x bin/stamp-rules ] || return 0
   if ! list="$(rule_edits)"; then
     printf '%s' "rule audit: could not read the working tree's rule edits" >"$WORK/review"
@@ -504,10 +514,17 @@ review_rules() {
     printf '%s' "rule audit: claude is not installed, and an edited rule needs its review" >"$WORK/review"
     return 1
   fi
-  if ! MAX_RULE_LINES="$(guard_cap MAX_RULE_LINES)" || ! MAX_RULE_CHARS="$(guard_cap MAX_RULE_CHARS)"; then
-    printf '%s' "rule audit: tests/guards sets no MAX_RULE_LINES or MAX_RULE_CHARS" >"$WORK/review"
+  if ! MAX_RULE_LINES="$(guard_cap MAX_RULE_LINES)" || ! MAX_RULE_CHARS="$(guard_cap MAX_RULE_CHARS)" ||
+    ! MAX_RULE_LINE_CHARS="$(guard_cap MAX_RULE_LINE_CHARS)"; then
+    printf '%s' "rule audit: tests/guards sets no MAX_RULE_LINES, MAX_RULE_CHARS or MAX_RULE_LINE_CHARS" >"$WORK/review"
     return 1
   fi
+  for f in "${files[@]}"; do
+    if over="$(over_bounds "$f")"; then
+      printf 'rule audit: %s is over a cap: %s' "$f" "$over" >"$WORK/review"
+      return 1
+    fi
+  done
   log="$PWD/.flow-states/$branch/commit-review/$(date +%Y%m%dT%H%M%S)"
   mkdir -p "$log"
   audit_prompt "${files[@]}" >"$WORK/audit-prompt"

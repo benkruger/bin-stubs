@@ -5,7 +5,7 @@ TOOLS=" bun bunx biome tsc eslint prettier vitest jest c8 ruff pytest mypy ruboc
 RUNNERS=" npx pnpm yarn npm bundle uv uvx xcrun "
 RUNNER_VALUE_OPTS=" -p --package --with --from --python --project --directory --sdk -sdk --toolchain "
 SHELLS=" sh bash zsh dash "
-WRAPPERS=" env time command exec nohup nice builtin timeout stdbuf xargs "
+WRAPPERS=" env time command exec nohup nice builtin timeout stdbuf xargs arch caffeinate sudo script "
 WRAPPER_VALUE_OPTS=" -n -u -S -a -s -k --signal --kill-after -I -P -L -d -E "
 KEYWORDS=" if then elif else do while until { ! "
 PYTHONS=" python python3 "
@@ -60,8 +60,9 @@ segments() {
 skip_assignments() {
   while [ "$i" -lt "${#words[@]}" ]; do
     if [[ "${words[$i]}" == [A-Za-z_]*=* ]]; then
-      case "${words[$i]}" in
-        CI=* | FLOW_CHECKED_APP=*) blocked="check-skip" ;;
+      name="${words[$i]%%=*}"
+      case "${name%+}" in
+        CI | FLOW_CHECKED_APP) blocked="check-skip" ;;
       esac
       i=$((i + 1))
     elif [[ "${words[$i]}" =~ $REDIRECT ]]; then
@@ -109,6 +110,21 @@ skip_options() {
   done
 }
 
+script_command() {
+  while [ "$i" -lt "${#words[@]}" ] && [[ "${words[$i]}" == -* ]]; do
+    case "${words[$i]}" in
+      -c | --command)
+        check_text "${words[*]:$((i + 1))}"
+        i="${#words[@]}"
+        return 0
+        ;;
+      -t | -T | -I | -O | -B | -E | -m) i=$((i + 2)) ;;
+      *) i=$((i + 1)) ;;
+    esac
+  done
+  i=$((i + 1))
+}
+
 skip_wrappers() {
   local wrapper
   while [ "$i" -lt "${#words[@]}" ]; do
@@ -133,11 +149,15 @@ skip_wrappers() {
     fi
     [[ "$WRAPPERS" == *" $wrapper "* ]] || return 0
     i=$((i + 1))
-    if [ "$wrapper" = env ]; then
-      skip_env_options
-    else
-      skip_options "$WRAPPER_VALUE_OPTS"
-    fi
+    case "$wrapper" in
+      env) skip_env_options ;;
+      arch) skip_options " -arch -d -e " ;;
+      caffeinate) skip_options " -t -w " ;;
+      sudo) skip_options " -u -g -C -D -h -p -r -t -T -U " ;;
+      script) script_command ;;
+      *) skip_options "$WRAPPER_VALUE_OPTS" ;;
+    esac
+    [ -z "$blocked" ] || return 0
     if [ "$wrapper" = timeout ]; then
       i=$((i + 1))
     fi
@@ -158,6 +178,34 @@ git_commits() {
       [ "$w" = "commit" ]
       return
     fi
+  done
+  return 1
+}
+
+git_force_pushes() {
+  local j="$1" w cluster
+  while [ "$j" -lt "${#words[@]}" ]; do
+    w="${words[$j]}"
+    if [[ "$GIT_OPTS_WITH_ARG" == *" $w "* ]]; then
+      j=$((j + 2))
+    elif [[ "$w" == -* ]]; then
+      j=$((j + 1))
+    else
+      break
+    fi
+  done
+  [ "${words[$j]:-}" = push ] || return 1
+  for w in "${words[@]:$((j + 1))}"; do
+    case "$w" in
+      --) return 1 ;;
+      --force* | +*) return 0 ;;
+      --*) ;;
+      -*)
+        cluster="${w#-}"
+        cluster="${cluster%%o*}"
+        [[ "$cluster" != *f* ]] || return 0
+        ;;
+    esac
   done
   return 1
 }
@@ -201,7 +249,7 @@ find_execs() {
 }
 
 check_segment() {
-  local segment="$1" words=() i=0 k word n
+  local segment="$1" words=() i=0 k word n name
   read -r -a words <<<"$segment" || true
   [ "${#words[@]}" -gt 0 ] || return 0
   for k in "${!words[@]}"; do
@@ -252,6 +300,10 @@ check_segment() {
   fi
   if [ "$word" = "git" ] && git_commits $((i + 1)); then
     blocked="commit"
+    return 0
+  fi
+  if [ "$word" = "git" ] && git_force_pushes $((i + 1)); then
+    blocked="force-push"
     return 0
   fi
   if [ "$word" = "stamp-rules" ]; then
@@ -306,6 +358,10 @@ if [ "$blocked" = "climb" ]; then
 fi
 if [ "$blocked" = "stamp-rules" ]; then
   echo "Blocked: only bin/commit stamps rules, after its review passes; commit the rule with bin/commit." >&2
+  exit 2
+fi
+if [ "$blocked" = "force-push" ]; then
+  echo "Blocked: a force push rewrites history others may have; push without forcing." >&2
   exit 2
 fi
 if [ "$blocked" = "commit" ]; then

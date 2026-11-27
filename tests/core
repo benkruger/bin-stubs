@@ -259,6 +259,20 @@ EOF
   assert_rc 2 "bin/query with a psql backslash command"
   grep -q "takes SQL, not a psql backslash command" "${LAST_LOG}" || die "bin/query ran a psql backslash command"
   [ ! -s "$log" ] || die "bin/query handed a backslash command to psql"
+  for want in "BEGIN READ WRITE; SELECT 1" "START TRANSACTION READ WRITE" "SET TRANSACTION READ WRITE" \
+    "select 1; select 2" "select '' as x; commit" "insert into t values (1)" "/* x; */ begin"; do
+    run_log env QUERY_WRITES=f PATH="$stubs:$PATH" STUB_LOG="$log" "$REPO/bin/query" "$want"
+    assert_rc 2 "bin/query with: $want"
+    grep -q "takes one statement that reads" "${LAST_LOG}" || die "bin/query ran: $want"
+    [ ! -s "$log" ] || die "bin/query handed psql: $want"
+  done
+  for want in "select ';' as x;" "with t as (select 1) select * from t" "(select 1)" "select \$q\$a;b\$q\$" \
+    "-- note"$'\n'"select 1" "select \"a;b\" from t"; do
+    : >"$log"
+    run_log env QUERY_WRITES=f PATH="$stubs:$PATH" STUB_LOG="$log" "$REPO/bin/query" "$want"
+    assert_rc 0 "bin/query with: $want"
+  done
+  : >"$log"
   run_log env QUERY_WRITES=t PATH="$stubs:$PATH" STUB_LOG="$log" "$REPO/bin/query" "select 1"
   assert_rc 1 "bin/query as a role that can write"
   grep -q "set PGUSER to a role that can only read" "${LAST_LOG}" || die "bin/query ran as a role that can write"
@@ -308,7 +322,10 @@ test_hooks() {
     "2>&1 cargo test" "&>/dev/null cargo test" "</dev/null cargo test" "env -S \"cargo test\"" \
     "env -S'cargo test'" "env --split-string='cargo test'" "bash -c -- 'cargo test'" \
     "node node_modules/.bin/tsc" "node --require ./x.js node_modules/vitest/vitest.mjs run" \
-    "find . -name x -exec cargo test \\;" "find . -execdir cargo test {} +"; do
+    "find . -name x -exec cargo test \\;" "find . -execdir cargo test {} +" "arch -arm64 cargo test" \
+    "arch -arch arm64 cargo test" "caffeinate -i cargo test" "caffeinate -t 5 cargo test" "sudo cargo test" \
+    "sudo -u me cargo test" "script -q /dev/null cargo test" "script -c 'cargo test' /dev/null" \
+    "ls | xargs -t cargo test"; do
     hook_on "$cmd"
     assert_rc 2 "require-bin should block: $cmd"
     grep -q "Blocked: call the bin/ script" "${LAST_LOG}" || die "no block message for: $cmd"
@@ -329,10 +346,17 @@ test_hooks() {
     grep -q "Blocked: only bin/commit stamps rules" "${LAST_LOG}" || die "no stamp block message for: $cmd"
   done
   for cmd in "CI=1 bin/ci" "env FLOW_CHECKED_APP=x bin/lint" "export CI=1" "declare -x CI=1; bin/ci" \
-    "typeset -x FLOW_CHECKED_APP=x; bin/lint" "local CI=1"; do
+    "typeset -x FLOW_CHECKED_APP=x; bin/lint" "local CI=1" "CI+=1 bin/ci" "FLOW_CHECKED_APP+=web bin/lint" \
+    "export CI+=1" "declare -x CI+=1; bin/ci" "typeset -x FLOW_CHECKED_APP+=/repo/web; bin/lint"; do
     hook_on "$cmd"
     assert_rc 2 "require-bin should block: $cmd"
     grep -q "Blocked: CI and FLOW_CHECKED_APP" "${LAST_LOG}" || die "no check-skip block message for: $cmd"
+  done
+  for cmd in "git push -fu origin main" "git push -uf origin main" "git -C . push -uf origin main" \
+    "git push --force-with-lease origin main" "git push origin +main" "cd app && git push -f"; do
+    hook_on "$cmd"
+    assert_rc 2 "require-bin should block: $cmd"
+    grep -q "Blocked: a force push" "${LAST_LOG}" || die "no force-push block message for: $cmd"
   done
   for cmd in "bin/../../../../usr/bin/git reset --hard" "./bin/_python/../../x"; do
     hook_on "$cmd"
@@ -343,7 +367,9 @@ test_hooks() {
     "bundle exec rails runner 1" "npm test" "ls -la" "git log --grep commit" \
     "bin/commit main /tmp/flow-commit-msg.abc123" "grep -n \"a\|bun test\" README.md" "echo 'cargo test'" \
     "command -v cargo" "ls >/dev/null 2>&1" "bin/ci 2>&1 | tail -n 5" "node --version" "eval echo hi" \
-    "find . -name '*.md' -exec grep -l x {} +" "env -S \"ls -la\""; do
+    "find . -name '*.md' -exec grep -l x {} +" "env -S \"ls -la\"" "caffeinate -i bin/ci" \
+    "script -q /dev/null bin/ci" "sudo -u me bin/ci" "git push -u origin main" "git push -o ci.skip origin main" \
+    "git push -oforce=x origin main"; do
     hook_on "$cmd"
     assert_rc 0 "require-bin should allow: $cmd"
   done

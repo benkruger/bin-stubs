@@ -15,6 +15,7 @@ case "$prompt" in
         good) text="$(perl -pe 's/BAD/GOOD/' "$f")" ;;
         arrow) text="$(perl -pe 's/BAD rule\./GOOD rule →./' "$f")" ;;
         grow) text="$(cat "$f" && for _ in $(seq 1 50); do echo "- more"; done)" ;;
+        long) text="$(cat "$f" && printf -- '- %s\n' "$(printf 'wide%.0s' $(seq 1 30))")" ;;
         outside)
           f=notes.md
           text="replaced"
@@ -312,6 +313,31 @@ test_commit_fix() {
 
   commit_case
   printf '# Probe\n\nA BAD rule.\n' >"$rule"
+  commit FAKE_AUDIT="$finding" FAKE_FIX=long -- main "$msg"
+  assert_rc 0 "a fix with a line over the line cap"
+  grep -q "widewide" "$rule" && die "a fix with a line over the line cap was kept"
+
+  commit_case
+  {
+    printf '# Probe\n\n'
+    for i in $(seq 1 40); do printf -- '- Line %s.\n' "$i"; done
+  } >"$rule"
+  commit FAKE_AUDIT="$finding" FAKE_FIX=good -- main "$msg"
+  assert_rc 1 "a rule over the line count cap"
+  assert_eq "$(commit_json .detail)" "rule audit: .claude/rules/probe.md is over a cap: 42 lines (cap 40)" \
+    "a rule over the line count cap"
+  assert_eq "$(sessions)" "" "the sessions for a rule over a cap"
+  tail -n 1 "$rule" | grep -qE '^<!-- audited: ' && die "a rule over a cap was stamped"
+
+  commit_case
+  printf '# Probe\n\n- %s\n' "$(printf 'wide%.0s' $(seq 1 30))" >"$rule"
+  commit FAKE_AUDIT="$finding" FAKE_FIX=good -- main "$msg"
+  assert_rc 1 "a rule with a line over the line cap"
+  assert_eq "$(commit_json .detail)" "rule audit: .claude/rules/probe.md is over a cap: line 3: 122 characters (cap 80)" \
+    "a rule with a line over the line cap"
+
+  commit_case
+  printf '# Probe\n\nA BAD rule.\n' >"$rule"
   sed 's/^MAX_RULE_CHARS=8000$/MAX_RULE_CHARS=21/' "$repo/tests/guards" >"$WORK/guards.capped"
   cat "$WORK/guards.capped" >"$repo/tests/guards"
   commit FAKE_AUDIT="$finding" FAKE_FIX=good -- main "$msg"
@@ -332,7 +358,7 @@ test_commit_fix() {
   cat "$WORK/guards.uncapped" >"$repo/tests/guards"
   commit FAKE_AUDIT="$finding" FAKE_FIX=good -- main "$msg"
   assert_rc 1 "a rule review with no cap in tests/guards"
-  assert_eq "$(commit_json .detail)" "rule audit: tests/guards sets no MAX_RULE_LINES or MAX_RULE_CHARS" \
+  assert_eq "$(commit_json .detail)" "rule audit: tests/guards sets no MAX_RULE_LINES, MAX_RULE_CHARS or MAX_RULE_LINE_CHARS" \
     "a rule review with no cap in tests/guards"
 }
 

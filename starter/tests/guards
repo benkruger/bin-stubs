@@ -1273,6 +1273,7 @@ sub check_markdown {
   return @lines;
 }
 
+my %dirs = map { m{\A(.*)/} ? ($1 => 1) : () } @ARGV;
 for my $path (@ARGV) {
   my $text = read_text($path);
   my @lines = check_markdown($path, $text, $ENV{RULE_LINES}, $ENV{RULE_CHARS});
@@ -1299,7 +1300,7 @@ for my $path (@ARGV) {
   for my $line (@lines) {
     while ($line =~ /`([A-Za-z0-9\/._-]+\.md)`/g) {
       my $ref = $1;
-      my @files = index($ref, '/') >= 0 ? ($ref) : ("$dir/$ref", ".claude/rules/$ref");
+      my @files = index($ref, '/') >= 0 ? ($ref) : ("$dir/$ref", ".claude/rules/$ref", map { "$_/$ref" } sort keys %dirs);
       print "$path: cites missing $ref\n"
         unless (grep { -f } @files) || $ref eq 'CLAUDE.md' || $ref eq 'README.md';
     }
@@ -1326,6 +1327,12 @@ if [ -d .claude/rules ]; then
 fi
 
 [ "${#rules[@]}" -gt 0 ] || fail ".claude/rules holds no rules"
+for path in "${files[@]}" ${links[@]+"${links[@]}"}; do
+  case "$path" in
+    .claude/rules/*) ;;
+    */.claude/rules/*.md) rules+=("$path") ;;
+  esac
+done
 
 if [ "${#rules[@]}" -gt 0 ]; then
   outside="$(perl -MCwd=abs_path -e '

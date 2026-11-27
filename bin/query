@@ -8,6 +8,40 @@ if [ "${1:0:1}" = "\\" ]; then
   echo "bin/query: takes SQL, not a psql backslash command" >&2
   exit 2
 fi
+if ! perl -e '
+  my ($sql, $code, $i) = ($ARGV[0], "", 0);
+  my $n = length $sql;
+  while ($i < $n) {
+    my $c = substr($sql, $i, 1);
+    my $two = substr($sql, $i, 2);
+    my $end;
+    if ($two eq "--") {
+      $end = index($sql, "\n", $i);
+      $i = $end < 0 ? $n : $end;
+    } elsif ($two eq "/*") {
+      $end = index($sql, "*/", $i + 2);
+      $i = $end < 0 ? $n : $end + 2;
+    } elsif ($c eq "\x27" || $c eq "\"") {
+      $end = index($sql, $c, $i + 1);
+      $i = $end < 0 ? $n : $end + 1;
+    } elsif (substr($sql, $i) =~ /\A(\$[A-Za-z_]*\$)/) {
+      my $tag = $1;
+      $end = index($sql, $tag, $i + length $tag);
+      $i = $end < 0 ? $n : $end + length $tag;
+    } else {
+      $code .= $c;
+      $i++;
+      next;
+    }
+    $code .= " \x01 ";
+  }
+  $code =~ s/;\s*\z//;
+  exit 1 if index($code, ";") >= 0;
+  exit($code =~ /\A[\s(\x01]*(select|with|explain|show|table|values)\b/i ? 0 : 1);
+' -- "$1"; then
+  echo "bin/query: takes one statement that reads: SELECT, WITH, EXPLAIN, SHOW, TABLE or VALUES" >&2
+  exit 2
+fi
 PGOPTIONS="${PGOPTIONS:+$PGOPTIONS }-c default_transaction_read_only=on"
 export PGOPTIONS
 writes="SELECT EXISTS (SELECT FROM pg_roles m WHERE pg_has_role(m.oid, 'MEMBER') AND (
