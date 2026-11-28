@@ -104,9 +104,12 @@ root_section() {
     typescript | javascript)
       mkdir -p "$app/web/tests"
       printf 'throw new Error("a nested app test ran in the root app");\n' >"$app/web/tests/fail.test.$ext"
+      printf '.worktrees/\n' >>"$app/.gitignore"
+      mkdir -p "$app/.worktrees/feat/tests"
+      printf 'throw new Error("a worktree test ran in the root app");\n' >"$app/.worktrees/feat/tests/fail.test.$ext"
       expect_ok leaf "$app" "$lang" test --all
       grep -qxF "bin/test: coverage bar held on 1 source(s)" "${LAST_LOG}" || die "a root $lang app's test did not hold its own source"
-      rm -r "$app/web/tests"
+      rm -r "$app/web/tests" "$app/.worktrees"
       ;;
   esac
   printf '%s\n' "$lint_body" >"$app/$own/lint.$ext"

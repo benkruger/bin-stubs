@@ -12,7 +12,8 @@ log="$(mktemp "${TMPDIR:-/tmp}/bin-rails-qa.XXXXXX")"
 trap 'rm -f "$log"' EXIT
 rc=0
 bundle exec rails test:system "$@" 2>&1 | tee "$log" || rc=$?
-if [ "$rc" -ne 0 ] && [ "$rc" -ne 2 ]; then
+if [ "$rc" -ne 0 ] && { [ "$rc" -ne 2 ] ||
+  ! awk '$2 == "runs," { line = $0 } END { exit !(line ~ / 0 failures, 0 errors,/) }' "$log"; }; then
   echo "bin/qa: a system test failed (above)" >&2
   exit "$rc"
 fi

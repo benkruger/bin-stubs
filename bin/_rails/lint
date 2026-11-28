@@ -22,6 +22,10 @@ for arg in "$@"; do
       all=1
       layout=(--except Layout)
       ;;
+    -*)
+      echo "bin/lint: unknown argument: $arg" >&2
+      exit 2
+      ;;
     *) paths+=("$arg") ;;
   esac
 done
@@ -29,7 +33,7 @@ done
 rb_files=()
 if [ "$all" -eq 0 ]; then
   if [ "${#paths[@]}" -gt 0 ]; then
-    listing="$(printf '%s\n' "${paths[@]}")"
+    listing="$(named_files "${paths[@]}")"
   else
     listing="$("$HERE/changed" --files)"
   fi

@@ -58,11 +58,12 @@ swift_files() {
       [ -z "$path" ] || set -- "$@" "$path"
     done <<<"$listing"
   fi
+  listing="$(named_files "$@")" || return 1
   root_app="$(at_repo_root)"
-  for path in "$@"; do
+  while IFS= read -r path; do
     path="${path#./}"
     case "$path" in
-      *.swift) app_file "$path" "$root_app" && SWIFT_FILES+=("$path") ;;
+      *.swift) ! app_file "$path" "$root_app" || SWIFT_FILES+=("$path") ;;
     esac
-  done
+  done <<<"$listing"
 }

@@ -15,7 +15,11 @@ needs_twin() {
 
 is_test() {
   case "$1" in
-    tests/test_*.py | tests/*/test_*.py | tests/*_test.py) return 0 ;;
+    tests/*) ;;
+    *) return 1 ;;
+  esac
+  case "${1##*/}" in
+    test_*.py | *_test.py) return 0 ;;
     *) return 1 ;;
   esac
 }

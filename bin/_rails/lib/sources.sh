@@ -64,7 +64,12 @@ source_for_test() {
   local rel="${1#test/}"
   rel="${rel%_test.rb}.rb"
   case "$rel" in
-    lib/*) printf '%s\n' "$rel" ;;
+    lib/*)
+      if [ ! -f "$rel" ] && [ -f "app/$rel" ]; then
+        rel="app/$rel"
+      fi
+      printf '%s\n' "$rel"
+      ;;
     *) printf 'app/%s\n' "$rel" ;;
   esac
 }

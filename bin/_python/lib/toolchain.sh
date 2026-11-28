@@ -3,7 +3,7 @@
 export UV_PYTHON_DOWNLOADS=never
 
 toolchain_check() {
-  local root="$1" pinned python active
+  local root="$1" pinned python active version
   [ "${FLOW_CHECKED_APP:-}" != "$root" ] || return 0
   if [ ! -f "$root/.python-version" ]; then
     echo "toolchain: .python-version is missing; pin Python with: uv python pin <version>" >&2
@@ -14,10 +14,12 @@ toolchain_check() {
     echo "toolchain: no installed Python matches .python-version ($pinned); install it with: uv python install $pinned" >&2
     return 1
   fi
+  [[ "$pinned" =~ ^[^0-9\<\>=!~,]*([0-9]+(\.[0-9]+)*) ]] || return 0
+  version="${BASH_REMATCH[1]}"
   active="$("$python" --version)"
   active="${active#Python }"
   case "$active" in
-    "$pinned" | "$pinned".*) ;;
+    "$version" | "$version".*) ;;
     *)
       echo "toolchain: Python $active is active but .python-version pins $pinned" >&2
       return 1

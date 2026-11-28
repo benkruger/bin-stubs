@@ -94,8 +94,9 @@ resultset=coverage/.resultset.json
 rm -f "$resultset"
 echo "  → rails test"
 rc=0
-bundle exec rails test "$@" || rc=$?
-if [ "$rc" -ne 0 ] && { [ "$all" -eq 1 ] || [ "$rc" -ne 2 ]; }; then
+bundle exec rails test "$@" | tee "$QUIET_DIR/rails-test.log" || rc=$?
+if [ "$rc" -ne 0 ] && { [ "$all" -eq 1 ] || [ "$rc" -ne 2 ] ||
+  ! awk '$2 == "runs," { line = $0 } END { exit !(line ~ / 0 failures, 0 errors,/) }' "$QUIET_DIR/rails-test.log"; }; then
   exit "$rc"
 fi
 if [ ! -f "$resultset" ]; then

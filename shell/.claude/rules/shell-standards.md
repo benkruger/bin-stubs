@@ -14,7 +14,8 @@ executable `test/run`, is held by shfmt, shellcheck and its own tests.
   Trigger: a change to shell `bin/format` or `bin/lint`.
 - `bin/build` fails a script with a shebang that is not executable, bar
   the sourced helpers `script-standards.md` names, a script `bash -n`
-  cannot parse, and an app with no executable `test/run`.
+  cannot parse, run with `-O extglob` when a `shopt -s` in it names
+  `extglob`, and an app with no executable `test/run`.
   Trigger: a change to shell `bin/build`.
 - `bin/test` runs `test/run` and fails when it does.
   Trigger: a change to shell `bin/test`.
@@ -22,4 +23,4 @@ executable `test/run`, is held by shfmt, shellcheck and its own tests.
   then runs `test/run` whenever anything in the app changed.
   `bin/dependencies` updates nothing and exits 0.
   Trigger: a change to shell `bin/changed` or `bin/dependencies`.
-<!-- audited: e572ad0cd6dd -->
+<!-- audited: f25fa72ee91c -->

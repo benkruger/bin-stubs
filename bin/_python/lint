@@ -14,20 +14,24 @@ paths=()
 for arg in "$@"; do
   case "$arg" in
     --all) all=1 ;;
+    -*)
+      echo "bin/lint: unknown argument: $arg" >&2
+      exit 2
+      ;;
     *) paths+=("$arg") ;;
   esac
 done
 
+# shellcheck source=../lib/apps.sh
+. "$here/../lib/apps.sh"
 if [ "$all" -eq 1 ]; then
   listing="$(git -C "$root" ls-files -z --cached --others --exclude-standard -- . | tr '\0' '\n')"
 elif [ "${#paths[@]}" -gt 0 ]; then
-  listing="$(printf '%s\n' "${paths[@]}")"
+  listing="$(named_files "${paths[@]}")"
 else
   listing="$("$here/changed" --files)"
 fi
 
-# shellcheck source=../lib/apps.sh
-. "$here/../lib/apps.sh"
 root_app=0
 if [ "$(pwd -P)" = "$(git rev-parse --show-toplevel)" ]; then
   root_app=1

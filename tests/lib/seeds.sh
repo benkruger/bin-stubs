@@ -646,6 +646,14 @@ changed_scope() {
   printf '%s\n' "$twin_body" >"$app/$twin"
   git -C "$app" add -- "$half" "$twin"
   git -C "$app" commit -q -m "a source below the bar"
+  if [ "$lang" = rails ]; then
+    printf '%s\n' '# frozen_string_literal: true' '' "require 'test_helper'" '' 'class AddTest < ActiveSupport::TestCase' \
+      "  test 'adds wrong' do" '    assert_equal 2, Half.call(4)' '    assert_equal 5, Add.call(2, 2)' '  end' 'end' \
+      >"$app/$spec"
+    expect_fail leaf "$app" "$lang" test "$spec"
+    grep -q " 1 failures, 0 errors," "${LAST_LOG}" || die "rails bin/test did not run the failing test"
+    cp "$WORK/scope.keep" "$app/$spec"
+  fi
   if [ -n "$more" ]; then
     printf '%s\n' "$more" >>"$app/$spec"
   else
@@ -842,6 +850,14 @@ changed_checks() {
   [ -z "$lint_twin" ] || printf '%s\n' "$lint_twin_body" >"$app/$lint_twin"
   expect_fail leaf "$app" "$lang" changed
   grep -qF "$lint_find" "${LAST_LOG}" || die "$lang changed did not lint a changed file"
+  expect_fail leaf "$app" "$lang" lint "$(dirname "$lint_plant")"
+  grep -qF "$lint_find" "${LAST_LOG}" || die "$lang lint given a folder did not lint the file in it"
+  run_log leaf "$app" "$lang" lint --al
+  assert_rc 2 "$lang lint given an unknown flag"
+  grep -qxF "bin/lint: unknown argument: --al" "${LAST_LOG}" || die "$lang lint took an unknown flag as a path"
+  run_log leaf "$app" "$lang" format --chek
+  assert_rc 2 "$lang format given an unknown flag"
+  grep -qxF "bin/format: unknown argument: --chek" "${LAST_LOG}" || die "$lang format took an unknown flag as a path"
   rm -f "$app/$lint_plant" "$app/${lint_twin:-$lint_plant}"
   case "$lang" in
     rust | ios | shell) ;;
@@ -956,6 +972,31 @@ source_rules() {
       expect_fail leaf "$app" "$lang" ci --force
       grep -qF 'no mirrored test for src/say "hi".js' "${LAST_LOG}" || die "$lang skipped a source whose name git quotes"
       rm "$app/src/say \"hi\".js"
+      cp "$app/package.json" "$WORK/package.keep"
+      jq '.c8 = {"100": true}' "$WORK/package.keep" >"$app/package.json"
+      printf '%s\n' 'export function one() {' '  return 1;' '}' '' 'export function two() {' '  return 2;' '}' \
+        >"$app/src/util.js"
+      printf '%s\n' 'import { one } from "./util.js";' '' 'export function first() {' '  return one();' '}' \
+        >"$app/src/first.js"
+      printf '%s\n' 'import assert from "node:assert/strict";' 'import test from "node:test";' \
+        'import { first } from "../src/first.js";' '' 'test("first", () => {' '  assert.equal(first(), 1);' '});' \
+        >"$app/tests/first.test.js"
+      printf '%s\n' 'import assert from "node:assert/strict";' 'import test from "node:test";' \
+        'import { one, two } from "../src/util.js";' '' 'test("util", () => {' '  assert.equal(one() + two(), 3);' '});' \
+        >"$app/tests/util.test.js"
+      expect_ok leaf "$app" "$lang" test tests/first.test.js
+      grep -qxF "bin/test: coverage bar held on 1 source(s)" "${LAST_LOG}" ||
+        die "$lang bin/test on one test failed on c8's own thresholds for a file it did not name"
+      mv "$WORK/package.keep" "$app/package.json"
+      rm "$app/src/util.js" "$app/src/first.js" "$app/tests/first.test.js" "$app/tests/util.test.js"
+      printf '%s\n' 'export function variant() {' '  return "b";' '}' >"$app/src/ab-test.service.js"
+      printf '%s\n' 'import assert from "node:assert/strict";' 'import test from "node:test";' \
+        'import { variant } from "../src/ab-test.service.js";' '' 'test("variant", () => {' \
+        '  assert.equal(variant(), "b");' '});' >"$app/tests/ab-test.service.test.js"
+      expect_ok leaf "$app" "$lang" test src/ab-test.service.js
+      grep -qxF "bin/test: coverage bar held on 1 source(s)" "${LAST_LOG}" ||
+        die "$lang bin/test held a source c8 left unmeasured because its name holds -test"
+      rm "$app/src/ab-test.service.js" "$app/tests/ab-test.service.test.js"
       printf '%s\n' 'module.exports = {' '  one() {' '    return 1;' '  },' '  two() {' '    return 2;' '  },' '};' \
         >"$app/src/legacy.cjs"
       printf '%s\n' 'import assert from "node:assert/strict";' 'import test from "node:test";' \
@@ -1000,6 +1041,16 @@ source_rules() {
       grep -qxF "bin/test: integration/test_api.py is a pytest file outside tests/, which bin/test never runs" \
         "${LAST_LOG}" || die "$lang passed a test file that never runs"
       rm -r "$app/integration"
+      mkdir -p "$app/tests/test_support"
+      : >"$app/tests/test_support/__init__.py"
+      printf '%s\n' 'def make() -> int:' '    return 1' >"$app/tests/test_support/factories.py"
+      expect_ok leaf "$app" "$lang" test --all
+      rm -r "$app/tests/test_support"
+      printf '%s\n' 'import os' '' '' 'def seven() -> int:' '    return 7' >"$app/src/seven.py"
+      expect_ok leaf "$app" "$lang" format src/seven.py
+      grep -q 'import os' "$app/src/seven.py" && die "$lang format did not apply Ruff's fixes"
+      expect_ok leaf "$app" "$lang" format --check src/seven.py
+      rm "$app/src/seven.py"
       ;;
   esac
 }

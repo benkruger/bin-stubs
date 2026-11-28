@@ -171,7 +171,7 @@ test_open() {
 
 test_qa() {
   say "qa"
-  local repo stubs home log lang playwright
+  local repo stubs home log lang playwright out
   repo="$(new_repo)"
   KEEP="$repo"
   stubs="$repo/.stubs"
@@ -184,6 +184,7 @@ printf 'bundle %s\n' "$*" >>"$STUB_LOG"
 [ "$1" = exec ] || exit 0
 [ -z "${QA_WARN:-}" ] || echo "DEPRECATION WARNING: an old call"
 [ -z "${QA_FAIL:-}" ] || exit 1
+[ -z "${QA_COVERAGE:-}" ] || echo "${QA_SUMMARY:-1 runs, 1 assertions, 0 failures, 0 errors, 0 skips}"
 [ -z "${QA_COVERAGE:-}" ] || exit 2
 EOF
   chmod +x "$stubs/bundle"
@@ -195,8 +196,18 @@ EOF
     cat >"$playwright" <<'EOF'
 #!/usr/bin/env bash
 printf 'playwright %s\n' "$*" >>"$STUB_LOG"
+[ "$1" = test ] || exit 0
+results=test-results
+while [ "$#" -gt 0 ]; do
+  [ "$1" != --output ] || results="$2"
+  [ "$1" != --config ] || cat "$2" >>"$STUB_LOG"
+  shift
+done
+mkdir -p "$results" "${PLAYWRIGHT_HTML_OUTPUT_DIR:-playwright-report}"
+printf '{}\n' >"$results/.last-run.json"
+printf '<html>\n' >"${PLAYWRIGHT_HTML_OUTPUT_DIR:-playwright-report}/index.html"
 [ -z "${QA_WARN:-}" ] || echo "Warning: a slow page"
-[ -z "${QA_FAIL:-}" ] || [ "$1" != test ] || exit 1
+[ -z "${QA_FAIL:-}" ] || exit 1
 EOF
     chmod +x "$playwright"
   done
@@ -211,7 +222,21 @@ EOF
     run_log env CI=1 PATH="$stubs:$PATH" HOME="$home" STUB_LOG="$log" "$repo/bin/qa" "$lang" e2e/home.spec.ts
     assert_rc 0 "$lang bin/qa"
     grep -qx "playwright install chromium" "$log" || die "$lang bin/qa did not install Chromium"
-    grep -qx "playwright test e2e/home.spec.ts" "$log" || die "$lang bin/qa did not run Playwright on the spec"
+    grep -qE "^playwright test --output .+/test-results --config .+/playwright.config.mjs e2e/home.spec.ts$" "$log" ||
+      die "$lang bin/qa did not run Playwright on the spec"
+    grep -qE "^export default \{ testDir: \".+/$lang/e2e\" \};$" "$log" ||
+      die "$lang bin/qa with no Playwright config did not keep Playwright to e2e/"
+    out="$(sed -n 's|^playwright test --output \(.*\)/test-results .*|\1|p' "$log")"
+    [ ! -e "$out" ] || die "$lang bin/qa left its Playwright output in $out after a passing run"
+    [ ! -e "$repo/$lang/test-results" ] && [ ! -e "$repo/$lang/playwright-report" ] ||
+      die "$lang bin/qa left Playwright's output in the app"
+    printf 'export default {};\n' >"$repo/$lang/playwright.config.ts"
+    : >"$log"
+    run_log env CI=1 PATH="$stubs:$PATH" HOME="$home" STUB_LOG="$log" "$repo/bin/qa" "$lang"
+    assert_rc 0 "$lang bin/qa with a Playwright config"
+    grep -qE "^playwright test --output .+/test-results$" "$log" ||
+      die "$lang bin/qa with a Playwright config did not leave Playwright to it"
+    rm "$repo/$lang/playwright.config.ts"
   done
   for lang in typescript javascript; do
     run_log env CI=1 QA_WARN=1 PATH="$stubs:$PATH" HOME="$home" STUB_LOG="$log" "$repo/bin/qa" "$lang"
@@ -219,7 +244,12 @@ EOF
     grep -q "bin/qa: the run printed a warning" "${LAST_LOG}" || die "$lang bin/qa passed a warning"
     run_log env CI=1 QA_FAIL=1 PATH="$stubs:$PATH" HOME="$home" STUB_LOG="$log" "$repo/bin/qa" "$lang"
     assert_rc 1 "$lang bin/qa on a failing end-to-end test"
-    grep -q "bin/qa: an end-to-end test failed" "${LAST_LOG}" || die "$lang bin/qa passed a failing end-to-end test"
+    out="$(sed -n "s|^bin/qa: an end-to-end test failed; Playwright's results and report are in ||p" "${LAST_LOG}")"
+    [ -n "$out" ] && [ -f "$out/playwright-report/index.html" ] && [ -f "$out/test-results/.last-run.json" ] ||
+      die "$lang bin/qa on a failing end-to-end test did not keep Playwright's report and name its folder"
+    rm -r "$out"
+    [ ! -e "$repo/$lang/test-results" ] && [ ! -e "$repo/$lang/playwright-report" ] ||
+      die "$lang bin/qa left Playwright's output in the app"
   done
   rm "$repo/typescript/node_modules/.bin/playwright"
   run_log env CI=1 PATH="$stubs:$PATH" HOME="$home" STUB_LOG="$log" "$repo/bin/qa" typescript
@@ -232,6 +262,10 @@ EOF
   grep -qx "bundle exec rails test:system test/system/home_test.rb" "$log" || die "rails bin/qa did not run the system tests"
   run_log env QA_COVERAGE=1 PATH="$stubs:$PATH" HOME="$home" STUB_LOG="$log" "$repo/bin/qa" rails
   assert_rc 0 "rails bin/qa on system tests that cover less than SimpleCov's minimum"
+  run_log env QA_COVERAGE=1 QA_SUMMARY="2 runs, 2 assertions, 1 failures, 0 errors, 0 skips" PATH="$stubs:$PATH" \
+    HOME="$home" STUB_LOG="$log" "$repo/bin/qa" rails
+  assert_rc 2 "rails bin/qa on a failing system test that also misses SimpleCov's minimum"
+  grep -q "bin/qa: a system test failed" "${LAST_LOG}" || die "rails bin/qa passed a failing test SimpleCov's exit hid"
   run_log env QA_FAIL=1 PATH="$stubs:$PATH" HOME="$home" STUB_LOG="$log" "$repo/bin/qa" rails
   assert_rc 1 "rails bin/qa on a failing system test"
   grep -q "bin/qa: a system test failed" "${LAST_LOG}" || die "rails bin/qa passed a failing system test"
@@ -1082,6 +1116,26 @@ EOF
     . "$REPO/bin/_python/lib/toolchain.sh"
     [ "${UV_PYTHON_DOWNLOADS:-}" = never ]
   ) || die "the Python scripts let uv download a Python"
+  printf '%s\n' '#!/usr/bin/env bash' 'echo "Python 3.13.12"' >"$stubs/python3.13"
+  printf '%s\n' '#!/usr/bin/env bash' "echo \"$stubs/python3.13\"" >"$stubs/uv"
+  chmod +x "$stubs/python3.13" "$stubs/uv"
+  for pin in 3.13 3.13.12 cpython@3.13 3.13t cpython-3.13.12-macos-aarch64-none pypy '>=3.12' 3.12 cpython@3.14; do
+    printf '%s\n' "$pin" >"$app/.python-version"
+    if (
+      # shellcheck source=/dev/null
+      . "$REPO/bin/_python/lib/toolchain.sh"
+      PATH="$stubs:$PATH" toolchain_check "$app"
+    ) >/dev/null 2>&1; then
+      case "$pin" in
+        3.12 | cpython@3.14) die "the Python toolchain check passed Python 3.13.12 for the pin $pin" ;;
+      esac
+    else
+      case "$pin" in
+        3.12 | cpython@3.14) ;;
+        *) die "the Python toolchain check failed the pin $pin, which Python 3.13.12 meets" ;;
+      esac
+    fi
+  done
 }
 
 test_dependencies_once() {
@@ -1144,4 +1198,5 @@ run_all "$WORK/logs" run_test test_settings test_scan test_root_format test_open
   test_hooks test_starter test_bare_guards test_guards_scans test_guards_tools test_guards_markdownlint test_commit test_commit_review test_commit_fix test_commit_rounds test_commit_stops test_commit_gate test_commit_failures test_copies_match test_failed_writes test_changed_empty test_parts \
   test_dispatch test_dispatch_select test_dispatch_paths test_dispatch_path_args test_git_failures test_suite_seal test_unborn test_suite_missing test_root_check test_pins \
   test_shellcheck_cache test_rust_offline test_no_installs test_checked_once test_dependencies_once test_steps test_jobs test_interrupt test_start test_merge test_cleanup test_complete test_ci_time test_root_app test_root_js test_root_shell test_root_changed test_die_fixture \
-  test_app_language test_fingerprint test_changed_ci_timeout
+  test_app_language test_fingerprint test_changed_ci_timeout test_ios_changed_link \
+  test_ios_dependencies_restore

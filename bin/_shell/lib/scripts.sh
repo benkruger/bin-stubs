@@ -20,13 +20,17 @@ shell_listing() {
     case "$arg" in
       --all) all=1 ;;
       --check) ;;
+      -*)
+        echo "bin/${0##*/}: unknown argument: $arg" >&2
+        return 2
+        ;;
       *) paths+=("$arg") ;;
     esac
   done
   if [ "$all" -eq 1 ]; then
     git ls-files -z --cached --others --exclude-standard -- . | tr '\0' '\n'
   elif [ "${#paths[@]}" -gt 0 ]; then
-    printf '%s\n' "${paths[@]}"
+    named_files "${paths[@]}"
   else
     "$(dirname "${BASH_SOURCE[0]}")/../changed" --files
   fi

@@ -93,3 +93,14 @@ app_language() {
     return 1
   fi
 }
+
+named_files() {
+  local path
+  for path in "$@"; do
+    if [ -d "$path" ]; then
+      git ls-files -z --cached --others --exclude-standard -- "$path" | tr '\0' '\n' || return 1
+    else
+      printf '%s\n' "$path"
+    fi
+  done
+}

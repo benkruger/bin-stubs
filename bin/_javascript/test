@@ -129,11 +129,14 @@ else
   done <<<"$listing"
 fi
 
+own_check=()
+[ "$all" -eq 1 ] || own_check=(--check-coverage=false --100=false)
 if [ "${#targets[@]}" -gt 0 ]; then
-  "$root/node_modules/.bin/c8" --reporter=json-summary --reports-dir="$covdir" \
+  "$root/node_modules/.bin/c8" --reporter=json-summary --reports-dir="$covdir" ${own_check[@]+"${own_check[@]}"} \
     --exclude='tests/**' --exclude='e2e/**' --exclude='**/node_modules/**' --exclude='dist/**' \
-    --exclude='public/**' --exclude='coverage/**' --exclude='**/*.test.*' --exclude='**/*.spec.*' \
-    --exclude='**/test-*.*' --exclude='**/*_test.*' --exclude='**/*-test.*' \
+    --exclude='public/**' --exclude='coverage/**' --exclude='**/*.test.{js,mjs,cjs,jsx}' \
+    --exclude='**/*.spec.{js,mjs,cjs,jsx}' --exclude='**/test-*.{js,mjs,cjs,jsx}' \
+    --exclude='**/*_test.{js,mjs,cjs,jsx}' --exclude='**/*-test.{js,mjs,cjs,jsx}' \
     npm run test -- ${options[@]+"${options[@]}"} "${targets[@]}" || rc=$?
 fi
 covjson="$covdir/coverage-summary.json"

@@ -26,9 +26,9 @@ Biome and the app's own tests under c8 hold the JavaScript app at full strength.
 - `bin/build` runs the package's `build` script, if any, then `node --check`
   on every `.js`, `.mjs` and `.cjs` file `bin/lint` does not skip, and fails
   when either fails.
-- `.nvmrc` pins Node and `packageManager` pins npm, which installs from
-  `package-lock.json`. Every `bin/` script disables Node's compile cache and,
-  outside CI, activates Node through nvm and fails unless both pins are active.
+- `.nvmrc` pins Node; `packageManager` pins npm, installing from the lockfile.
+  Every `bin/` script that runs Node disables its compile cache and, outside
+  CI, activates Node via nvm and fails unless both pins are active.
 - `npm audit` finds no moderate or worse advisory, or `bin/ci` fails; a
   vulnerable transitive package lifts through `package.json` `overrides`.
 - `bin/dependencies` updates packages as `packages.md` states, then rewrites
@@ -38,4 +38,4 @@ Biome and the app's own tests under c8 hold the JavaScript app at full strength.
   matching `npm warn`, `DeprecationWarning` or a line starting `Warning:`
   and a space, any case; a failed test fails `bin/qa`.
 - Trigger: any change to a JavaScript `bin/` script.
-<!-- audited: f531f22c5a2a -->
+<!-- audited: 2535d5091448 -->

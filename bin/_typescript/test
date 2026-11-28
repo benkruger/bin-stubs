@@ -54,6 +54,7 @@ run=("$root/node_modules/.bin/vitest" run --exclude 'e2e/**' --coverage --covera
 root_app=0
 if [ "$(pwd -P)" = "$(git rev-parse --show-toplevel)" ]; then
   root_app=1
+  run+=(--exclude '.worktrees/**')
   for dir in ./*/; do
     if [ -d "$dir" ] && is_app_dir "$dir"; then
       dir="${dir%/}"

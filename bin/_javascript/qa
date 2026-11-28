@@ -18,15 +18,23 @@ if [ ! -x "$playwright" ]; then
 fi
 "$playwright" install chromium
 
-log="$(mktemp "${TMPDIR:-/tmp}/bin-javascript-qa.XXXXXX")"
-trap 'rm -f "$log"' EXIT
+out="$(mktemp -d "${TMPDIR:-/tmp}/bin-javascript-qa.XXXXXX")"
+keep=0
+trap '[ "$keep" -eq 1 ] || rm -rf "$out"' EXIT
+config=()
+if ! compgen -G "$root/playwright.config.*" >/dev/null; then
+  jq -n -r --arg dir "$root/e2e" '"export default { testDir: \($dir | tojson) };"' >"$out/playwright.config.mjs"
+  config=(--config "$out/playwright.config.mjs")
+fi
 rc=0
-"$playwright" test "$@" 2>&1 | tee "$log" || rc=$?
+PLAYWRIGHT_HTML_OUTPUT_DIR="$out/playwright-report" PLAYWRIGHT_BLOB_OUTPUT_DIR="$out/blob-report" \
+  "$playwright" test --output "$out/test-results" ${config[@]+"${config[@]}"} "$@" 2>&1 | tee "$out/qa.log" || rc=$?
 if [ "$rc" -ne 0 ]; then
-  echo "bin/qa: an end-to-end test failed; the report is at playwright-report/index.html" >&2
+  keep=1
+  echo "bin/qa: an end-to-end test failed; Playwright's results and report are in $out" >&2
   exit "$rc"
 fi
-if grep -qiE 'npm warn|DeprecationWarning|^Warning: ' "$log"; then
+if grep -qiE 'npm warn|DeprecationWarning|^Warning: ' "$out/qa.log"; then
   echo "bin/qa: the run printed a warning (above)" >&2
   exit 1
 fi

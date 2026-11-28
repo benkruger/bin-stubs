@@ -16,7 +16,7 @@ changed_files() {
   local path listing
   listing="$(changed_listing)" || return 1
   while IFS= read -r path; do
-    app_file "$path" "$root_app" || continue
+    app_file "$path" "$root_app" 1 || continue
     printf '%s\n' "$path"
   done <<<"$listing"
 }

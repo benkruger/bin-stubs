@@ -28,9 +28,9 @@ Prettier, ESLint, `tsc` and Vitest hold the TypeScript app at full strength.
   and fails when either fails or `tsc --showConfig` does not show `strict`
   true, no `STRICT_FLAGS` entry false, no `noCheck` and every TypeScript
   file in the app, or shows `skipLibCheck` over the app's own `.d.ts` file.
-- `packageManager` pins npm, which installs from `package-lock.json`. Every
-  `bin/` script disables Node's `TMPDIR` compile cache and, outside CI,
-  activates the `.nvmrc` Node through nvm and fails unless both pins are active.
+- `packageManager` pins npm, installing from `package-lock.json`. Every `bin/`
+  script that runs Node turns off its `TMPDIR` compile cache and, outside CI,
+  activates the `.nvmrc` Node via nvm and fails unless both pins are active.
 - `npm audit` finds no moderate or worse advisory, or `bin/ci` fails; a
   vulnerable transitive package lifts through `package.json` `overrides`.
 - A `bin/ci` step that exits 0, or `bin/qa`, which runs outside `bin/ci`,
@@ -38,4 +38,4 @@ Prettier, ESLint, `tsc` and Vitest hold the TypeScript app at full strength.
   matching `npm warn`, `DeprecationWarning` or a line starting `Warning:`
   and a space, any case; a failed test fails `bin/qa`.
 - Trigger: any change to a TypeScript `bin/` script or `eslint.config.js`.
-<!-- audited: a78beffbfdc4 -->
+<!-- audited: 15e88b2705c0 -->

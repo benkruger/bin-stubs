@@ -949,3 +949,43 @@ test_changed_ci_timeout() {
   grep -q shell-suite-ran "${LAST_LOG}" && die "bin/changed --sh ran the suite for a deleted .ci-timeout"
   return 0
 }
+
+test_ios_changed_link() {
+  say "iOS bin/changed counts a symlinked source as a change"
+  local repo
+  repo="$(new_repo)"
+  keep "$repo"
+  copy_dir "$HERE/../bin" "$repo/bin"
+  mkdir -p "$repo/ios/Sources/App" "$repo/lib"
+  printf 'public let extra = 1\n' >"$repo/lib/Extra.swift"
+  ln -s ../../../lib/Extra.swift "$repo/ios/Sources/App/Extra.swift"
+  run_log env APP_DIR="$repo/ios" "$repo/bin/_ios/changed" --files
+  assert_rc 0 "iOS changed --files with a symlinked source"
+  grep -qx "Sources/App/Extra.swift" "${LAST_LOG}" || die "iOS changed --files left out a symlinked source"
+}
+
+test_ios_dependencies_restore() {
+  say "iOS bin/dependencies puts the resolved pins back when the resolve fails or is stopped"
+  local app="$WORK/ios-deps" stubs="$WORK/ios-deps-stubs" resolved state how
+  resolved="$app/App.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved"
+  state="$app/.build/xcode-packages/workspace-state.json"
+  mkdir -p "$(dirname "$resolved")" "$(dirname "$state")" "$stubs"
+  cat >"$stubs/xcodebuild" <<'EOF'
+#!/usr/bin/env bash
+[ -z "${STOP_PARENT:-}" ] || kill -TERM "$PPID"
+exit 1
+EOF
+  chmod +x "$stubs/xcodebuild"
+  for how in failed stopped; do
+    printf 'pins\n' >"$resolved"
+    printf 'state\n' >"$state"
+    if [ "$how" = stopped ]; then
+      run_log env STOP_PARENT=1 PATH="$stubs:$PATH" APP_DIR="$app" "$HERE/../bin/_ios/dependencies"
+    else
+      run_log env PATH="$stubs:$PATH" APP_DIR="$app" "$HERE/../bin/_ios/dependencies"
+    fi
+    [ "${LAST_RC}" -ne 0 ] || die "iOS bin/dependencies passed a resolve that $how"
+    [ "$(cat "$resolved" 2>/dev/null)" = pins ] && [ "$(cat "$state" 2>/dev/null)" = state ] ||
+      die "iOS bin/dependencies lost Package.resolved or workspace-state.json when the resolve $how"
+  done
+}

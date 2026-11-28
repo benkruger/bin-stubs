@@ -7,8 +7,15 @@ cd "$root"
 . "$here/lib/xcode.sh"
 if xcode_container; then
   aside="$(mktemp -d "${TMPDIR:-/tmp}/bin-ios-dependencies.XXXXXX")"
-  trap 'rm -rf "$aside"' EXIT
   moved=()
+  restore=1
+  trap 'i=0
+    for file in ${moved[@]+"${moved[@]}"}; do
+      [ "$restore" -eq 0 ] || [ ! -e "$aside/$i" ] || mv "$aside/$i" "$file" || true
+      i=$((i + 1))
+    done
+    rm -rf "$aside"' EXIT
+  trap 'exit 130' INT TERM HUP
   while IFS= read -r -d '' file; do
     moved+=("$file")
   done < <(find "${XCODE_ARGS[1]}" -path '*/xcshareddata/swiftpm/Package.resolved' -print0)
@@ -19,14 +26,10 @@ if xcode_container; then
     mv "$file" "$aside/$i"
     i=$((i + 1))
   done
-  if ! xcodebuild -resolvePackageDependencies "${XCODE_ARGS[@]}" -derivedDataPath "$root/.build/xcode-build"; then
-    i=0
-    for file in ${moved[@]+"${moved[@]}"}; do
-      mv "$aside/$i" "$file"
-      i=$((i + 1))
-    done
-    exit 1
+  if xcodebuild -resolvePackageDependencies "${XCODE_ARGS[@]}" -derivedDataPath "$root/.build/xcode-build"; then
+    restore=0
+    exit 0
   fi
-  exit 0
+  exit 1
 fi
 swift package update

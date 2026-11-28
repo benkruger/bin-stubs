@@ -180,6 +180,8 @@ section_changed() {
   unformat "$app" "$lang"
   expect_ok leaf "$app" "$lang" changed --files
   assert_eq "$(cat "${LAST_LOG}")" "$(source_of "$lang")" "$lang changed --files"
+  expect_fail leaf "$app" "$lang" format --check "$(dirname "$(source_of "$lang")")"
+  formatted "$app" "$lang" && die "$lang format --check rewrote a file in the folder it was given"
   expect_ok leaf "$app" "$lang" format
   formatted "$app" "$lang" || die "$lang format skipped an edited tracked file"
   unformat "$app" "$lang"
@@ -267,6 +269,23 @@ EOF
     expect_fail leaf "$app" "$lang" build
     grep -q "broken: line [0-9]*: syntax error" "${LAST_LOG}" || die "shell build let a script bash cannot parse through"
     rm "$app/broken"
+    cat >"$app/digits" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+shopt -s extglob
+case "${1:-}" in
+  +([0-9])) echo number ;;
+  *) echo other ;;
+esac
+EOF
+    chmod +x "$app/digits"
+    expect_ok leaf "$app" "$lang" build
+    grep -v shopt "$app/digits" >"$WORK/digits"
+    cat "$WORK/digits" >"$app/digits"
+    expect_fail leaf "$app" "$lang" build
+    grep -q "digits: line [0-9]*: syntax error" "${LAST_LOG}" ||
+      die "shell build passed an extglob pattern its script never turns on"
+    rm "$app/digits"
     mv "$app/test/run" "$WORK/run.keep"
     expect_fail leaf "$app" "$lang" build
     grep -qxF "bin/build: no executable test/run" "${LAST_LOG}" || die "shell build passed an app with no test/run"
@@ -771,6 +790,16 @@ EOF
       grep -qF "no mirrored test for lib/lonely.rb → test/lib/lonely_test.rb" "${LAST_LOG}" ||
         die "$lang changed passed a lib/ source with no twin"
       rm -r "${app:?}/lib" "$app/test/lib"
+      mkdir -p "$app/app/lib" "$app/test/lib"
+      printf '%s\n' '# frozen_string_literal: true' '' 'module Wallet' '  def self.call' '    1' '  end' 'end' \
+        >"$app/app/lib/wallet.rb"
+      printf '%s\n' '# frozen_string_literal: true' '' "require 'test_helper'" '' 'class WalletTest < ActiveSupport::TestCase' \
+        "  test 'counts' do" '    assert_equal 1, Wallet.call' '  end' 'end' >"$app/test/lib/wallet_test.rb"
+      expect_ok leaf "$app" "$lang" test test/lib/wallet_test.rb
+      grep -qxF "bin/test: coverage bar held on 1 source(s)" "${LAST_LOG}" ||
+        die "$lang test on an app/lib/ twin did not hold its source"
+      expect_ok leaf "$app" "$lang" test --all
+      rm -r "${app:?}/app/lib" "$app/test/lib"
       mkdir -p "$WORK/cut-quiet/stubs" "$WORK/cut-quiet/tmp"
       cat >"$WORK/cut-quiet/stubs/bundle" <<EOF
 #!/usr/bin/env bash

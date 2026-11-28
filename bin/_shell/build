@@ -23,8 +23,13 @@ trap 'rm -rf "$parsed"' EXIT
 jobs="$(getconf _NPROCESSORS_ONLN)"
 parse_every() {
   local i
+  local opts
   for ((i = $1; i < ${#scripts[@]}; i += jobs)); do
-    bash -n "${scripts[$i]}" 2>"$parsed/$i.err" || : >"$parsed/$i.fail"
+    opts=()
+    if grep -qE '(^|[;[:space:]])shopt[[:space:]]+-s[[:space:]]([^#]*[[:space:]])?extglob([;[:space:]]|$)' "${scripts[$i]}"; then
+      opts=(-O extglob)
+    fi
+    bash ${opts[@]+"${opts[@]}"} -n "${scripts[$i]}" 2>"$parsed/$i.err" || : >"$parsed/$i.fail"
   done
 }
 pids=()

@@ -19,11 +19,13 @@ match it or its lockfile.
   `INSTALL_COMMANDS` in any other script directly under such a folder.
   Trigger: any change to a gate script.
 - Every other gate script of a language whose
-  `bin/_<language>/lib/toolchain.sh` defines `packages_check` runs it, and
-  it fails with "run bin/dependencies" when the packages are missing or do
-  not match the manifest or lockfile. `tests/guards` fails a `ci`,
+  `bin/_<language>/lib/toolchain.sh` defines `packages_check` runs it
+  before it runs a tool, and it fails with "run bin/dependencies" when the
+  packages are missing or do not match the manifest or lockfile;
+  `bin/ci --clean`, `bin/changed --files` and a `bin/ci` whose sentinel
+  holds the tree's hash run no tool and skip it. `tests/guards` fails a `ci`,
   `changed`, `format`, `lint`, `build`, `test`, `open` or `qa` script
   directly under that `bin/_<language>/` folder that never names
   `packages_check`. Trigger: any change to how a gate script gets its
   packages.
-<!-- audited: 0526649cf5fc -->
+<!-- audited: b5816edf79c9 -->
