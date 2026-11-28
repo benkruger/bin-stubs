@@ -9,47 +9,54 @@ if [ -z "$host" ]; then
 fi
 
 if [ "${1:-}" = --limit ]; then
-  awk -v h="$host" '$1 == h && $2 ~ /^[0-9]+$/ { print $2; exit }' "${2:?time file required}"
+  awk -v h="$host" 'NF == 3 && $1 == h && $3 ~ /^[0-9]+$/ && $3 > max { max = $3 } END { if (max != "") print max }' \
+    "${2:?time file required}"
   exit 0
 fi
 
 app="${1:?app name required}"
 file="${2:?time file required}"
 took="${3:?seconds required}"
-case "$took" in
-  "" | *[!0-9]*)
-    echo "bin/_ci-timeout: seconds must be a whole number, got '$took'" >&2
-    exit 2
-    ;;
-esac
+load="${4:?apps run at once required}"
+for value in "$took" "$load"; do
+  case "$value" in
+    "" | *[!0-9]*)
+      echo "bin/_ci-timeout: seconds and apps run at once must be whole numbers, got '$value'" >&2
+      exit 2
+      ;;
+  esac
+done
 
 line=""
 if [ -f "$file" ]; then
-  line="$(awk -v h="$host" '$1 == h { print "@" $2; exit }' "$file")"
+  line="$(awk -v h="$host" -v n="$load" 'NF == 3 && $1 == h && $2 == n { print "@" $3; exit }' "$file")"
 fi
 limit="${line#@}"
 if [ -n "$line" ] && ! [[ "$limit" =~ ^[0-9]+$ ]]; then
-  echo "bin/_ci-timeout: $file line for $host is not a whole number of seconds: '$limit'" >&2
+  echo "bin/_ci-timeout: $file line for $host with $load app(s) at once is not a whole number of seconds: '$limit'" >&2
   exit 2
 fi
 
 if [ -n "$limit" ] && [ $((took * 5)) -gt $((limit * 6)) ] && [ $((took - limit)) -ge 5 ]; then
-  echo "bin/ci: $app took ${took}s, more than 20% and at least 5s over its ${limit}s for $host in $file" >&2
+  echo "bin/ci: $app took ${took}s, more than 20% and at least 5s over its ${limit}s for $host with $load app(s) at once in $file" >&2
   exit 1
 fi
 
 branch="$(git -C "$(dirname "$file")" branch --show-current 2>/dev/null || true)"
 if [ "$branch" = main ]; then
-  echo "bin/ci: $app took ${took}s (limit ${limit:-none} for $host, kept on main)"
+  echo "bin/ci: $app took ${took}s (limit ${limit:-none} for $host with $load app(s) at once, kept on main)"
   exit 0
 fi
 
 next="$(mktemp "${TMPDIR:-/tmp}/bin-ci-timeout.XXXXXX")"
 trap 'rm -f "$next"' EXIT
 if [ -f "$file" ]; then
-  awk -v h="$host" -v s="$took" '$1 == h { print h " " s; done = 1; next } { print } END { if (!done) print h " " s }' "$file" >"$next"
+  awk -v h="$host" -v n="$load" -v s="$took" '
+    $1 == h && (NF != 3 || $2 == n) { if (!done) print h " " n " " s; done = 1; next }
+    { print }
+    END { if (!done) print h " " n " " s }' "$file" >"$next"
 else
-  printf '%s %s\n' "$host" "$took" >"$next"
+  printf '%s %s %s\n' "$host" "$load" "$took" >"$next"
 fi
 cat "$next" >"$file"
-echo "bin/ci: $app took ${took}s (limit ${limit:-none} for $host)"
+echo "bin/ci: $app took ${took}s (limit ${limit:-none} for $host with $load app(s) at once)"

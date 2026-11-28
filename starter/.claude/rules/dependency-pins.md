@@ -12,7 +12,9 @@ lasts only as long as its reason.
   30 days out, and fails from that date. `bin/_root-tests` runs every
   check on every `bin/ci` but `--clean`, with no app flag or with
   `--suite`, so the date fires on an unchanged tree, and fails a check
-  with no such line or with a date more than 30 days out.
+  with no such line or with a date more than 30 days out, and a file in
+  `checks/` that is not executable. Trigger: a new or changed pin, a new
+  or edited file in `checks/` or any change to `bin/_root-tests`.
 - On the revisit date the pin goes if its reason is gone; otherwise the
   check gets a new date and states the reason as it stands then.
-<!-- audited: 9b838ac9ac19 -->
+<!-- audited: 687018a242d4 -->

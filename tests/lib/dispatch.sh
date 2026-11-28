@@ -111,6 +111,8 @@ test_dispatch_select() {
   printf '# Notes\n' >"$repo/notes.md"
   expect_ok "$repo/bin/changed" --files
   assert_eq "$(cat "${LAST_LOG}")" "$(printf '%s\n' notes.md shell/add)" "bin/changed --files at the root"
+  expect_ok "$repo/bin/changed" --shell --files
+  assert_eq "$(cat "${LAST_LOG}")" "shell/add" "bin/changed --shell --files"
   rm "$repo/notes.md"
   expect_ok "$repo/bin/test" shell/test/add
   sum="$(summary)"
@@ -220,6 +222,12 @@ EOF
     grep -q "^ran b with:" "${LAST_LOG}" || die "bin/test $form did not run b's tests"
   done
   printf '%s\n' '#!/usr/bin/env bash' 'exit 0' >"$repo/b/test/run"
+  printf '%s\n' '#!/usr/bin/env bash' "echo \"\$1\"" >"$repo/x.sh"
+  printf '%s\n' '#!/usr/bin/env bash' "echo \$1" >"$repo/a/x.sh"
+  expect_fail "$repo/bin/lint" x.sh
+  grep -qx "bin/lint: no app owns x.sh" "${LAST_LOG}" || die "bin/lint on a file no app owns did not say so"
+  grep -q "SC2086" "${LAST_LOG}" && die "bin/lint x.sh linted another app's x.sh"
+  rm "$repo/x.sh" "$repo/a/x.sh"
   mkdir -p "$repo/test"
   printf '%s\n' '#!/usr/bin/env bash' 'exit 0' >"$repo/test/run"
   chmod +x "$repo/test/run"
@@ -228,6 +236,20 @@ EOF
   assert_eq "$(row_of root "$sum")" "PASS" "the root app a root path names"
   assert_eq "$(row_of a "$sum")" "SKIP" "a named app given a root path"
   assert_eq "$(row_of b "$sum")" "SKIP" "another named app given a root path"
+  printf '%s\n' '#!/usr/bin/env bash' "echo \"ran b with: \$*\"" >"$repo/b/test/run"
+  expect_ok "$repo/bin/test" --b --grep foo
+  grep -qx "ran b with: --grep foo" "${LAST_LOG}" || die "a picked app beside a root app lost its options"
+  printf '%s\n' '#!/usr/bin/env bash' 'exit 0' >"$repo/b/test/run"
+  printf '%s\n' '#!/usr/bin/env bash' "echo \$1" >"$repo/bad.sh"
+  cp "$repo/bad.sh" "$repo/a/bad.sh"
+  for form in . ./ "$repo" "$repo/"; do
+    expect_fail "$repo/bin/lint" "$form"
+    sum="$(summary)"
+    assert_eq "$(row_of root "$sum")" "FAIL" "bin/lint $form on the root app"
+    assert_eq "$(row_of a "$sum")" "FAIL" "bin/lint $form on app a"
+    assert_eq "$(row_of b "$sum")" "PASS" "bin/lint $form on app b"
+  done
+  rm "$repo/bad.sh" "$repo/a/bad.sh"
   rm -r "$repo/test"
   git -C "$repo" add -A
   git -C "$repo" commit -q -m "notes"
@@ -236,6 +258,15 @@ EOF
   sum="$(summary)"
   assert_eq "$(row_of a "$sum")" "PASS" "the app a rename moved a file out of"
   assert_eq "$(row_of b "$sum")" "PASS" "the app a rename moved a file into"
+  for app in root suite; do
+    mkdir -p "$repo/$app/test"
+    printf '%s\n' '#!/usr/bin/env bash' 'exit 1' >"$repo/$app/test/run"
+    chmod +x "$repo/$app/test/run"
+    run_log "$repo/bin/test" "--$app"
+    assert_rc 2 "bin/test beside an app named $app"
+    grep -qF "an app folder cannot be named $app" "${LAST_LOG}" || die "an app named $app was not refused"
+    rm -r "${repo:?}/$app"
+  done
 }
 
 test_git_failures() {
@@ -402,6 +433,29 @@ test_root_check() {
   grep -qx "root-suite: checks/undated names no revisit=YYYY-MM-DD date" "${LAST_LOG}" ||
     die "bin/ci passed a check with no revisit date"
   [ ! -e "$repo/suite.ran" ] || die "bin/_root-tests ran tests/run past a misdated check"
+  rm "$repo/checks/far" "$repo/checks/undated"
+  printf '%s\n' '#!/usr/bin/env bash' 'revisit=2026-01-01' 'exit 1' >"$repo/checks/stale"
+  expect_fail "$repo/bin/_root-tests"
+  grep -qx "root-suite: checks/stale is not executable, so it never runs" "${LAST_LOG}" ||
+    die "bin/_root-tests passed a check that is not executable"
+  [ ! -e "$repo/suite.ran" ] || die "bin/_root-tests ran tests/run past a check that is not executable"
+  chmod +x "$repo/checks/stale"
+  mkdir -p "$repo/a/test"
+  printf '%s\n' '#!/usr/bin/env bash' 'exit 0' >"$repo/a/test/run"
+  printf '%s\n' '#!/usr/bin/env bash' 'exit 0' >"$repo/bin/_shell/ci"
+  chmod +x "$repo/a/test/run" "$repo/bin/_shell/ci"
+  expect_fail "$repo/bin/ci" a
+  grep -qx "root-suite: checks/stale failed" "${LAST_LOG}" || die "bin/ci <app> skipped the pin checks"
+  assert_eq "$(row_of suite "$(summary)")" "FAIL" "bin/ci <app> with an expired pin check"
+  assert_eq "$(row_of a "$(summary)")" "PASS" "the app bin/ci <app> names"
+  [ ! -e "$repo/suite.ran" ] || die "bin/ci <app> ran tests/run for the pin checks"
+  expect_ok "$repo/bin/ci" --clean a
+  grep -q "checks/stale" "${LAST_LOG}" && die "bin/ci --clean <app> ran the pin checks"
+  rm "$repo/checks/stale"
+  expect_ok "$repo/bin/ci" a
+  grep -qx "passing-check-ran" "${LAST_LOG}" || die "bin/ci <app> did not run a passing pin check"
+  assert_eq "$(row_of suite "$(summary)")" "PASS" "bin/ci <app> with passing pin checks"
+  [ ! -e "$repo/suite.ran" ] || die "bin/ci <app> ran tests/run for the pin checks"
   return 0
 }
 
@@ -561,41 +615,52 @@ test_ci_time() {
   limits="$WORK/limits"
   for row in "100 125 1" "100 120 0" "10 15 1" "1 5 0"; do
     read -r limit took want <<<"$row"
-    printf 'elsewhere 1\n%s %s\n' "$host" "$limit" >"$limits"
-    run_log "$HERE/../bin/_ci-timeout" app "$limits" "$took"
+    printf 'elsewhere 1 1\n%s 1 %s\n' "$host" "$limit" >"$limits"
+    run_log "$HERE/../bin/_ci-timeout" app "$limits" "$took" 1
     assert_rc "$want" "a ${took}s run against a ${limit}s line"
-    [ "$want" = 0 ] || grep -qx "$host $limit" "$limits" || die "a ${took}s run that failed rewrote its ${limit}s line"
+    [ "$want" = 0 ] || grep -qx "$host 1 $limit" "$limits" || die "a ${took}s run that failed rewrote its ${limit}s line"
   done
-  grep -qx "$host 5" "$limits" || die "a passing run did not record its time"
-  grep -qx "elsewhere 1" "$limits" || die "a passing run changed another machine's line"
-  for row in "$host" "$host 1.5"; do
+  grep -qx "$host 1 5" "$limits" || die "a passing run did not record its time"
+  grep -qx "elsewhere 1 1" "$limits" || die "a passing run changed another machine's line"
+  printf '%s 1 10\n' "$host" >"$limits"
+  expect_ok "$HERE/../bin/_ci-timeout" app "$limits" 30 3
+  grep -qx "$host 3 30" "$limits" || die "a run beside two other apps did not record its own time"
+  grep -qx "$host 1 10" "$limits" || die "a run beside two other apps changed the time recorded alone"
+  run_log "$HERE/../bin/_ci-timeout" app "$limits" 30 1
+  assert_rc 1 "a slower run alone, beside a time recorded under more load"
+  run_log "$HERE/../bin/_ci-timeout" --limit "$limits"
+  assert_eq "$(cat "${LAST_LOG}")" "30" "the bound bin/commit takes from a machine's lines"
+  printf '%s 40\n' "$host" >"$limits"
+  expect_ok "$HERE/../bin/_ci-timeout" app "$limits" 50 1
+  assert_eq "$(cat "$limits")" "$host 1 50" "a line with no apps-at-once count after a pass"
+  for row in "$host 1 ten" "$host 1 1.5"; do
     printf '%s\n' "$row" >"$limits"
-    run_log "$HERE/../bin/_ci-timeout" app "$limits" 5
+    run_log "$HERE/../bin/_ci-timeout" app "$limits" 5 1
     assert_rc 2 "a line with no whole number of seconds: $row"
     grep -q "is not a whole number of seconds" "${LAST_LOG}" || die "a line with no seconds was not named: $row"
   done
   for took in 1.5 5s; do
-    run_log "$HERE/../bin/_ci-timeout" app "$limits" "$took"
+    run_log "$HERE/../bin/_ci-timeout" app "$limits" "$took" 1
     assert_rc 2 "a run time that is not a whole number: $took"
-    grep -qxF "bin/_ci-timeout: seconds must be a whole number, got '$took'" "${LAST_LOG}" ||
+    grep -qxF "bin/_ci-timeout: seconds and apps run at once must be whole numbers, got '$took'" "${LAST_LOG}" ||
       die "a run time that is not a whole number was not named: $took"
   done
   mkdir -p "$WORK/no-host"
   printf '%s\n' '#!/usr/bin/env bash' 'exit 0' >"$WORK/no-host/hostname"
   chmod +x "$WORK/no-host/hostname"
-  run_log env PATH="$WORK/no-host:$PATH" "$HERE/../bin/_ci-timeout" app "$limits" 5
+  run_log env PATH="$WORK/no-host:$PATH" "$HERE/../bin/_ci-timeout" app "$limits" 5 1
   assert_rc 2 "a machine with no hostname"
   grep -qxF "bin/_ci-timeout: no hostname" "${LAST_LOG}" || die "a machine with no hostname was not named"
   mkdir -p "$WORK/numbered-host"
   printf '%s\n' '#!/usr/bin/env bash' 'echo box-12' >"$WORK/numbered-host/hostname"
   chmod +x "$WORK/numbered-host/hostname"
-  printf 'elsewhere 1\n' >"$limits"
-  expect_ok env PATH="$WORK/numbered-host:$PATH" "$HERE/../bin/_ci-timeout" app "$limits" 5
-  grep -qx "box 5" "$limits" || die "a host's numbered suffix stayed in its time line"
+  printf 'elsewhere 1 1\n' >"$limits"
+  expect_ok env PATH="$WORK/numbered-host:$PATH" "$HERE/../bin/_ci-timeout" app "$limits" 5 1
+  grep -qx "box 1 5" "$limits" || die "a host's numbered suffix stayed in its time line"
   repo="$(new_repo)"
-  printf '%s 10\n' "$host" >"$repo/.ci-timeout"
-  expect_ok "$HERE/../bin/_ci-timeout" app "$repo/.ci-timeout" 3
-  grep -qx "$host 10" "$repo/.ci-timeout" || die "a pass on main rewrote its time line"
+  printf '%s 1 10\n' "$host" >"$repo/.ci-timeout"
+  expect_ok "$HERE/../bin/_ci-timeout" app "$repo/.ci-timeout" 3 1
+  grep -qx "$host 1 10" "$repo/.ci-timeout" || die "a pass on main rewrote its time line"
 
   repo="$(new_repo)"
   keep "$repo"
@@ -610,7 +675,7 @@ test_ci_time() {
   git -C "$repo" switch -q -c work
   expect_ok "$repo/bin/ci"
   file="$repo/python/.ci-timeout"
-  grep -qE "^$host [0-9]+$" "$file" || die "a full pass did not record the app's time"
+  grep -qE "^$host 1 [0-9]+$" "$file" || die "a full pass did not record the app's time with its apps at once"
   expect_ok "$repo/bin/ci"
   sum="$(summary)"
   assert_eq "$(row_of python "$sum")" "SKIP" "a new time file left python unchanged"
@@ -780,6 +845,19 @@ test_app_language() {
   app_language "$dir/core" && die "a member of the root's Cargo workspace has its own language"
   is_app_dir "$dir/cli/" || die "a crate the root's workspace excludes is not an app"
   is_app_dir "$dir/other" || die "a crate outside the root's workspace is not an app"
+  dir="$(mktemp -d "$WORK/workspace.XXXXXX")"
+  printf '%s\n' '[package]' 'name = "root"' '' '[dependencies]' 'inline = { path = "inline" }' '' \
+    '[dependencies.tabled]' 'path = "./tabled/"' '' '[workspace]' 'exclude = ["shut"]' >"$dir/Cargo.toml"
+  for file in inline tabled deep shut other; do
+    mkdir -p "$dir/$file"
+    printf '[package]\nname = "%s"\n' "$file" >"$dir/$file/Cargo.toml"
+  done
+  printf '\n[dev-dependencies]\ndeep = { path = "../deep" }\nshut = { path = "../shut" }\n' >>"$dir/tabled/Cargo.toml"
+  for file in inline tabled deep; do
+    is_app_dir "$dir/$file" && die "a path dependency of the root's workspace counts as its own app: $file"
+  done
+  is_app_dir "$dir/shut" || die "a path dependency the root's workspace excludes is not an app"
+  is_app_dir "$dir/other" || die "a crate nothing in the root's workspace names is not an app"
   return 0
 }
 
@@ -801,4 +879,73 @@ test_die_fixture() {
   assert_rc 1 "a test that dies under a TMPDIR inside its work folder"
   kept="$(sed -n 's/^fixture: //p' "${LAST_LOG}")"
   [ -n "$kept" ] && [ -f "$kept/marker" ] || die "a fixture kept under a test's own TMPDIR was swept: $kept"
+}
+
+test_fingerprint() {
+  say "an app's fingerprint covers every file its steps read"
+  local repo
+  repo="$(new_repo)"
+  keep "$repo"
+  copy_dir "$HERE/../bin" "$repo/bin"
+  stub_suite "$repo"
+  grep -vx 'vendor/' "$repo/.gitignore" >"$WORK/fingerprint.gitignore"
+  cat "$WORK/fingerprint.gitignore" >"$repo/.gitignore"
+  mkdir -p "$repo/sh/test" "$repo/sh/vendor"
+  printf '%s\n' '#!/usr/bin/env bash' 'set -euo pipefail' >"$repo/sh/test/run"
+  chmod +x "$repo/sh/test/run"
+  git -C "$repo" add -A
+  git -C "$repo" commit -q -m "shell app"
+  expect_ok "$repo/bin/ci"
+  printf '%s\n' '#!/usr/bin/env bash' "echo \$1" >"$repo/sh/vendor/loose.sh"
+  expect_fail "$repo/bin/ci"
+  assert_eq "$(row_of sh "$(summary)")" "FAIL" "an untracked vendor/ script's app"
+  rm "$repo/sh/vendor/loose.sh"
+  printf '.DS_Store\n' >>"$repo/.gitignore"
+  git -C "$repo" commit -q -am "ignore finder files"
+  expect_ok "$repo/bin/ci"
+  : >"$repo/bin/lib/.DS_Store"
+  : >"$repo/bin/_shell/.DS_Store"
+  expect_ok "$repo/bin/ci"
+  assert_eq "$(row_of sh "$(summary)")" "SKIP" "an app after an ignored file landed in bin/"
+  grep -qE '^  sh +: SKIP \(' "${LAST_LOG}" || die "an ignored file in bin/ reran an app"
+  printf '%s\n' '#!/usr/bin/env bash' 'set -euo pipefail' 'name=a' "echo \"\$name\"" >"$repo/sh/name.sh"
+  chmod +x "$repo/sh/name.sh"
+  expect_ok "$repo/bin/ci"
+  printf 'enable=require-variable-braces\n' >"$repo/.shellcheckrc"
+  expect_fail "$repo/bin/ci"
+  assert_eq "$(row_of sh "$(summary)")" "FAIL" "an app after its parent folder's .shellcheckrc changed"
+  rm "$repo/.shellcheckrc"
+  expect_ok "$repo/bin/ci"
+  printf 'notes\n' >"$repo/README.md"
+  expect_ok "$repo/bin/ci"
+  assert_eq "$(row_of sh "$(summary)")" "SKIP" "an app after its parent folder's README changed"
+}
+
+test_changed_ci_timeout() {
+  say "bin/changed never counts an app's .ci-timeout as a change"
+  local repo lang
+  repo="$(new_repo)"
+  keep "$repo"
+  copy_dir "$HERE/../bin" "$repo/bin"
+  stub_suite "$repo"
+  mkdir -p "$repo/sh/test"
+  printf '%s\n' '#!/usr/bin/env bash' 'set -euo pipefail' 'echo shell-suite-ran' >"$repo/sh/test/run"
+  chmod +x "$repo/sh/test/run"
+  printf 'host 1 5\n' >"$repo/sh/.ci-timeout"
+  git -C "$repo" add -A
+  git -C "$repo" commit -q -m "shell app"
+  printf 'host 1 6\n' >"$repo/sh/.ci-timeout"
+  mkdir -p "$repo/sh/sub"
+  printf 'host 1 6\n' >"$repo/sh/sub/.ci-timeout"
+  for lang in typescript javascript python rails rust ios shell; do
+    run_log env APP_DIR="$repo/sh" "$repo/bin/_$lang/changed" --files
+    assert_rc 0 "$lang changed --files with only a .ci-timeout edited"
+    [ ! -s "${LAST_LOG}" ] || die "$lang changed --files listed a .ci-timeout"
+  done
+  expect_ok "$repo/bin/changed" --sh
+  grep -q shell-suite-ran "${LAST_LOG}" && die "bin/changed --sh ran the suite for an edited .ci-timeout"
+  rm -r "$repo/sh/sub" "$repo/sh/.ci-timeout"
+  expect_ok "$repo/bin/changed" --sh
+  grep -q shell-suite-ran "${LAST_LOG}" && die "bin/changed --sh ran the suite for a deleted .ci-timeout"
+  return 0
 }

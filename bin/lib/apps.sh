@@ -4,25 +4,53 @@ workspace_member() {
   local d="${1%/}" parent
   [ -f "$d/Cargo.toml" ] && [ -f "$d/../Cargo.toml" ] || return 1
   parent="$(cd "$d/.." && pwd)"
-  perl -e '
-    my ($file, $name) = @ARGV;
-    open my $fh, "<", $file or exit 1;
-    my $text = do { local $/; <$fh> };
-    my ($table) = $text =~ /^\[workspace\][ \t]*\n(.*?)(?=^\[|\z)/ms or exit 1;
+  perl -MCwd=abs_path -e '
+    my ($root, $name) = @ARGV;
+    $root = abs_path($root);
+    sub manifest {
+      open my $fh, "<", "$_[0]/Cargo.toml" or return "";
+      local $/;
+      my $text = <$fh>;
+      return defined $text ? $text : "";
+    }
+    my $text = manifest($root);
+    $text =~ /^\[workspace\][ \t]*$/m or exit 1;
+    my ($table) = $text =~ /^\[workspace\][ \t]*\n(.*?)(?=^\[|\z)/ms;
+    $table = "" unless defined $table;
     my %list;
     for my $key (qw(members exclude)) {
       my ($items) = $table =~ /^[ \t]*\Q$key\E[ \t]*=[ \t]*\[(.*?)\]/ms;
       $list{$key} = [defined $items ? $items =~ /["\x27]([^"\x27]*)["\x27]/g : ()];
     }
     my $matches = sub {
-      (my $glob = shift) =~ s{\A\./|/+\z}{}g;
+      my ($path, $glob) = @_;
+      $glob =~ s{\A\./|/+\z}{}g;
       (my $re = quotemeta $glob) =~ s/\\\*/[^\/]*/g;
       $re =~ s/\\\?/[^\/]/g;
-      return $name =~ /\A$re\z/;
+      return $path =~ /\A$re\z/;
     };
-    exit 1 if grep { $matches->($_) } @{ $list{exclude} };
-    exit((grep { $matches->($_) } @{ $list{members} }) ? 0 : 1);
-  ' "$parent/Cargo.toml" "${d##*/}"
+    my $excluded = sub { my $p = shift; grep { $matches->($p, $_) } @{ $list{exclude} } };
+    exit 1 if $excluded->($name);
+    exit 0 if grep { $matches->($name, $_) } @{ $list{members} };
+    my @queue = $text =~ /^\[package\][ \t]*$/m ? (".") : ();
+    for my $glob (@{ $list{members} }) {
+      for my $dir (glob("$root/$glob")) {
+        push @queue, substr($dir, length("$root/")) if -f "$dir/Cargo.toml";
+      }
+    }
+    my %seen = map { $_ => 1 } @queue;
+    while (defined(my $dir = shift @queue)) {
+      for my $path (manifest("$root/$dir") =~ /\bpath[ \t]*=[ \t]*["\x27]([^"\x27]+)["\x27]/g) {
+        my $real = abs_path("$root/$dir/$path");
+        next unless defined $real && -f "$real/Cargo.toml" && index($real, "$root/") == 0;
+        my $rel = substr($real, length("$root/"));
+        next if $seen{$rel}++ || $excluded->($rel);
+        exit 0 if $rel eq $name;
+        push @queue, $rel;
+      }
+    }
+    exit 1;
+  ' "$parent" "${d##*/}"
 }
 
 is_app_dir() {

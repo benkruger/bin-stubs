@@ -21,7 +21,7 @@ changed_listing() {
   local others
   diff_listing || return 1
   others="$(git ls-files -z --others --exclude-standard -- . | tr '\0' '\n')" || return 1
-  printf '%s\n%s\n' "$DIFF_LISTING" "$others" | sort -u
+  printf '%s\n%s\n' "$DIFF_LISTING" "$others" | sort -u | awk '$0 != ".ci-timeout" && $0 !~ /\/\.ci-timeout$/'
 }
 
 deleted_paths() {
@@ -31,7 +31,7 @@ deleted_paths() {
   while IFS= read -r path; do
     [ -n "$path" ] && [ ! -e "$path" ] && [ ! -L "$path" ] || continue
     case "$path" in
-      .flow-states/* | */.flow-states/*) continue ;;
+      .flow-states/* | */.flow-states/* | .ci-timeout | */.ci-timeout) continue ;;
     esac
     top="${path%%/*}"
     if [ "$root_app" -eq 1 ] && [ "$top" != "$path" ] && is_app_dir "$PWD/$top"; then

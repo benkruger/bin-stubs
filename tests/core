@@ -92,6 +92,15 @@ test_root_format() {
   expect_ok "$repo/bin/format" a/test/run
   grep -qE '^  suite +: SKIP$' "${LAST_LOG}" || die "bin/format on an app's file ran the repo-level formatter"
   grep -qx "if true;then" "$repo/messy" || die "bin/format on an app's file rewrote a repo-level script"
+  printf '#Heading\n' >"$repo/a/README.md"
+  expect_ok "$repo/bin/format" a/README.md
+  grep -qx "# Heading" "$repo/a/README.md" || die "bin/format left an app's Markdown file unformatted"
+  mkdir -p "$repo/tests"
+  printf '%s\n' 'if true;then' 'echo   "tests"' 'fi' >"$repo/tests/x.sh"
+  expect_ok "$repo/bin/format" tests
+  grep -qx "if true; then" "$repo/tests/x.sh" || die "bin/format left a folder it was given unformatted"
+  grep -qx "if true;then" "$repo/messy" || die "bin/format tests rewrote a script outside it"
+  rm -r "$repo/tests"
   expect_ok "$repo/bin/format" notes.md
   assert_eq "$(row_of suite "$(summary)")" "PASS" "bin/format on a repo-level file"
   grep -qx "#Heading without a space" "$repo/notes.md" && die "bin/format notes.md left it unformatted"
@@ -836,11 +845,11 @@ test_failed_writes() {
   local dir="$WORK/failed-writes" tmp="$WORK/failed-writes-tmp"
   mkdir -p "$dir" "$tmp"
   printf '# Locked\n\nA rule.\n' >"$dir/locked.md"
-  printf 'host 5\n' >"$dir/.ci-timeout"
+  printf 'host 1 5\n' >"$dir/.ci-timeout"
   chmod 444 "$dir/locked.md" "$dir/.ci-timeout"
   run_log env TMPDIR="$tmp" "$REPO/bin/stamp-rules" "$dir/locked.md"
   [ "$LAST_RC" -ne 0 ] || die "bin/stamp-rules passed a rule it could not write"
-  run_log env TMPDIR="$tmp" "$REPO/bin/_ci-timeout" app "$dir/.ci-timeout" 5
+  run_log env TMPDIR="$tmp" "$REPO/bin/_ci-timeout" app "$dir/.ci-timeout" 5 1
   [ "$LAST_RC" -ne 0 ] || die "bin/_ci-timeout passed a time file it could not write"
   [ -z "$(find "$tmp" -mindepth 1)" ] || die "a failed write left temp files: $(find "$tmp" -mindepth 1 | tr '\n' ' ')"
 }
@@ -1135,4 +1144,4 @@ run_all "$WORK/logs" run_test test_settings test_scan test_root_format test_open
   test_hooks test_starter test_bare_guards test_guards_scans test_guards_tools test_guards_markdownlint test_commit test_commit_review test_commit_fix test_commit_rounds test_commit_stops test_commit_gate test_commit_failures test_copies_match test_failed_writes test_changed_empty test_parts \
   test_dispatch test_dispatch_select test_dispatch_paths test_dispatch_path_args test_git_failures test_suite_seal test_unborn test_suite_missing test_root_check test_pins \
   test_shellcheck_cache test_rust_offline test_no_installs test_checked_once test_dependencies_once test_steps test_jobs test_interrupt test_start test_merge test_cleanup test_complete test_ci_time test_root_app test_root_js test_root_shell test_root_changed test_die_fixture \
-  test_app_language
+  test_app_language test_fingerprint test_changed_ci_timeout

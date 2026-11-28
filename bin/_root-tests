@@ -62,7 +62,10 @@ fi
 
 failed=0
 for check in "$ROOT"/checks/*; do
-  if [ ! -f "$check" ] || [ ! -x "$check" ]; then
+  [ -f "$check" ] || continue
+  if [ ! -x "$check" ]; then
+    echo "root-suite: checks/$(basename "$check") is not executable, so it never runs" >&2
+    failed=1
     continue
   fi
   dated "$check" || failed=1

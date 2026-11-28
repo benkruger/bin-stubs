@@ -10,23 +10,60 @@ GATE_LIB="$(cd "${GATE_LIB:-/}" && pwd)"
 GATE_DRIVER="$(cd "${GATE_DRIVER:-/}" && pwd)"
 
 gate_fingerprint() {
-  local f base="${GATE_LIB%/*}" files=()
-  while IFS= read -r f; do
-    files+=("$f")
-  done < <(find "$GATE_LIB" "$GATE_DRIVER" -type f | LC_ALL=C sort -u)
+  local f base="${GATE_LIB%/*}" driver files=()
+  driver="${GATE_DRIVER#"$base"}"
+  driver="${driver#/}"
+  while IFS= read -r -d '' f; do
+    [ -f "$base/$f" ] && files+=("$f")
+  done < <(git -C "$base" ls-files -z --cached --others --exclude-standard -- "${GATE_LIB#"$base"/}" \
+    "${driver:-.}" | LC_ALL=C sort -zu)
   [ "${#files[@]}" -gt 0 ] || return 0
-  paste -d ' ' <(printf '%s\n' "${files[@]#"$base"/}") <(git hash-object -- "${files[@]}")
+  paste -d ' ' <(printf '%s\n' "${files[@]}") <(cd "$base" && git hash-object -- "${files[@]}")
 }
 
 GATE_PRINT=""
 [ "${ROOT_APP:-0}" = 1 ] || GATE_PRINT="$(gate_fingerprint)"
+
+ANCESTOR_NAMES=()
+case "${GATE_DRIVER##*/}" in
+  _shell) ANCESTOR_NAMES=(.shellcheckrc shellcheckrc) ;;
+  _ios) ANCESTOR_NAMES=(.swift-format) ;;
+  _rust) ANCESTOR_NAMES=(rustfmt.toml .rustfmt.toml clippy.toml .clippy.toml .cargo/config.toml .cargo/config) ;;
+  _typescript)
+    ANCESTOR_NAMES=(eslint.config.js eslint.config.mjs eslint.config.cjs eslint.config.ts eslint.config.mts
+      eslint.config.cts package.json package.yaml .editorconfig .prettierrc .prettierrc.json .prettierrc.yaml
+      .prettierrc.yml .prettierrc.json5 .prettierrc.js .prettierrc.mjs .prettierrc.cjs .prettierrc.ts .prettierrc.mts
+      .prettierrc.cts .prettierrc.toml prettier.config.js prettier.config.mjs prettier.config.cjs prettier.config.ts
+      prettier.config.mts prettier.config.cts)
+    ;;
+  _javascript) ANCESTOR_NAMES=(biome.json biome.jsonc .editorconfig) ;;
+  _python)
+    ANCESTOR_NAMES=(pyproject.toml ruff.toml .ruff.toml uv.toml pytest.ini .pytest.ini pytest.toml .pytest.toml
+      tox.ini setup.cfg mypy.ini .mypy.ini conftest.py)
+    ;;
+  _rails) ANCESTOR_NAMES=(.rubocop.yml) ;;
+esac
+
+ancestor_configs() {
+  local dir up="" name sum
+  dir="$(pwd -P)"
+  while [ -n "$dir" ]; do
+    dir="${dir%/*}"
+    up="../$up"
+    for name in "${ANCESTOR_NAMES[@]+"${ANCESTOR_NAMES[@]}"}"; do
+      [ -f "$dir/$name" ] || continue
+      sum="$(git hash-object --no-filters -- "$dir/$name")" || return 1
+      printf '%s%s %s\n' "$up" "$name" "$sum"
+    done
+  done
+}
 
 untracked_kept() {
   local path name skip
   while IFS= read -r -d '' path; do
     [ -f "$path" ] || [ -L "$path" ] || continue
     case "$path" in
-      .flow-states/* | .venv/* | node_modules/* | vendor/* | target/* | .build/*) continue ;;
+      .flow-states/* | .venv/* | node_modules/* | target/* | .build/*) continue ;;
     esac
     skip=0
     for name in "$@"; do
@@ -76,11 +113,12 @@ root_app_fingerprint() {
 
 tree_fingerprint() {
   if [ "${ROOT_APP:-0}" = 1 ]; then
-    root_app_fingerprint
-    return
+    root_app_fingerprint || return
+  else
+    content_tree || return
+    [ -z "$GATE_PRINT" ] || printf '%s\n' "$GATE_PRINT"
   fi
-  content_tree || return
-  [ -z "$GATE_PRINT" ] || printf '%s\n' "$GATE_PRINT"
+  ancestor_configs
 }
 
 tree_hash() {

@@ -21,11 +21,7 @@ markdown=()
 shebang='^#!(.*[^[:alnum:]_])?bash([^[:alnum:]_]|$)'
 listed="$(mktemp "${TMPDIR:-/tmp}/bin-root-format.XXXXXX")"
 trap 'rm -f "$listed"' EXIT
-if [ "${#named[@]}" -gt 0 ]; then
-  printf '%s\0' "${named[@]}" >"$listed"
-else
-  git ls-files -z --cached --others --exclude-standard >"$listed"
-fi
+git ls-files -z --cached --others --exclude-standard -- ${named[@]+"${named[@]}"} >"$listed"
 while IFS= read -r -d '' path; do
   [ -f "$path" ] && [ ! -L "$path" ] || continue
   case "$path" in

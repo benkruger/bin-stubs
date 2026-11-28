@@ -60,6 +60,12 @@ for d in "$REPO_ROOT"/*/; do
   [[ "$name" == .* ]] && continue
   ! git check-ignore -q "$name/" 2>/dev/null || continue
   if leaf_of "${d%/}" >/dev/null; then
+    case "$name" in
+      root | suite)
+        echo "bin/$PHASE: an app folder cannot be named $name, which picks the $name; rename $name/" >&2
+        exit 2
+        ;;
+    esac
     targets+=("$name")
   fi
 done
@@ -109,6 +115,7 @@ repo_path() {
     a="${a//\/\//\/}"
   done
   case "$a" in
+    "$REPO_ROOT" | "$REPO_REAL") a=. ;;
     "$REPO_ROOT"/*) a="${a#"$REPO_ROOT"/}" ;;
     "$REPO_REAL"/*) a="${a#"$REPO_REAL"/}" ;;
   esac
@@ -171,6 +178,20 @@ named_paths() {
   return 1
 }
 
+suite_formats() {
+  local a="$1" owner="$2" first=""
+  [ "$PHASE" = format ] && [ -n "$suite_leaf" ] || return 1
+  [ ! -d "$a" ] || return 0
+  case "$a" in
+    *.md) return 0 ;;
+  esac
+  [ "$(app_language "$REPO_ROOT/$owner")" != shell ] || return 1
+  case "$a" in
+    *.sh | *.bash) return 0 ;;
+  esac
+  [ -f "$a" ] && IFS= read -r first <"$a" && [[ "$first" =~ ^#!.*bash ]]
+}
+
 is_corpus() {
   case "$1" in
     CLAUDE.md | README.md | .claude | .claude/* | tests | tests/* | checks | checks/*) return 0 ;;
@@ -183,6 +204,7 @@ selected=()
 run_root_app=0
 run_suite=0
 from_paths=0
+pins_only=0
 suite_paths=()
 
 git_config_count="${GIT_CONFIG_COUNT:-0}"
@@ -197,7 +219,20 @@ collect_changed() {
   git -C "$REPO_ROOT" ls-files -z --others --exclude-standard || return 1
 }
 
-if [ "$PHASE" = changed ] && [ "${#picks[@]}" -eq 0 ] && [[ " ${leaf_args[*]-} " == *" --files "* ]]; then
+picked_path() {
+  local path="$1" owner
+  [ "${#picks[@]}" -gt 0 ] || return 0
+  owner="$(owner_of "$path" || true)"
+  if [ -n "$owner" ]; then
+    picked "${owner//_/-}"
+  elif is_corpus "$path"; then
+    picked suite
+  else
+    picked root
+  fi
+}
+
+if [ "$PHASE" = changed ] && [[ " ${leaf_args[*]-} " == *" --files "* ]]; then
   if ! listing="$(collect_changed | sort -zu | tr '\0' '\n')"; then
     echo "bin/changed: git could not list the changed files" >&2
     exit 1
@@ -207,6 +242,7 @@ if [ "$PHASE" = changed ] && [ "${#picks[@]}" -eq 0 ] && [[ " ${leaf_args[*]-} "
     case "$path" in
       .ci-timeout | */.ci-timeout | .flow-states/* | */.flow-states/*) continue ;;
     esac
+    picked_path "$path" || continue
     printf '%s\n' "$path"
   done <<<"$listing"
   exit 0
@@ -231,19 +267,41 @@ elif [ "$PHASE" != changed ] && named_paths; then
   for a in "${leaf_args[@]}"; do
     case "$a" in
       -*) continue ;;
+      .)
+        select_all=1
+        continue
+        ;;
     esac
     owner="$(owner_of "$a" || true)"
     if [ -n "$owner" ]; then
       already_selected "$owner" || selected+=("$owner")
+      if suite_formats "$a" "$owner"; then
+        run_suite=1
+        suite_paths+=("$a")
+      fi
     elif [ -n "$suite_leaf" ] && { [ "$has_root_app" -eq 0 ] || { is_corpus "$a" && [[ "$a" != tests/* ]]; }; }; then
       run_suite=1
       suite_paths+=("$a")
     elif [ "$has_root_app" -eq 1 ]; then
       run_root_app=1
+    elif [ -e "$REPO_ROOT/$a" ]; then
+      echo "bin/$PHASE: no app owns $a" >&2
+      exit 1
     else
       select_all=1
     fi
   done
+  if [ "$PHASE" = ci ] && [ "$select_all" -eq 0 ] && [ "$run_suite" -eq 0 ] && [ -n "$suite_leaf" ] &&
+    [[ " ${leaf_args[*]-} " != *" --clean "* ]]; then
+    for check in "$REPO_ROOT"/checks/*; do
+      [ -f "$check" ] || continue
+      suite_paths+=("checks/${check##*/}")
+    done
+    if [ "${#suite_paths[@]}" -gt 0 ]; then
+      run_suite=1
+      pins_only=1
+    fi
+  fi
 elif [ "$PHASE" = ci ]; then
   select_all=1
 else
@@ -352,7 +410,7 @@ consider_paths() {
       -*)
         FILTERED+=("$a")
         ;;
-      "$name")
+      . | "$name")
         case "$PHASE" in
           format | lint | build | test) FILTERED+=(--all) ;;
         esac
@@ -376,7 +434,7 @@ consider_paths() {
         done
         if [ "$known" -eq 0 ]; then
           paths=$((paths + 1))
-          if [ "$name" = __root__ ] || [ "$has_root_app" -eq 0 ]; then
+          if [ "$name" = __root__ ] || [ ! -e "$REPO_ROOT/$a" ]; then
             FILTERED+=("$a")
             mine=$((mine + 1))
           fi
@@ -390,53 +448,38 @@ consider_paths() {
   return 0
 }
 
-run_one() {
-  local display="$1" folder="$2" leaf="$3" sname="${4:-ci-sentinel}"
+run_suite_leaf() {
   local sentinel="" mt_before="" rc=0 result args=() began only_checks
-  FILTERED=()
-  if [ "$display" = "suite" ]; then
-    for a in "${leaf_args[@]+"${leaf_args[@]}"}"; do
-      case "$PHASE $a" in
-        "ci --clean" | "format --check") FILTERED+=("$a") ;;
-      esac
-    done
-    if [ "$PHASE" = format ]; then
-      FILTERED+=(${suite_paths[@]+"${suite_paths[@]}"})
-    elif [ "$PHASE" = test ] && [ "${#suite_paths[@]}" -gt 0 ]; then
-      only_checks=1
-      for a in "${suite_paths[@]}"; do
-        [[ "$a" == checks/?* ]] || only_checks=0
-      done
-      [ "$only_checks" -eq 0 ] || FILTERED+=("${suite_paths[@]}")
-    fi
-  elif [ "$display" = "root" ]; then
-    if ! consider_paths "__root__"; then
-      NAMES+=("$display")
-      RESULTS+=(SKIP)
-      TIMES+=("")
-      return
-    fi
-  elif ! consider_paths "$display"; then
-    NAMES+=("$display")
-    RESULTS+=(SKIP)
-    TIMES+=("")
-    return
-  fi
   if [ "$force" -eq 1 ] && [ "$PHASE" = "ci" ]; then
     args+=(--force)
   fi
-  if [ "$PHASE" = "test" ] && [ "$display" = "suite" ]; then
+  if [ "$PHASE" = "test" ]; then
     args+=(--force)
   fi
-  args+=("${FILTERED[@]+"${FILTERED[@]}"}")
-  if [ "$PHASE" = "ci" ] && [ -n "$BRANCH" ]; then
-    sentinel="$folder/.flow-states/$BRANCH/$sname"
+  for a in "${leaf_args[@]+"${leaf_args[@]}"}"; do
+    case "$PHASE $a" in
+      "ci --clean" | "format --check") args+=("$a") ;;
+    esac
+  done
+  if [ "$PHASE" = format ]; then
+    args+=(${suite_paths[@]+"${suite_paths[@]}"})
+  elif [ "$pins_only" -eq 1 ]; then
+    args+=("${suite_paths[@]}")
+  elif [ "$PHASE" = test ] && [ "${#suite_paths[@]}" -gt 0 ]; then
+    only_checks=1
+    for a in "${suite_paths[@]}"; do
+      [[ "$a" == checks/?* ]] || only_checks=0
+    done
+    [ "$only_checks" -eq 0 ] || args+=("${suite_paths[@]}")
+  fi
+  if [ "$PHASE" = "ci" ] && [ -n "$BRANCH" ] && [ "$pins_only" -eq 0 ]; then
+    sentinel="$REPO_ROOT/.flow-states/$BRANCH/root-suite-sentinel"
     if [ -f "$sentinel" ]; then
       mt_before="$(mtime_of "$sentinel")"
     fi
   fi
   began="${EPOCHSECONDS:-$(date +%s)}"
-  (cd "$folder" && "$leaf" ${args[@]+"${args[@]}"}) || rc=$?
+  (cd "$REPO_ROOT" && "$REPO_ROOT/$suite_leaf" ${args[@]+"${args[@]}"}) || rc=$?
   if [ "$rc" -ne 0 ]; then
     result=FAIL
     EXIT=1
@@ -445,7 +488,7 @@ run_one() {
   else
     result=PASS
   fi
-  NAMES+=("$display")
+  NAMES+=(suite)
   RESULTS+=("$result")
   TIMES+=("$((${EPOCHSECONDS:-$(date +%s)} - began))")
 }
@@ -463,7 +506,7 @@ trap 'kill -TERM -- ${BG_GROUP[@]+"${BG_GROUP[@]}"} 2>/dev/null || true
   exit 130' INT TERM HUP
 
 if [ "$run_suite" -eq 1 ] && [ "$PHASE" != changed ]; then
-  run_one "suite" "$REPO_ROOT" "$REPO_ROOT/$suite_leaf" "root-suite-sentinel"
+  run_suite_leaf
 fi
 
 steps_snapshot() {
@@ -500,7 +543,7 @@ ran_every_step() {
 }
 
 queue_one() {
-  local display="$1" folder="$2" leaf="$3" sname="${4:-ci-sentinel}"
+  local display="$1" folder="$2" leaf="$3"
   local sentinel="" mt_before="" args=() log
   FILTERED=()
   if [ "$display" = "root" ]; then
@@ -521,7 +564,7 @@ queue_one() {
   fi
   args+=("${FILTERED[@]+"${FILTERED[@]}"}")
   if [ "$PHASE" = "ci" ] && [ -n "$BRANCH" ]; then
-    sentinel="$folder/.flow-states/$BRANCH/$sname"
+    sentinel="$folder/.flow-states/$BRANCH/ci-sentinel"
     if [ -f "$sentinel" ]; then
       mt_before="$(mtime_of "$sentinel")"
     fi
@@ -561,6 +604,8 @@ fi
 for name in "${selected[@]+"${selected[@]}"}"; do
   queue_one "$name" "$REPO_ROOT/$name" "$(leaf_of "$REPO_ROOT/$name")"
 done
+load="${#BG_PID[@]}"
+[ "$load" -le "$jobs" ] || load="$jobs"
 i=0
 while [ "$i" -lt "${#BG_PID[@]}" ]; do
   wait "${BG_PID[$i]}" || true
@@ -581,7 +626,7 @@ while [ "$i" -lt "${#BG_PID[@]}" ]; do
   fi
   folder="${BG_FOLDER[$i]}"
   if [ "$result" = PASS ] && ran_every_step "${BG_STEPS[$i]}" "$(steps_snapshot "$folder")" &&
-    ! "$REPO_ROOT/bin/_ci-timeout" "${BG_DISPLAY[$i]}" "$folder/.ci-timeout" "$secs"; then
+    ! "$REPO_ROOT/bin/_ci-timeout" "${BG_DISPLAY[$i]}" "$folder/.ci-timeout" "$secs" "$load"; then
     result=FAIL
     EXIT=1
     rm -f "$folder/.flow-states/$BRANCH/ci-sentinel" "$folder/.flow-states/$BRANCH"/ci-*-sentinel
@@ -593,7 +638,7 @@ while [ "$i" -lt "${#BG_PID[@]}" ]; do
 done
 
 if [ "$run_suite" -eq 1 ] && [ "$PHASE" = changed ]; then
-  run_one "suite" "$REPO_ROOT" "$REPO_ROOT/$suite_leaf" "root-suite-sentinel"
+  run_suite_leaf
 fi
 
 duration() {
